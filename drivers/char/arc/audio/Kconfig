@@ -1,0 +1,12 @@
+#
+#
+#
+config ARC_ADI
+	bool "ARCurus Audio Device Interface"
+	depends on ARC_CHAR
+	help
+	  ARC_ADI (ARCturus Audio Device Interface) is an 
+	  aplication programming interface mainly used to
+	  connect audio devices (codecs, slics) to the rest of the system.
+
+source drivers/char/arc/audio/codec_hw/Kconfig

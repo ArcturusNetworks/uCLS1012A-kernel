@@ -1,0 +1,225 @@
+/*
+ * Device Tree Include file for Arcturus uCLS1012A-SOM.
+ *
+ * Copyright 2017, Arcturus Networks Inc.
+ *
+ * This file is dual-licensed: you can use it either under the terms
+ * of the GPLv2 or the X11 license, at your option. Note that this dual
+ * licensing only applies to this file, and not this project as a
+ * whole.
+ *
+ *  a) This library is free software; you can redistribute it and/or
+ *     modify it under the terms of the GNU General Public License as
+ *     published by the Free Software Foundation; either version 2 of the
+ *     License, or (at your option) any later version.
+ *
+ *     This library is distributed in the hope that it will be useful,
+ *     but WITHOUT ANY WARRANTY; without even the implied warranty of
+ *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+ *     GNU General Public License for more details.
+ *
+ * Or, alternatively,
+ *
+ *  b) Permission is hereby granted, free of charge, to any person
+ *     obtaining a copy of this software and associated documentation
+ *     files (the "Software"), to deal in the Software without
+ *     restriction, including without limitation the rights to use,
+ *     copy, modify, merge, publish, distribute, sublicense, and/or
+ *     sell copies of the Software, and to permit persons to whom the
+ *     Software is furnished to do so, subject to the following
+ *     conditions:
+ *
+ *     The above copyright notice and this permission notice shall be
+ *     included in all copies or substantial portions of the Software.
+ *
+ *     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+ *     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
+ *     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+ *     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
+ *     HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+ *     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ *     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
+ *     OTHER DEALINGS IN THE SOFTWARE.
+ */
+/dts-v1/;
+
+#include "arc-ls1012a.dtsi"
+
+/ {
+	model = "uCLS1012A-SOM Board";
+	compatible = "fsl,ls1012a-frdm", "fsl,ls1012a";
+
+	aliases {
+		crypto = &crypto;
+		ethernet0 = &pfe_mac0;
+		ethernet1 = &pfe_mac1;
+	};
+
+	sys_mclk: clock-mclk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <25000000>;
+	};
+
+	regulator_1p8v: regulator {
+		compatible = "regulator-fixed";
+		regulator-name = "1P8V";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,widgets =
+			"Microphone", "Microphone Jack",
+			"Headphone", "Headphone Jack",
+			"Speaker", "Speaker Ext",
+			"Line", "Line In Jack";
+		simple-audio-card,routing =
+			"MIC_IN", "Microphone Jack",
+			"Microphone Jack", "Mic Bias",
+			"LINE_IN", "Line In Jack",
+			"Headphone Jack", "HP_OUT",
+			"Speaker Ext", "LINE_OUT";
+
+		simple-audio-card,cpu {
+			sound-dai = <&sai2>;
+			frame-master;
+			bitclock-master;
+		};
+
+		simple-audio-card,codec {
+			sound-dai = <&alsa_codec>;
+			frame-master;
+			bitclock-master;
+			system-clock-frequency = <25000000>;
+		};
+	};
+
+	gpio-leds {
+		compatible = "gpio-leds";
+		led1 {
+			label = "led1";
+			gpios = <&gpio1 14 GPIO_ACTIVE_HIGH>;
+			linux,default-trigger = "heartbeat";
+		};
+		reset_cx {
+			label = "reset_cx";
+			gpios = <&gpio1 3 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+
+		button1 {
+			label = "pbtn1";
+			linux,code = <KEY_1>;
+			gpios = <&gpio1 11 GPIO_ACTIVE_HIGH>;
+		};
+	};
+
+	gpio-restart {
+		compatible = "gpio-restart";
+		gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
+	};
+
+};
+
+&duart0 {
+	status = "okay";
+};
+
+&i2c0 {
+	status = "okay";
+
+	alsa_codec: cx20703 {
+		#sound-dai-cells = <0>;
+		compatible = "cnxt,cx2070x";
+		reg = <0x14>;
+		VDDA-supply = <&regulator_1p8v>;
+		VDDIO-supply = <&regulator_1p8v>;
+		clocks = <&sys_mclk>;
+	};
+
+	spoc@14 {
+		compatible = "conexant,cx2070x";
+		reg = <0x54>;
+	};
+
+	dtt@4C {
+		compatible = "national,lm90";
+		reg = <0x4C>;
+	};
+};
+
+&qspi {
+	num-cs = <2>;
+	bus-num = <0>;
+	status = "okay";
+
+	qflash0: n25q00a@0 {
+		compatible = "micron,n25q00a", "jedec,spi-nor";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		m25p,fast-read;
+		spi-max-frequency = <20000000>;
+		reg = <0>;
+	};
+};
+
+&pfe {
+	status = "okay";
+
+	ethernet@0 {
+		compatible = "fsl,pfe-gemac-port";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <	0x0 >;	/* GEM_ID */
+		fsl,gemac-bus-id = <0x0>;	/* BUS_ID */
+		fsl,gemac-phy-id = <0x4>;	/* PHY_ID */
+		fsl,mdio-mux-val = <0x0>;
+		local-mac-address = [ 00 1A 2B 3C 4D 5E ];
+		phy-mode = "sgmii";
+		fsl,pfe-gemac-if-name = "eth0";
+		fsl,pfe-phy-if-flags = <0x0>;
+		fsl,pfe-gemac-mode = <0x1B00>; /* GEMAC_SW_CONF | GEMAC_SW_FULL_DUPLEX | GEMAC_SW_SPEED_1G */
+		mdio@0 {
+			reg = <0x1>; /* enabled/disabled */
+			fsl,mdio-phy-mask = <0xFFFFFFCF>;
+		};
+	};
+
+	ethernet@1 {
+		compatible = "fsl,pfe-gemac-port";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <	0x1 >;	/* GEM_ID */
+		fsl,gemac-bus-id = < 0x1 >;	/* BUS_ID */
+		fsl,gemac-phy-id = < 0x5 >;	/* PHY_ID */
+		fsl,mdio-mux-val = <0x0>;
+		local-mac-address = [ 00 AA BB CC DD EE ];
+		phy-mode = "sgmii";
+		fsl,pfe-gemac-if-name = "eth1";
+		fsl,pfe-phy-if-flags = <0x1/*GEMAC_NO_PHY*/>;
+		fsl,pfe-gemac-mode = <0x1B00>; /* GEMAC_SW_CONF | GEMAC_SW_FULL_DUPLEX | GEMAC_SW_SPEED_1G */
+		mdio@0 {
+			reg = <0x0>; /* enabled/disabled */
+			fsl,mdio-phy-mask = <0xFFFFFFCF>;
+		};
+	};
+};
+
+&sai2 {
+	status = "okay";
+};
+
+&esdhc0 {
+	status = "okay";
+};
+
+&esdhc1 {
+	status = "disabled";
+};

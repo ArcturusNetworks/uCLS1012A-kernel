@@ -1,0 +1,14 @@
+#
+# Arcturus Networks Inc. character devices
+#
+
+menu "ARCturus CHARacter devices & Co."
+
+config ARC_CHAR
+	bool "ARCturus CHARacter devices"
+	help
+	  ARCturus networks inc. CHARacter devices
+
+source "drivers/char/arc/audio/Kconfig"
+
+endmenu
