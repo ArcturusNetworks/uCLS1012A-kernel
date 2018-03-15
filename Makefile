@@ -1117,7 +1117,7 @@ modules_prepare: prepare scripts
 
 # Target to install modules
 PHONY += modules_install
-modules_install: _modinst_ _modinst_post
+modules_install: _modinst_ _modinst_post firmware_copy
 
 PHONY += _modinst_
 _modinst_:
@@ -1146,6 +1146,12 @@ PHONY += modules_sign
 modules_sign:
 	$(Q)$(MAKE) -f $(srctree)/scripts/Makefile.modsign
 endif
+
+PHONY += firmware_copy
+firmware_copy:
+	@mkdir -p ${INSTALL_FW_PATH}
+	@cp -f $(srctree)/firmware/ppfe/* ${INSTALL_FW_PATH}/
+	@cp -f $(srctree)/br2-ucls1012a.its  ${INSTALL_MOD_PATH}/../images/
 
 else # CONFIG_MODULES
 
