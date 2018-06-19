@@ -1206,6 +1206,7 @@ static int cx2070x_update_cache_from_firmware(void *context, unsigned int reg,
 
 #endif
 
+extern void do_cx_dump(struct snd_soc_codec *codec);
 static int cx2070x_probe(struct snd_soc_codec *codec)
 {
 	struct cx2070x_priv *cx2070x = get_cx2070x_priv(codec);
@@ -1223,6 +1224,10 @@ static int cx2070x_probe(struct snd_soc_codec *codec)
 	dev_info(codec->dev,
 		 "CX2070%d, Firmware Version %x.%x.%x.%x\n",
 		 a1, a2, a3, a4, a5);
+
+#if 0
+	do_cx_dump(codec);
+#endif
 
 #ifdef CONFIG_SND_SOC_CX2070X_SYSFS
 	cx2070x_sysfs_alloc(cx2070x);

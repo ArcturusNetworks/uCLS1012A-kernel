@@ -366,6 +366,51 @@ static ssize_t fwVersion(struct device *dev,
 		       a2, a3, a4, a5, a6, a7, a8);
 }
 
+void do_cx_dump(struct snd_soc_codec *codec);
+void do_cx_dump(struct snd_soc_codec *codec)
+{
+	u8 a1, a2, a3, a4, a5, a6, a7, a8;
+	int i;
+
+	for (i = 0; i < 0x1600; ) {
+		printk("0x%04x : ", i);
+		a1 = snd_soc_read(codec, i++);
+		a2 = snd_soc_read(codec, i++);
+		a3 = snd_soc_read(codec, i++);
+		a4 = snd_soc_read(codec, i++);
+		a5 = snd_soc_read(codec, i++);
+		a6 = snd_soc_read(codec, i++);
+		a7 = snd_soc_read(codec, i++);
+		a8 = snd_soc_read(codec, i++);
+		printk(" %04x %04x %04x %04x %04x %04x %04x\n", a1, a2, a3, a4, a5, a6, a7, a8);
+	}
+
+}
+
+
+static ssize_t cxregdump(struct device *dev,
+			 struct device_attribute *attr, char *buf)
+{
+	struct i2c_client *client = to_i2c_client(dev);
+	struct cx2070x_priv *data = i2c_get_clientdata(client);
+	u8 a1, a2, a3, a4, a5, a6, a7, a8;
+	int i;
+
+	do_cx_dump(data->codec);
+
+	a1 = snd_soc_read(data->codec, 0x1005);	/* Chip[7:0] 0x1005 */
+	a2 = snd_soc_read(data->codec, 0x1002);	/* FV_HI [7:0] 0x1002 */
+	a3 = snd_soc_read(data->codec, 0x1001);	/* FV_LO [7:0] 0x1001 */
+	a4 = snd_soc_read(data->codec, 0x1004);	/* VV_HI [7:0] 0x1003 */
+	a5 = snd_soc_read(data->codec, 0x1003);	/* VV_LO [7:0] 0x1003 */
+	a6 = snd_soc_read(data->codec, 0x1584);	/* Patch_HI [7:0] 0x1584 */
+	a7 = snd_soc_read(data->codec, 0x1585);	/* Patch_MED [7:0] 0x1585 */
+	a8 = snd_soc_read(data->codec, 0x1586);	/* Patch_LO [7:0] 0x1586 */
+
+	return sprintf(buf, "Cx2070%d FW Version: %x.%x.%x.%x (%x.%x.%x)\n", a1, a2, a3, a4, a5, a6, a7, a8);
+}
+
+
 static ssize_t cx2070x_aec_show(struct device *dev,
 				struct device_attribute *attr, char *buf)
 {
@@ -630,6 +675,7 @@ static SENSOR_DEVICE_ATTR(reg_0x1586, S_IRUGO | S_IWUSR, cx2070x_show,
 			  cx2070x_store, CX2070X_REG_0x1586);
 
 static SENSOR_DEVICE_ATTR(FW_Version, S_IRUGO, fwVersion, NULL, 0);
+static SENSOR_DEVICE_ATTR(CX_regDump, S_IRUGO, cxregdump, NULL, 0);
 
 static SENSOR_DEVICE_ATTR(FWPatch_Version, S_IRUGO, patchVersion, NULL, 0);
 
@@ -698,6 +744,7 @@ static struct attribute *cx2070x_attributes[] = {
 	&sensor_dev_attr_FWPatch_Version.dev_attr.attr,
 	&sensor_dev_attr_aec.dev_attr.attr,
 	&sensor_dev_attr_noise_reduction.dev_attr.attr,
+	&sensor_dev_attr_CX_regDump.dev_attr.attr,
 
 /* Gain control */
 	&sensor_dev_attr_mic_l_gain.dev_attr.attr,
