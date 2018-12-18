@@ -1,45 +1,9 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
  * Device Tree Include file for Freescale Layerscape-1012A family SoC.
  *
- * Copyright 2016, Freescale Semiconductor
+ * Copyright 2016-2018, Arcturus Networks, Inc.
  *
- * This file is dual-licensed: you can use it either under the terms
- * of the GPLv2 or the X11 license, at your option. Note that this dual
- * licensing only applies to this file, and not this project as a
- * whole.
- *
- *  a) This library is free software; you can redistribute it and/or
- *     modify it under the terms of the GNU General Public License as
- *     published by the Free Software Foundation; either version 2 of the
- *     License, or (at your option) any later version.
- *
- *     This library is distributed in the hope that it will be useful,
- *     but WITHOUT ANY WARRANTY; without even the implied warranty of
- *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *     GNU General Public License for more details.
- *
- * Or, alternatively,
- *
- *  b) Permission is hereby granted, free of charge, to any person
- *     obtaining a copy of this software and associated documentation
- *     files (the "Software"), to deal in the Software without
- *     restriction, including without limitation the rights to use,
- *     copy, modify, merge, publish, distribute, sublicense, and/or
- *     sell copies of the Software, and to permit persons to whom the
- *     Software is furnished to do so, subject to the following
- *     conditions:
- *
- *     The above copyright notice and this permission notice shall be
- *     included in all copies or substantial portions of the Software.
- *
- *     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- *     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
- *     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- *     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
- *     HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- *     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- *     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- *     OTHER DEALINGS IN THE SOFTWARE.
  */
 
 #include <dt-bindings/interrupt-controller/irq.h>
@@ -82,7 +46,6 @@
 
 	timer {
 		compatible = "arm,armv8-timer";
-
 		interrupts = <1 13 IRQ_TYPE_LEVEL_LOW>,/* Physical Secure PPI */
 			     <1 14 IRQ_TYPE_LEVEL_LOW>,/* Physical Non-Secure PPI */
 			     <1 11 IRQ_TYPE_LEVEL_LOW>,/* Virtual PPI */
@@ -114,6 +77,18 @@
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
+
+		esdhc0: esdhc@1560000 {
+			compatible = "fsl,ls1012a-esdhc", "fsl,esdhc";
+			reg = <0x0 0x1560000 0x0 0x10000>;
+			interrupts = <0 62 0x4>;
+			clocks = <&clockgen 4 0>;
+			voltage-ranges = <1800 1800 3300 3300>;
+			sdhci,auto-cmd12;
+			big-endian;
+			bus-width = <4>;
+			status = "disabled";
+		};
 
 		scfg: scfg@1570000 {
 			compatible = "fsl,ls1012a-scfg", "syscon";
@@ -171,6 +146,14 @@
 			big-endian;
 		};
 
+		clockgen: clocking@1ee1000 {
+			compatible = "fsl,ls1012a-clockgen";
+			reg = <0x0 0x1ee1000 0x0 0x1000>;
+			#clock-cells = <2>;
+			clocks = <&sysclk &coreclk>;
+			clock-names = "sysclk", "coreclk";
+		};
+
 		tmu: tmu@1f00000 {
 			compatible = "fsl,qoriq-tmu", "fsl,ls1012a-tmu";
 			reg = <0x0 0x1f00000 0x0 0x10000>;
@@ -220,7 +203,6 @@
 			cpu_thermal: cpu-thermal {
 				polling-delay-passive = <1000>;
 				polling-delay = <5000>;
-
 				thermal-sensors = <&tmu 0>;
 
 				trips {
@@ -229,6 +211,7 @@
 						hysteresis = <2000>;
 						type = "passive";
 					};
+
 					cpu_crit: cpu-crit {
 						temperature = <95000>;
 						hysteresis = <2000>;
@@ -245,47 +228,6 @@
 					};
 				};
 			};
-		};
-
-		clockgen: clocking@1ee1000 {
-			compatible = "fsl,ls1012a-clockgen";
-			reg = <0x0 0x1ee1000 0x0 0x1000>;
-			#clock-cells = <2>;
-			clocks = <&sysclk &coreclk>;
-			clock-names = "sysclk", "coreclk";
-		};
-
-		esdhc0: esdhc@1560000 {
-			compatible = "fsl,ls1012a-esdhc", "fsl,esdhc";
-			reg = <0x0 0x1560000 0x0 0x10000>;
-			interrupts = <0 62 0x4>;
-			clock-frequency = <0>;
-			clocks = <&clockgen 4 0>;
-			voltage-ranges = <1800 1800 3300 3300>;
-			sdhci,auto-cmd12;
-			big-endian;
-			bus-width = <4>;
-			status = "disabled";
-		};
-
-		esdhc1: esdhc@1580000 {
-			compatible = "fsl,ls1012a-esdhc", "fsl,esdhc";
-			reg = <0x0 0x1580000 0x0 0x10000>;
-			interrupts = <0 65 0x4>;
-			clock-frequency = <0>;
-			clocks = <&clockgen 4 0>;
-			voltage-ranges = <1800 1800 3300 3300>;
-			sdhci,auto-cmd12;
-			big-endian;
-			broken-cd;
-			bus-width = <4>;
-			status = "disabled";
-		};
-
-		rcpm: rcpm@1ee2000 {
-			compatible = "fsl,ls1012a-rcpm", "fsl,qoriq-rcpm-2.1";
-			reg = <0x0 0x1ee2000 0x0 0x1000>;
-			fsl,#rcpm-wakeup-cells = <1>;
 		};
 
 		ftm0: ftm0@29d0000 {
@@ -334,6 +276,7 @@
 			reg = <0x00 0x21c0500 0x0 0x100>;
 			interrupts = <0 54 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clockgen 4 0>;
+			status = "disabled";
 		};
 
 		duart1: serial@21c0600 {
@@ -341,6 +284,7 @@
 			reg = <0x00 0x21c0600 0x0 0x100>;
 			interrupts = <0 54 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clockgen 4 0>;
+			status = "disabled";
 		};
 
 		gpio0: gpio@2300000 {
@@ -363,6 +307,15 @@
 			#interrupt-cells = <2>;
 		};
 
+		wdog0: wdog@2ad0000 {
+			compatible = "fsl,ls1012a-wdt",
+				     "fsl,imx21-wdt";
+			reg = <0x0 0x2ad0000 0x0 0x10000>;
+			interrupts = <0 83 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clockgen 4 0>;
+			big-endian;
+		};
+
 		qspi: quadspi@1550000 {
 			compatible = "fsl,ls1012a-qspi", "fsl,ls1021a-qspi";
 			#address-cells = <1>;
@@ -374,17 +327,7 @@
 			clock-names = "qspi_en", "qspi";
 			clocks = <&clockgen 4 0>, <&clockgen 4 0>;
 			big-endian;
-			fsl,qspi-has-second-chip;
 			status = "disabled";
-		};
-
-		wdog0: wdog@2ad0000 {
-			compatible = "fsl,ls1012a-wdt",
-				     "fsl,imx21-wdt";
-			reg = <0x0 0x2ad0000 0x0 0x10000>;
-			interrupts = <0 83 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&clockgen 4 0>;
-			big-endian;
 		};
 
 		sai1: sai@2b50000 {
@@ -440,6 +383,17 @@
 			snps,dis_rxdet_inp3_quirk;
 		};
 
+		sata: sata@3200000 {
+			compatible = "fsl,ls1012a-ahci", "fsl,ls1043a-ahci";
+			reg = <0x0 0x3200000 0x0 0x10000>,
+				<0x0 0x20140520 0x0 0x4>;
+			reg-names = "ahci", "sata-ecc";
+			interrupts = <0 69 IRQ_TYPE_LEVEL_HIGH>;
+			clocks = <&clockgen 4 0>;
+			dma-coherent;
+			status = "disabled";
+		};
+
 		usb1: usb2@8600000 {
 			compatible = "fsl-usb2-dr-v2.5", "fsl-usb2-dr";
 			reg = <0x0 0x8600000 0x0 0x1000>;
@@ -448,40 +402,27 @@
 			phy_type = "ulpi";
 		};
 
-		sata: sata@3200000 {
-			compatible = "fsl,ls1012a-ahci", "fsl,ls1043a-ahci";
-			reg = <0x0 0x3200000 0x0 0x10000>,
-			      <0x0 0x20140520 0x0 0x4>;
-			reg-names = "ahci", "sata-ecc";
-			interrupts = <0 69 IRQ_TYPE_LEVEL_HIGH>;
-			clocks = <&clockgen 4 0>;
-			dma-coherent;
-		};
-
-		msi: msi-controller {
+		msi: msi-controller1@1572000 {
 			compatible = "fsl,ls-scfg-msi";
 			#address-cells = <2>;
 			#size-cells = <2>;
 			ranges;
 			msi-controller;
-
-			msi1@1572000 {
-				reg = <0x0 0x1572000 0x0 0x1000>;
-				interrupts = <0 126 0x4>,
-					     <0 121 0x4>,
-					     <0 122 0x4>,
-					     <0 123 0x4>;
-			};
+			reg = <0x0 0x1572000 0x0 0x1000>;
+			interrupts = <0 126 0x4>,
+				     <0 121 0x4>,
+				     <0 122 0x4>,
+				     <0 123 0x4>;
 		};
 
-		pcie@3400000 {
+		pcie: pcie@3400000 {
 			compatible = "fsl,ls1012a-pcie","snps,dw-pcie";
 			reg = <0x00 0x03400000 0x0 0x00100000   /* controller registers */
 			       0x40 0x00000000 0x0 0x00002000>; /* configuration space */
 			reg-names = "regs", "config";
-			interrupts = <0 118 0x4>, /* controller interrupt */
+			interrupts = <0 118 0x4>, /* AER interrupt */
 				     <0 117 0x4>; /* PME interrupt */
-			interrupt-names = "intr", "pme";
+			interrupt-names = "aer", "pme";
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
@@ -496,6 +437,13 @@
 					<0000 0 0 2 &gic 0 111 0x4>,
 					<0000 0 0 3 &gic 0 112 0x4>,
 					<0000 0 0 4 &gic 0 113 0x4>;
+			status = "disabled";
+		};
+
+		rcpm: rcpm@1ee2000 {
+			compatible = "fsl,ls1012a-rcpm", "fsl,qoriq-rcpm-2.1";
+			reg = <0x0 0x1ee2000 0x0 0x1000>;
+			fsl,#rcpm-wakeup-cells = <1>;
 		};
 	};
 
