@@ -1,47 +1,10 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
  * Device Tree Include file for Freescale Layerscape-1046A family SoC.
  *
- * Copyright 2016, Freescale Semiconductor, Inc.
+ * Copyright 2016 Freescale Semiconductor, Inc.
  *
  * Mingkai Hu <mingkai.hu@nxp.com>
- *
- * This file is dual-licensed: you can use it either under the terms
- * of the GPLv2 or the X11 license, at your option. Note that this dual
- * licensing only applies to this file, and not this project as a
- * whole.
- *
- *  a) This library is free software; you can redistribute it and/or
- *     modify it under the terms of the GNU General Public License as
- *     published by the Free Software Foundation; either version 2 of the
- *     License, or (at your option) any later version.
- *
- *     This library is distributed in the hope that it will be useful,
- *     but WITHOUT ANY WARRANTY; without even the implied warranty of
- *     MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
- *     GNU General Public License for more details.
- *
- * Or, alternatively,
- *
- *  b) Permission is hereby granted, free of charge, to any person
- *     obtaining a copy of this software and associated documentation
- *     files (the "Software"), to deal in the Software without
- *     restriction, including without limitation the rights to use,
- *     copy, modify, merge, publish, distribute, sublicense, and/or
- *     sell copies of the Software, and to permit persons to whom the
- *     Software is furnished to do so, subject to the following
- *     conditions:
- *
- *     The above copyright notice and this permission notice shall be
- *     included in all copies or substantial portions of the Software.
- *
- *     THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
- *     EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES
- *     OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
- *     NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT
- *     HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
- *     WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
- *     FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR
- *     OTHER DEALINGS IN THE SOFTWARE.
  */
 
 /dts-v1/;
@@ -53,13 +16,6 @@
 	compatible = "fsl,ls1046a-rdb", "fsl,ls1046a";
 
 	aliases {
-		ethernet0 = &fm1mac3;
-		ethernet1 = &fm1mac4;
-		ethernet2 = &fm1mac5;
-		ethernet3 = &fm1mac6;
-		ethernet4 = &fm1mac9;
-		ethernet5 = &fm1mac10;
-
 		serial0 = &duart0;
 		serial1 = &duart1;
 		serial2 = &duart2;
@@ -71,20 +27,20 @@
 	};
 };
 
-&esdhc {
-	mmc-hs200-1_8v;
-	sd-uhs-sdr104;
-	sd-uhs-sdr50;
-	sd-uhs-sdr25;
-	sd-uhs-sdr12;
-};
-
 &duart0 {
 	status = "okay";
 };
 
 &duart1 {
 	status = "okay";
+};
+
+&esdhc {
+	mmc-hs200-1_8v;
+	sd-uhs-sdr104;
+	sd-uhs-sdr50;
+	sd-uhs-sdr25;
+	sd-uhs-sdr12;
 };
 
 &i2c0 {
@@ -146,23 +102,30 @@
 	num-cs = <2>;
 	bus-num = <0>;
 	status = "okay";
+	fsl,qspi-has-second-chip;
 
 	qflash0: s25fs512s@0 {
 		compatible = "spansion,m25p80";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		spi-max-frequency = <20000000>;
+		spi-max-frequency = <50000000>;
 		reg = <0>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <4>;
 	};
 
 	qflash1: s25fs512s@1 {
 		compatible = "spansion,m25p80";
 		#address-cells = <1>;
 		#size-cells = <1>;
-		spi-max-frequency = <20000000>;
+		spi-max-frequency = <50000000>;
 		reg = <1>;
+		spi-rx-bus-width = <4>;
+		spi-tx-bus-width = <4>;
 	};
 };
+
+#include "fsl-ls1046-post.dtsi"
 
 &fman0 {
 	ethernet@e4000 {
@@ -191,7 +154,7 @@
 	};
 
 	ethernet@f2000 { /* 10GEC2 */
-		fixed-link = <0 1 10000 0 0>;
+		fixed-link = <0 1 1000 0 0>;
 		phy-connection-type = "xgmii";
 	};
 
@@ -199,31 +162,25 @@
 		rgmii_phy1: ethernet-phy@1 {
 			reg = <0x1>;
 		};
+
 		rgmii_phy2: ethernet-phy@2 {
 			reg = <0x2>;
 		};
+
 		sgmii_phy1: ethernet-phy@3 {
 			reg = <0x3>;
 		};
+
 		sgmii_phy2: ethernet-phy@4 {
 			reg = <0x4>;
 		};
 	};
 
 	mdio@fd000 {
-		aqr106_phy: ethernet-phy@1 {
+		aqr106_phy: ethernet-phy@0 {
 			compatible = "ethernet-phy-ieee802.3-c45";
 			interrupts = <0 131 4>;
 			reg = <0x0>;
 		};
-	};
-};
-&fsldpaa {
-	ethernet@0 {
-		status = "disabled";
-	};
-
-	ethernet@1 {
-		status = "disabled";
 	};
 };

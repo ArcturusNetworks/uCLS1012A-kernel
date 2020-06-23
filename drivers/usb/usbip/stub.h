@@ -33,7 +33,6 @@
 #define STUB_BUSID_ALLOC 3
 
 struct stub_device {
-	struct usb_interface *interface;
 	struct usb_device *udev;
 
 	struct usbip_device ud;
@@ -88,6 +87,7 @@ struct bus_id_priv {
 	struct stub_device *sdev;
 	struct usb_device *udev;
 	char shutdown_busid;
+	spinlock_t busid_lock;
 };
 
 /* stub_priv is allocated from stub_priv_cache */
@@ -98,6 +98,7 @@ extern struct usb_device_driver stub_driver;
 
 /* stub_main.c */
 struct bus_id_priv *get_busid_priv(const char *busid);
+void put_busid_priv(struct bus_id_priv *bid);
 int del_match_busid(char *busid);
 void stub_device_cleanup_urbs(struct stub_device *sdev);
 

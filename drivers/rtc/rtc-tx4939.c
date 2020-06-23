@@ -86,7 +86,8 @@ static int tx4939_rtc_read_time(struct device *dev, struct rtc_time *tm)
 	for (i = 2; i < 6; i++)
 		buf[i] = __raw_readl(&rtcreg->dat);
 	spin_unlock_irq(&pdata->lock);
-	sec = (buf[5] << 24) | (buf[4] << 16) | (buf[3] << 8) | buf[2];
+	sec = ((unsigned long)buf[5] << 24) | (buf[4] << 16) |
+		(buf[3] << 8) | buf[2];
 	rtc_time_to_tm(sec, tm);
 	return rtc_valid_tm(tm);
 }
@@ -147,7 +148,8 @@ static int tx4939_rtc_read_alarm(struct device *dev, struct rtc_wkalrm *alrm)
 	alrm->enabled = (ctl & TX4939_RTCCTL_ALME) ? 1 : 0;
 	alrm->pending = (ctl & TX4939_RTCCTL_ALMD) ? 1 : 0;
 	spin_unlock_irq(&pdata->lock);
-	sec = (buf[5] << 24) | (buf[4] << 16) | (buf[3] << 8) | buf[2];
+	sec = ((unsigned long)buf[5] << 24) | (buf[4] << 16) |
+		(buf[3] << 8) | buf[2];
 	rtc_time_to_tm(sec, &alrm->time);
 	return rtc_valid_tm(&alrm->time);
 }
@@ -199,8 +201,7 @@ static ssize_t tx4939_rtc_nvram_read(struct file *filp, struct kobject *kobj,
 	ssize_t count;
 
 	spin_lock_irq(&pdata->lock);
-	for (count = 0; size > 0 && pos < TX4939_RTC_REG_RAMSIZE;
-	     count++, size--) {
+	for (count = 0; count < size; count++) {
 		__raw_writel(pos++, &rtcreg->adr);
 		*buf++ = __raw_readl(&rtcreg->dat);
 	}
@@ -218,8 +219,7 @@ static ssize_t tx4939_rtc_nvram_write(struct file *filp, struct kobject *kobj,
 	ssize_t count;
 
 	spin_lock_irq(&pdata->lock);
-	for (count = 0; size > 0 && pos < TX4939_RTC_REG_RAMSIZE;
-	     count++, size--) {
+	for (count = 0; count < size; count++) {
 		__raw_writel(pos++, &rtcreg->adr);
 		__raw_writel(*buf++, &rtcreg->dat);
 	}

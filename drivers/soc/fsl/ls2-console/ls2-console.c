@@ -61,11 +61,15 @@
 struct log_header {
 	char magic_word[8]; /* magic word */
 	uint32_t buf_start; /* holds the 32-bit little-endian
-		offset of the start of the buffer */
+			     * offset of the start of the buffer
+			     */
 	uint32_t buf_length; /* holds the 32-bit little-endian
-		length of the buffer */
+			      * length of the buffer
+			      */
 	uint32_t last_byte; /* holds the 32-bit little-endian offset
-		of the byte after the last byte that was written */
+			     * of the byte after the last byte that
+			     * was written
+			     */
 	char reserved[44];
 };
 
@@ -101,10 +105,9 @@ static inline void adjust_end(struct console_data *cd)
 
 static inline uint64_t get_mc_fw_base_address(void)
 {
-	uint32_t *mcfbaregs =
-		(uint32_t *) ioremap(SOC_CCSR_MC_FW_BASE_ADDR_REGS,
-				    SOC_CCSR_MC_FW_BASE_ADDR_REGS_SIZE);
-	uint64_t mcfwbase = 0ULL;
+	u32 *mcfbaregs = (u32 *) ioremap(SOC_CCSR_MC_FW_BASE_ADDR_REGS,
+					 SOC_CCSR_MC_FW_BASE_ADDR_REGS_SIZE);
+	u64 mcfwbase = 0ULL;
 
 	mcfwbase  = readl(mcfbaregs + MCFBAHR_OFFSET) & MC_FW_HIGH_ADDR_MASK;
 	mcfwbase <<= 32;
@@ -268,22 +271,9 @@ static int __init fsl_ls2_console_init(void)
 
 static void __exit fsl_ls2_console_exit(void)
 {
-	int err = misc_deregister(&fsl_ls2_mc_console_dev);
+	misc_deregister(&fsl_ls2_mc_console_dev);
 
-	if (err)
-		pr_err("Failed to deregister device %s code %d\n",
-		       fsl_ls2_mc_console_dev.name, err);
-	else
-		pr_info("device %s deregistered\n",
-			fsl_ls2_mc_console_dev.name);
-
-	err = misc_deregister(&fsl_ls2_aiop_console_dev);
-	if (err)
-		pr_err("Failed to deregister device %s code %d\n",
-		       fsl_ls2_aiop_console_dev.name, err);
-	else
-		pr_info("device %s deregistered\n",
-			fsl_ls2_aiop_console_dev.name);
+	misc_deregister(&fsl_ls2_aiop_console_dev);
 }
 
 module_init(fsl_ls2_console_init);

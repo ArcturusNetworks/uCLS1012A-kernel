@@ -1,21 +1,27 @@
 /*
-* ALSA SoC CX2070X codec driver
-*
-* Copyright:   (C) 2009/2010 Conexant Systems
-* Copyright:   (C) 2017 Arcturus Networks Inc.
-*                  by Oleksandr Zhadan
-*
-* This program is free software; you can redistribute it and/or modify
-* it under the terms of the GNU General Public License version 2 as
-* published by the Free Software Foundation.
-*
-*************************************************************************
-*  2017.08 : Linux 4.x kernel support added
-*  Based on :
-*    Modified Date:  12/02/13
-*    File Version:   3.8.0.21
-*************************************************************************
-*/
+ * ALSA SoC CX2070X codec driver
+ *
+ * Copyright:   (C) 2017-2020 Arcturus Networks Inc.
+ *                  by Oleksandr Zhadan
+ *
+ * based on cx2070x.c
+ * Copyright:   (C) 2009/2010 Conexant Systems
+ *		 by Simon Ho <simon.ho@conexant.com>
+ *
+ * This program is free software; you can redistribute it and/or modify
+ * it under the terms of the GNU General Public License version 2 as
+ * published by the Free Software Foundation.
+ *
+ *************************************************************************
+ *  2017.08 : Linux 4.x kernel support added
+ *  Based on :
+ *    Modified Date:  12/02/13
+ *    File Version:   3.8.0.21
+ *
+ *  2019.03 : fsl,imx-audio-cx2070x support added
+ *
+ *************************************************************************
+ */
 
 #include <linux/module.h>
 #include <linux/moduleparam.h>
@@ -34,35 +40,38 @@
 #include <sound/jack.h>
 #include <linux/slab.h>
 #include <linux/i2c.h>
+#include <linux/clk.h>
 #include <linux/spi/spi.h>
 #include <linux/firmware.h>
 #include <linux/regmap.h>
 
 #include "cx2070x.h"
 
+#define VOLATILE_FOR_ALL 1 //FIXME: remove the change after CX reset signal is fixed 
+
 extern int cx2070x_sysfs_alloc(struct cx2070x_priv *cx2070x);
 
 static const struct reg_default cx2070x_reg_defaults[] = {
-	{ CXREG_USB_LOCAL_VOLUME, 0x48 },
-	{ CXREG_CLOCK_DIVIDER, 0x77 },
-	{ CXREG_PORT1_CONTROL, 0xF2 },
-	{ CXREG_PORT1_TX_FRAME, 0x03 },
-	{ CXREG_PORT1_RX_FRAME, 0x03 },
-	{ CXREG_PORT1_TX_SYNC, 0x0F },
-	{ CXREG_PORT1_RX_SYNC, 0x0F },
-	{ CXREG_PORT1_CONTROL2, 0x05 },
-	{ CXREG_PORT1_RX_SLOT2, 0x04 },
-	{ CXREG_PORT1_TX_SLOT2, 0x04 },
-	{ CXREG_PORT1_DELAY, 0x01 },
-	{ CXREG_PORT2_FRAME, 0x07 },
-	{ CXREG_PORT2_SYNC, 0x1F },
-	{ CXREG_PORT2_SAMPLE, 0x01 },
-	{ CXREG_PORT2_RX_SLOT2, 0x04 },
-	{ CXREG_PORT2_TX_SLOT2, 0x04 },
-	{ CXREG_DSPDAC, 0xCE },
-	{ CXREG_CLASSD_GAIN, 0x0F },
-	{ CXREG_ADC1L_GAIN, 0xF2 },
-	{ CXREG_OUTPUT_CONTROL, 0x03 },
+	{CXREG_USB_LOCAL_VOLUME, 0x48},
+	{CXREG_CLOCK_DIVIDER, 0x77},
+	{CXREG_PORT1_CONTROL, 0xF2},
+	{CXREG_PORT1_TX_FRAME, 0x03},
+	{CXREG_PORT1_RX_FRAME, 0x03},
+	{CXREG_PORT1_TX_SYNC, 0x0F},
+	{CXREG_PORT1_RX_SYNC, 0x0F},
+	{CXREG_PORT1_CONTROL2, 0x05},
+	{CXREG_PORT1_RX_SLOT2, 0x04},
+	{CXREG_PORT1_TX_SLOT2, 0x04},
+	{CXREG_PORT1_DELAY, 0x01},
+	{CXREG_PORT2_FRAME, 0x07},
+	{CXREG_PORT2_SYNC, 0x1F},
+	{CXREG_PORT2_SAMPLE, 0x01},
+	{CXREG_PORT2_RX_SLOT2, 0x04},
+	{CXREG_PORT2_TX_SLOT2, 0x04},
+	{CXREG_DSPDAC, 0xCE},
+	{CXREG_CLASSD_GAIN, 0x0F},
+	{CXREG_ADC1L_GAIN, 0xF2},
+	{CXREG_OUTPUT_CONTROL, 0x03},
 };
 
 enum {
@@ -73,7 +82,7 @@ enum {
 	MEM_TYPE_EEPROM_RESET = 0x8003,
 };
 
-#define CX2070X_DRIVER_VERSION AUDDRV_VERSION(4, 0, 17, 31)
+#define CX2070X_DRIVER_VERSION AUDDRV_VERSION(5, 0, 20, 9)
 
 #define CX1070X_MAX_REGISTER 0X1300
 #define AUDIO_NAME	"cx2070x"
@@ -256,6 +265,7 @@ CX2070X_DSP_INPUT_ENUM("Mix0Input 0 Mux", CXREG_MIX0IN0_SOURCE,
     CX2070X_DSP_INPUT_ENUM("Stream 8 Mux", CXREG_DACSUBIN_SOURCE, stream8_input_mux)
     CX2070X_DSP_INPUT_ENUM("Stream 7 Mux", CXREG_USBOUT_SOURCE, stream9_input_mux)
 
+#if 0
 static const struct snd_kcontrol_new hp_switch =
 SOC_DAPM_SINGLE("Switch", CXREG_OUTPUT_CONTROL, 0, 1, 0);
 
@@ -264,6 +274,7 @@ SOC_DAPM_SINGLE("Switch", CXREG_OUTPUT_CONTROL, 2, 1, 0);
 
 static const struct snd_kcontrol_new lineout_switch =
 SOC_DAPM_SINGLE("Switch", CXREG_OUTPUT_CONTROL, 1, 1, 0);
+#endif
 
 static const struct snd_kcontrol_new function_gen_switch =
 SOC_DAPM_SINGLE("Switch", CXREG_DSP_ENDABLE, 5, 1, 0);
@@ -370,11 +381,11 @@ static const struct snd_soc_dapm_widget cx2070x_dapm_widgets[] = {
 			 &stream7_input_mux),
 	/*FIX ME, there is a register to switch output path. */
 	SND_SOC_DAPM_PGA("SPDIF Out", SND_SOC_NOPM, 0, 0, NULL, 0),
-	SND_SOC_DAPM_PGA("Headphone Switch", CXREG_OUTPUT_CONTROL, 0, 0,
+	SND_SOC_DAPM_PGA("Headphone", CXREG_OUTPUT_CONTROL, 0, 0,
 			 NULL, 0),
-	SND_SOC_DAPM_PGA("Class D Switch", CXREG_OUTPUT_CONTROL, 2, 0,
+	SND_SOC_DAPM_PGA("Class D", CXREG_OUTPUT_CONTROL, 2, 0,
 			 NULL, 0),
-	SND_SOC_DAPM_PGA("Line Out Switch", CXREG_OUTPUT_CONTROL, 1, 0,
+	SND_SOC_DAPM_PGA("Line Out", CXREG_OUTPUT_CONTROL, 1, 0,
 			 NULL, 0),
 
 	/* Stream 8 */
@@ -472,9 +483,9 @@ static const struct snd_soc_dapm_route cx2070x_routes[] = {
 	/* Stream 7 */
 	CX2070X_OUTPUT_SOURCE_MUX_ROUTES("Stream 7 Mux"),
 	{"SPDIF Out", NULL, "Stream 7 Mux"},
-	{"Headphone Switch", "Switch", "Stream 7 Mux"},
-	{"Class D Switch", "Switch", "Stream 7 Mux"},
-	{"Line Out Switch", "Switch", "Stream 7 Mux"},
+	{"Headphone", NULL, "Stream 7 Mux"},
+	{"Class D", NULL, "Stream 7 Mux"},
+	{"Line Out", NULL, "Stream 7 Mux"},
 
 	/* Stream 8 */
 	CX2070X_OUTPUT_SOURCE_MUX_ROUTES("Stream 8 Mux"),
@@ -485,11 +496,10 @@ static const struct snd_soc_dapm_route cx2070x_routes[] = {
 	{"USB Out", NULL, "Stream 9 Mux"},
 
 	/* DAPM Endpoint */
-	{"HPOUT", NULL, "Headphone Switch"},
-	{"SPKOUT", NULL, "Class D Switch"},
-	{"LINEOUT", NULL, "Line Out Switch"},
-	{"MONOOUT", NULL, "Class D Switch"},
-	{"LINEOUT", NULL, "Mono Out"},
+	{"HPOUT", NULL, "Headphone"},
+	{"SPKOUT", NULL, "Class D"},
+	{"LINEOUT", NULL, "Line Out"},
+	{"MONOOUT", NULL, "Mono Out"},
 	{"USBOUT", NULL, "USB Out"},
 };
 
@@ -828,12 +838,6 @@ static int cx2070x_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	return 0;
 }
 
-struct snd_soc_dai_ops cx2070x_dai_ops;
-
-struct snd_soc_dai_driver soc_codec_cx2070x_dai[NUM_OF_DAI];
-
-EXPORT_SYMBOL_GPL(soc_codec_cx2070x_dai);
-
 static int cx2070x_set_bias_level(struct snd_soc_codec *codec,
 				  enum snd_soc_bias_level level)
 {
@@ -843,7 +847,7 @@ static int cx2070x_set_bias_level(struct snd_soc_codec *codec,
 	case SND_SOC_BIAS_PREPARE:
 		break;
 	case SND_SOC_BIAS_STANDBY:
-		if (codec->dapm.bias_level == SND_SOC_BIAS_OFF) {
+		if (snd_soc_codec_get_bias_level(codec) == SND_SOC_BIAS_OFF) {
 			regcache_cache_only(cx2070x->regmap, false);
 			regcache_sync(cx2070x->regmap);
 			/*wake up */
@@ -861,7 +865,6 @@ static int cx2070x_set_bias_level(struct snd_soc_codec *codec,
 		break;
 	}
 
-	codec->dapm.bias_level = level;
 	return 0;
 }
 
@@ -1210,7 +1213,7 @@ extern void do_cx_dump(struct snd_soc_codec *codec);
 static int cx2070x_probe(struct snd_soc_codec *codec)
 {
 	struct cx2070x_priv *cx2070x = get_cx2070x_priv(codec);
-	u8 a1, a2, a3, a4, a5;
+	u8 a1, a2, a3, a4, a5, a6, a7, a8;
 
 	cx2070x->codec = codec;
 	codec->control_data = cx2070x->regmap;
@@ -1220,10 +1223,13 @@ static int cx2070x_probe(struct snd_soc_codec *codec)
 	a3 = snd_soc_read(codec, CXREG_FIRMWARE_VER_LO);
 	a4 = snd_soc_read(codec, CXREG_PATCH_VER_HI);
 	a5 = snd_soc_read(codec, CXREG_PATCH_VER_LO);
+	a6 = snd_soc_read(codec, CXREG_PATCH_HI);
+	a7 = snd_soc_read(codec, CXREG_PATCH_MED);
+	a8 = snd_soc_read(codec, CXREG_PATCH_LO);
 
 	dev_info(codec->dev,
-		 "CX2070%d, Firmware Version %x.%x.%x.%x\n",
-		 a1, a2, a3, a4, a5);
+		 "CX2070%d, Firmware Version %x.%x.%x.%x (%02x.%02x.%02x)\n",
+		 a1, a2, a3, a4, a5, a6, a7, a8);
 
 #if 0
 	do_cx_dump(codec);
@@ -1253,16 +1259,13 @@ static int cx2070x_resume(struct snd_soc_codec *codec)
 	cx2070x_set_bias_level(codec, SND_SOC_BIAS_STANDBY);
 	return 0;
 }
-#else
-#define cx2070x_suspend NULL
-#define cx2070x_resume NULL
 #endif
 
-struct snd_soc_codec_driver soc_codec_dev_cx2070x;
-static struct regmap_config cx2070x_regmap;
-
-static bool cx2070x_volatile_register(struct device *dev, unsigned int reg)
+static bool cx2070x_volatile(struct device *dev, unsigned int reg)
 {
+#if VOLATILE_FOR_ALL
+	return 1;
+#endif
 	switch (reg) {
 	case CXREG_ABCODE:
 	case CXREG_UPDATE_CTR:
@@ -1273,171 +1276,191 @@ static bool cx2070x_volatile_register(struct device *dev, unsigned int reg)
 	}
 }
 
-static int cx2070x_register_codec_driver(struct cx2070x_priv *cx2070x)
-{
-	int i;
-	int ret;
-	bool continue_probe = true;;
+static const struct snd_soc_dai_ops cx2070x_dai_ops = {
+	.hw_params = cx2070x_hw_params,
+	.digital_mute = cx2070x_mute,
+	.set_fmt = cx2070x_set_dai_fmt,
+	.set_sysclk = cx2070x_set_dai_sysclk,
+};
 
-	/*this is nesscarry for non gcc compilier */
-	memset(&cx2070x_dai_ops, 0, sizeof(cx2070x_dai_ops));
-	cx2070x_dai_ops.set_sysclk = cx2070x_set_dai_sysclk;
-	cx2070x_dai_ops.set_fmt = cx2070x_set_dai_fmt;
-	cx2070x_dai_ops.digital_mute = cx2070x_mute;
-	cx2070x_dai_ops.hw_params = cx2070x_hw_params;
+static struct snd_soc_dai_driver cx2070x_dai[] = {
+	{
+	 .name = DAI_DP1_NAME,
+	 .playback = {
+		      .stream_name = PLAYBACK_STREAM_NAME_1,
+		      .channels_min = 1,
+		      .channels_max = 2,
+		      .rates = CX2070X_RATES,
+		      .formats = CX2070X_FORMATS,
+		      },
+	 .capture = {
+		     .stream_name = CAPTURE_STREAM_NAME_1,
+		     .channels_min = 1,
+		     .channels_max = 2,
+		     .rates = CX2070X_RATES,
+		     .formats = CX2070X_FORMATS,
+		     },
+	 .ops = &cx2070x_dai_ops,
+	 .symmetric_rates = 1,
+	 },
+	{
+	 .name = DAI_DP2_NAME,
+	 .playback = {
+		      .stream_name = PLAYBACK_STREAM_NAME_2,
+		      .channels_min = 1,
+		      .channels_max = 2,
+		      .rates = CX2070X_RATES,
+		      .formats = CX2070X_FORMATS,
+		      },
+	 .capture = {
+		     .stream_name = CAPTURE_STREAM_NAME_2,
+		     .channels_min = 1,
+		     .channels_max = 2,
+		     .rates = CX2070X_RATES,
+		     .formats = CX2070X_FORMATS,
+		     },
+	 .ops = &cx2070x_dai_ops,
+	 .symmetric_rates = 1,
+	 }
+};
 
-	/*this is nesscarry for non gcc compilier */
-	memset(soc_codec_cx2070x_dai, 0, sizeof(soc_codec_cx2070x_dai));
-	for (i = 0; i < NUM_OF_DAI; i++) {
-		soc_codec_cx2070x_dai[i].name =
-		    i == 0 ? DAI_DP1_NAME : DAI_DP2_NAME;
-		soc_codec_cx2070x_dai[i].ops = &cx2070x_dai_ops;
-		soc_codec_cx2070x_dai[i].capture.stream_name =
-		    i == 0 ? CAPTURE_STREAM_NAME_1 : CAPTURE_STREAM_NAME_2;
-		soc_codec_cx2070x_dai[i].capture.formats = CX2070X_FORMATS;
-		soc_codec_cx2070x_dai[i].capture.rates = CX2070X_RATES;
-		soc_codec_cx2070x_dai[i].capture.channels_min = 1;
-		soc_codec_cx2070x_dai[i].capture.channels_max = 2;
-		soc_codec_cx2070x_dai[i].playback.stream_name =
-		    i == 0 ? PLAYBACK_STREAM_NAME_1 : PLAYBACK_STREAM_NAME_2;
-		soc_codec_cx2070x_dai[i].playback.formats = CX2070X_FORMATS;
-		soc_codec_cx2070x_dai[i].playback.rates = CX2070X_RATES;
-		soc_codec_cx2070x_dai[i].playback.channels_min = 1;
-		soc_codec_cx2070x_dai[i].playback.channels_max = 2;
-		soc_codec_cx2070x_dai[i].symmetric_rates = 1;
-	}
-	/*this is nesscarry for non gcc compilier */
-	memset(&soc_codec_dev_cx2070x, 0, sizeof(soc_codec_dev_cx2070x));
-	soc_codec_dev_cx2070x.probe = cx2070x_probe;
-	soc_codec_dev_cx2070x.remove = cx2070x_remove;
-	soc_codec_dev_cx2070x.suspend = cx2070x_suspend;
-	soc_codec_dev_cx2070x.resume = cx2070x_resume;
-
-	soc_codec_dev_cx2070x.controls = cx2070x_snd_controls;
-	soc_codec_dev_cx2070x.num_controls = ARRAY_SIZE(cx2070x_snd_controls);
-	soc_codec_dev_cx2070x.dapm_widgets = cx2070x_dapm_widgets;
-	soc_codec_dev_cx2070x.num_dapm_widgets =
-	    ARRAY_SIZE(cx2070x_dapm_widgets);
-	soc_codec_dev_cx2070x.dapm_routes = cx2070x_routes;
-	soc_codec_dev_cx2070x.num_dapm_routes = ARRAY_SIZE(cx2070x_routes);
-	soc_codec_dev_cx2070x.set_bias_level = cx2070x_set_bias_level;
-#ifdef CONFIG_SND_SOC_CX2070X_FW_PATCH
-	dev_info(cx2070x->dev, "waiting for firmware %s\n",
-		 CX2070X_FIRMWARE_FILENAME);
-
-	ret =
-	    request_firmware_nowait(THIS_MODULE, FW_ACTION_HOTPLUG,
-				    CX2070X_FIRMWARE_FILENAME, cx2070x->dev,
-				    GFP_KERNEL, cx2070x, cx2070x_firmware_cont);
-	if (ret) {
-		dev_err(cx2070x->dev, "Failed to load firmware %x\n",
-			CX2070X_FIRMWARE_FILENAME);
-		return ret;
-	}
-	continue_probe = false;
+static struct snd_soc_codec_driver cx2070x_driver = {
+	.probe = cx2070x_probe,
+	.remove = cx2070x_remove,
+#ifdef CONFIG_PM
+	.suspend = cx2070x_suspend,
+	.resume = cx2070x_resume,
 #endif
-	if (continue_probe) {
-		ret =
-		    snd_soc_register_codec(cx2070x->dev, &soc_codec_dev_cx2070x,
-					   soc_codec_cx2070x_dai, NUM_OF_DAI);
-		if (ret < 0)
-			dev_err(cx2070x->dev, "Failed to register codec: %d\n",
-				ret);
-		else
-			dev_dbg(cx2070x->dev, "%s: Register codec.\n",
-				__func__);
-	}
-	return ret;
-}
+	.set_bias_level = cx2070x_set_bias_level,
+	.suspend_bias_off = true,
+	.component_driver = {
+			     .controls = cx2070x_snd_controls,
+			     .num_controls = ARRAY_SIZE(cx2070x_snd_controls),
+			     .dapm_widgets = cx2070x_dapm_widgets,
+			     .num_dapm_widgets =
+			     ARRAY_SIZE(cx2070x_dapm_widgets),
+			     .dapm_routes = cx2070x_routes,
+			     .num_dapm_routes = ARRAY_SIZE(cx2070x_routes),
+			     },
+};
 
-#if defined(CONFIG_SPI_MASTER)
-static int cx2070x_spi_probe(struct spi_device *spi)
+static const struct regmap_config cx2070x_regmap = {
+	.reg_bits = 16,
+	.val_bits = 8,
+	.max_register = CX2070X_REG_MAX,
+	.volatile_reg = cx2070x_volatile,
+	.cache_type = REGCACHE_RBTREE,
+	.reg_defaults = cx2070x_reg_defaults,
+	.num_reg_defaults = ARRAY_SIZE(cx2070x_reg_defaults),
+};
+
+/*
+ * Write all the default values from cx2070x_reg_defaults[] array into the
+ * cx2070x registers, to make sure we always start with the sane registers
+ * values as stated in the datasheet.
+ */
+static void cx2070x_fill_defaults(struct i2c_client *client)
 {
-	struct cx2070x_priv *cx2070x;
-	int ret;
+	struct cx2070x_priv *cx2070x = i2c_get_clientdata(client);
+	int i, ret, val, index;
 
-	cx2070x =
-	    (struct cx2070x_priv *)devm_kzalloc(&spi->dev,
-						sizeof(struct cx2070x_priv),
-						GFP_KERNEL);
-	if (cx2070x == NULL) {
-		dev_err(&spi->dev, "Out of memory!\n");
-		return -ENOMEM;
+	for (i = 0; i < ARRAY_SIZE(cx2070x_reg_defaults); i++) {
+		val = cx2070x_reg_defaults[i].def;
+		index = cx2070x_reg_defaults[i].reg;
+		ret = regmap_write(cx2070x->regmap, index, val);
+		if (ret)
+			dev_err(&client->dev,
+				"%s: error %d setting reg 0x%02x to 0x%04x\n",
+				__func__, ret, index, val);
 	}
-	spi_set_drvdata(spi, cx2070x);
-
-	cx2070x_regmap.reg_bits = 16;
-	cx2070x_regmap.val_bits = 8;
-	cx2070x_regmap.max_register = CX2070X_REG_MAX;
-	cx2070x_regmap.write_flag_mask = CX2070X_SPI_WRITE_FLAG;
-	cx2070x_regmap.volatile_reg = cx2070x_volatile_register;
-	cx2070x_regmap.cache_type = REGCACHE_RBTREE;
-
-	cx2070x->regmap = devm_regmap_init_spi(spi, &cx2070x_regmap);
-	if (IS_ERR(&cx2070x->regmap)) {
-		ret = PTR_ERR(cx2070x->regmap);
-		dev_err(&spi->dev, "Failed to init regmap: %d\n", ret);
-		return ret;
+	regmap_read(cx2070x->regmap, CXREG_DSP_INIT_NEWC, &val);
+	regmap_write(cx2070x->regmap, CXREG_DSP_INIT_NEWC, val | 1);
+	for (i = 0; i < 50; i++) {
+		regmap_read(cx2070x->regmap, CXREG_DSP_INIT_NEWC, &val);
+		if (0 == (val & 1))
+			return;
+		udelay(1);
 	}
-
-	cx2070x->dev = &spi->dev;
-	cx2070x->codec_drv = &soc_codec_dev_cx2070x;
-	cx2070x->dai_drv = soc_codec_cx2070x_dai;
-	cx2070x->num_dai = NUM_OF_DAI;
-
-	return cx2070x_register_codec_driver(cx2070x);
 }
 
-static int cx2070x_spi_remove(struct spi_device *spi)
-{
-	snd_soc_unregister_codec(&spi->dev);
-	return 0;
-}
-
-static struct spi_driver cx2070x_spi_driver;
-#endif
-
-#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-static int cx2070x_i2c_probe(struct i2c_client *i2c,
+static int cx2070x_i2c_probe(struct i2c_client *client,
 			     const struct i2c_device_id *id)
 {
 	struct cx2070x_priv *cx2070x;
-	int ret = 0;
+	int reg, ret = 0;
 
-	cx2070x =
-	    (struct cx2070x_priv *)devm_kzalloc(&i2c->dev,
-						sizeof(struct cx2070x_priv),
-						GFP_KERNEL);
-	if (cx2070x == NULL) {
-		dev_err(&i2c->dev, "Out of memory!\n");
+	cx2070x = devm_kzalloc(&client->dev, sizeof(*cx2070x), GFP_KERNEL);
+	if (!cx2070x) {
+		dev_err(&client->dev, "Out of memory!\n");
 		return -ENOMEM;
 	}
+	i2c_set_clientdata(client, cx2070x);
 
-	i2c_set_clientdata(i2c, cx2070x);
-
-	cx2070x_regmap.reg_bits = 16;
-	cx2070x_regmap.val_bits = 8;
-	cx2070x_regmap.max_register = CX2070X_REG_MAX;
-	cx2070x_regmap.reg_defaults = cx2070x_reg_defaults,
-	cx2070x_regmap.num_reg_defaults = ARRAY_SIZE(cx2070x_reg_defaults),
-	cx2070x_regmap.volatile_reg = cx2070x_volatile_register;
-	cx2070x_regmap.cache_type = REGCACHE_RBTREE;
-
-	cx2070x->regmap = devm_regmap_init_i2c(i2c, &cx2070x_regmap);
-	if (IS_ERR(&cx2070x->regmap)) {
+	cx2070x->regmap = devm_regmap_init_i2c(client, &cx2070x_regmap);
+	if (IS_ERR(cx2070x->regmap)) {
 		ret = PTR_ERR(cx2070x->regmap);
-		dev_err(&i2c->dev, "Failed to init regmap: %d\n", ret);
-		return ret;
+		dev_err(&client->dev, "Failed to allocate regmap: %d\n", ret);
+		goto disable_regs;
 	}
 
-	cx2070x->dev = &i2c->dev;
-	cx2070x->codec_drv = &soc_codec_dev_cx2070x;
-	cx2070x->dai_drv = soc_codec_cx2070x_dai;
+	cx2070x->mclk = devm_clk_get(&client->dev, NULL);
+	if (IS_ERR(cx2070x->mclk)) {
+		ret = PTR_ERR(cx2070x->mclk);
+		dev_err(&client->dev, "Failed to get mclock: %d\n", ret);
+		/* Defer the probe to see if the clk will be provided later */
+		if (ret == -ENOENT)
+			ret = -EPROBE_DEFER;
+		goto disable_regs;
+	}
+
 	cx2070x->num_dai = NUM_OF_DAI;
-	cx2070x->cx_i2c = i2c;
+
+	ret = clk_prepare_enable(cx2070x->mclk);
+	if (ret) {
+		dev_err(&client->dev, "Error enabling clock %d\n", ret);
+		goto disable_regs;
+	}
+
+	/* Need 8 clocks before I2C accesses */
+	udelay(20);
+
+	/* dummy read chip information */
+	ret = regmap_read(cx2070x->regmap, CXREG_CHIP_VERSION, &reg);
+	ret = regmap_read(cx2070x->regmap, CXREG_CHIP_VERSION, &reg);
+	if (ret) {
+		dev_err(&client->dev, "Error reading chip version %d\n", ret);
+		goto disable_clk;
+	}
+
+	cx2070x->version = ret;
+	cx2070x->num_dai = NUM_OF_DAI;
+	cx2070x->cx_i2c = client;
+	cx2070x->dev = &client->dev;
+	cx2070x->codec_drv = &cx2070x_driver;
+	cx2070x->dai_drv = cx2070x_dai;
 	mutex_init(&cx2070x->update_lock);
 
-	return cx2070x_register_codec_driver(cx2070x);
+	/* Ensure cx2070x will start with sane register values */
+//      cx2070x_fill_defaults(client);
+
+	ret =
+	    snd_soc_register_codec(&client->dev, &cx2070x_driver, cx2070x_dai,
+				   NUM_OF_DAI);
+	if (ret)
+		goto disable_clk;
+
+	dev_info(&client->dev, "codec driver version %d.%d.%d.%d\n",
+		 (u8) ((CX2070X_DRIVER_VERSION) >> 24),
+		 (u8) ((CX2070X_DRIVER_VERSION) >> 16),
+		 (u8) ((CX2070X_DRIVER_VERSION) >> 8),
+		 (u8) ((CX2070X_DRIVER_VERSION)));
+
+	return 0;
+
+disable_clk:
+disable_regs:
+
+	return ret;
 }
 
 static int cx2070x_i2c_remove(struct i2c_client *client)
@@ -1446,62 +1469,32 @@ static int cx2070x_i2c_remove(struct i2c_client *client)
 	return 0;
 }
 
-static const struct i2c_device_id cx2070x_i2c_id[] = {
-	{CX2070X_I2C_DRIVER_NAME, 0},
+static const struct i2c_device_id cx2070x_id[] = {
+	{"cx2070x", 0},
+	{},
+};
+
+MODULE_DEVICE_TABLE(i2c, cx2070x_id);
+
+static const struct of_device_id cx2070x_dt_ids[] = {
+	{.compatible = "conexant,cx2070x",},
 	{}
 };
 
-MODULE_DEVICE_TABLE(i2c, cx2070x_i2c_id);
-#endif
+MODULE_DEVICE_TABLE(of, cx2070x_dt_ids);
 
-static struct i2c_driver cx2070x_i2c_driver;
+static struct i2c_driver cx2070x_i2c_driver = {
+	.driver = {
+		   .name = "cx2070x",
+		   .of_match_table = cx2070x_dt_ids,
+		   },
+	.probe = cx2070x_i2c_probe,
+	.remove = cx2070x_i2c_remove,
+	.id_table = cx2070x_id,
+};
 
-int __init cx2070x_modinit(void)
-{
-	int ret = 0;
-#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-	memset(&cx2070x_i2c_driver, 0, sizeof(struct i2c_driver));
-	cx2070x_i2c_driver.probe = cx2070x_i2c_probe;
-	cx2070x_i2c_driver.remove = cx2070x_i2c_remove;
-	cx2070x_i2c_driver.id_table = cx2070x_i2c_id;
-	cx2070x_i2c_driver.driver.name = CX2070X_I2C_DRIVER_NAME;
-	cx2070x_i2c_driver.driver.owner = THIS_MODULE;
+module_i2c_driver(cx2070x_i2c_driver);
 
-	ret = i2c_add_driver(&cx2070x_i2c_driver);
-	if (ret != 0)
-		printk(KERN_ERR "Failed to register cx2070x I2C driver: %d\n",
-		       ret);
-#endif
-
-#if defined(CONFIG_SPI_MASTER)
-	cx2070x_spi_driver.driver.name = CX2070X_SPI_DRIVER_NAME;
-	cx2070x_spi_driver.driver.owner = THIS_MODULE;
-	cx2070x_spi_driver.probe =
-	    cx2070x_spi_probe, cx2070x_spi_driver.remove = cx2070x_spi_remove;
-
-	ret = spi_register_driver(&cx2070x_spi_driver);
-	if (ret)
-		printk(KERN_ERR "Failed to register cx2070x SPI driver %d\n",
-		       ret);
-#endif
-	return ret;
-}
-
-module_init(cx2070x_modinit);
-
-static void __exit cx2070x_exit(void)
-{
-#if defined(CONFIG_I2C) || defined(CONFIG_I2C_MODULE)
-	i2c_del_driver(&cx2070x_i2c_driver);
-#endif
-#if defined(CONFIG_SPI_MASTER)
-	spi_unregister_driver(&cx2070x_spi_driver);
-#endif
-}
-
-module_exit(cx2070x_exit);
-
-EXPORT_SYMBOL_GPL(soc_codec_dev_cx2070x);
 MODULE_DESCRIPTION("ASoC cx2070x Codec Driver");
-MODULE_AUTHOR("Simon Ho <simon.ho@conexant.com>");
+MODULE_AUTHOR("Oleksandr Zhadan <www.arcturusnetworks.com>");
 MODULE_LICENSE("GPL");

@@ -133,12 +133,11 @@ static int pxa_irq_map(struct irq_domain *h, unsigned int virq,
 	irq_set_chip_and_handler(virq, &pxa_internal_irq_chip,
 				 handle_level_irq);
 	irq_set_chip_data(virq, base);
-	set_irq_flags(virq, IRQF_VALID);
 
 	return 0;
 }
 
-static struct irq_domain_ops pxa_irq_ops = {
+static const struct irq_domain_ops pxa_irq_ops = {
 	.map    = pxa_irq_map,
 	.xlate  = irq_domain_xlate_onecell,
 };
@@ -186,7 +185,7 @@ static int pxa_irq_suspend(void)
 {
 	int i;
 
-	for (i = 0; i < pxa_internal_irq_nr / 32; i++) {
+	for (i = 0; i < DIV_ROUND_UP(pxa_internal_irq_nr, 32); i++) {
 		void __iomem *base = irq_base(i);
 
 		saved_icmr[i] = __raw_readl(base + ICMR);
@@ -205,7 +204,7 @@ static void pxa_irq_resume(void)
 {
 	int i;
 
-	for (i = 0; i < pxa_internal_irq_nr / 32; i++) {
+	for (i = 0; i < DIV_ROUND_UP(pxa_internal_irq_nr, 32); i++) {
 		void __iomem *base = irq_base(i);
 
 		__raw_writel(saved_icmr[i], base + ICMR);

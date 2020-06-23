@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * kdb helper for dumping the ftrace buffer
  *
@@ -21,41 +22,41 @@ static void ftrace_dump_buf(int skip_lines, long cpu_file)
 	/* use static because iter can be a bit big for the stack */
 	static struct trace_iterator iter;
 	static struct ring_buffer_iter *buffer_iter[CONFIG_NR_CPUS];
+	struct trace_array *tr;
 	unsigned int old_userobj;
 	int cnt = 0, cpu;
 
 	trace_init_global_iter(&iter);
 	iter.buffer_iter = buffer_iter;
+	tr = iter.tr;
 
 	for_each_tracing_cpu(cpu) {
 		atomic_inc(&per_cpu_ptr(iter.trace_buffer->data, cpu)->disabled);
 	}
 
-	old_userobj = trace_flags;
+	old_userobj = tr->trace_flags;
 
 	/* don't look at user memory in panic mode */
-	trace_flags &= ~TRACE_ITER_SYM_USEROBJ;
+	tr->trace_flags &= ~TRACE_ITER_SYM_USEROBJ;
 
 	kdb_printf("Dumping ftrace buffer:\n");
 
-	/* reset all but tr, trace, and overruns */
-	memset(&iter.seq, 0,
-		   sizeof(struct trace_iterator) -
-		   offsetof(struct trace_iterator, seq));
+	trace_iterator_reset(&iter);
 	iter.iter_flags |= TRACE_FILE_LAT_FMT;
-	iter.pos = -1;
 
 	if (cpu_file == RING_BUFFER_ALL_CPUS) {
 		for_each_tracing_cpu(cpu) {
 			iter.buffer_iter[cpu] =
-			ring_buffer_read_prepare(iter.trace_buffer->buffer, cpu);
+			ring_buffer_read_prepare(iter.trace_buffer->buffer,
+						 cpu, GFP_ATOMIC);
 			ring_buffer_read_start(iter.buffer_iter[cpu]);
 			tracing_iter_reset(&iter, cpu);
 		}
 	} else {
 		iter.cpu_file = cpu_file;
 		iter.buffer_iter[cpu_file] =
-			ring_buffer_read_prepare(iter.trace_buffer->buffer, cpu_file);
+			ring_buffer_read_prepare(iter.trace_buffer->buffer,
+						 cpu_file, GFP_ATOMIC);
 		ring_buffer_read_start(iter.buffer_iter[cpu_file]);
 		tracing_iter_reset(&iter, cpu_file);
 	}
@@ -82,7 +83,7 @@ static void ftrace_dump_buf(int skip_lines, long cpu_file)
 		kdb_printf("---------------------------------\n");
 
 out:
-	trace_flags = old_userobj;
+	tr->trace_flags = old_userobj;
 
 	for_each_tracing_cpu(cpu) {
 		atomic_dec(&per_cpu_ptr(iter.trace_buffer->data, cpu)->disabled);

@@ -16,12 +16,13 @@
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/of.h>
+#include <linux/of_address.h>
 #include <linux/delay.h>
 #include <linux/module.h>
-#include <linux/of_address.h>
+#include <linux/sys_soc.h>
 #include <linux/clk.h>
-#include <linux/fsl/svr.h>
-#include <linux/fsl/guts.h>
+#include <linux/ktime.h>
+#include <linux/dma-mapping.h>
 #include <linux/mmc/host.h>
 #include "sdhci-pltfm.h"
 #include "sdhci-esdhc.h"
@@ -29,24 +30,61 @@
 #define VENDOR_V_22	0x12
 #define VENDOR_V_23	0x13
 
-/* eSDHC Adapter Card Type */
-#define ESDHC_ADAPTER_TYPE_EMMC45	0x1	/* eMMC Card Rev4.5 */
-#define ESDHC_ADAPTER_TYPE_SDMMC_LEGACY	0x2	/* SD/MMC Legacy Card */
-#define ESDHC_ADAPTER_TYPE_EMMC44	0x3	/* eMMC Card Rev4.4 */
-#define ESDHC_ADAPTER_TYPE_RSV		0x4	/* Reserved */
-#define ESDHC_ADAPTER_TYPE_MMC		0x5	/* MMC Card */
-#define ESDHC_ADAPTER_TYPE_SD		0x6	/* SD Card Rev2.0 3.0 */
-#define ESDHC_NO_ADAPTER		0x7	/* No Card is Present*/
+#define MMC_TIMING_NUM (MMC_TIMING_MMC_HS400 + 1)
 
-static void esdhc_clock_control(struct sdhci_host *host, bool enable);
+struct esdhc_clk_fixup {
+	const unsigned int sd_dflt_max_clk;
+	const unsigned int max_clk[MMC_TIMING_NUM];
+};
+
+static const struct esdhc_clk_fixup ls1021a_esdhc_clk = {
+	.sd_dflt_max_clk = 25000000,
+	.max_clk[MMC_TIMING_MMC_HS] = 46500000,
+	.max_clk[MMC_TIMING_SD_HS] = 46500000,
+};
+
+static const struct esdhc_clk_fixup ls1046a_esdhc_clk = {
+	.sd_dflt_max_clk = 25000000,
+	.max_clk[MMC_TIMING_UHS_SDR104] = 167000000,
+	.max_clk[MMC_TIMING_MMC_HS200] = 167000000,
+};
+
+static const struct esdhc_clk_fixup ls1012a_esdhc_clk = {
+	.sd_dflt_max_clk = 25000000,
+	.max_clk[MMC_TIMING_UHS_SDR104] = 125000000,
+	.max_clk[MMC_TIMING_MMC_HS200] = 125000000,
+};
+
+static const struct esdhc_clk_fixup p1010_esdhc_clk = {
+	.sd_dflt_max_clk = 20000000,
+	.max_clk[MMC_TIMING_LEGACY] = 20000000,
+	.max_clk[MMC_TIMING_MMC_HS] = 42000000,
+	.max_clk[MMC_TIMING_SD_HS] = 40000000,
+};
+
+static const struct of_device_id sdhci_esdhc_of_match[] = {
+	{ .compatible = "fsl,ls1021a-esdhc", .data = &ls1021a_esdhc_clk},
+	{ .compatible = "fsl,ls1046a-esdhc", .data = &ls1046a_esdhc_clk},
+	{ .compatible = "fsl,ls1012a-esdhc", .data = &ls1012a_esdhc_clk},
+	{ .compatible = "fsl,p1010-esdhc",   .data = &p1010_esdhc_clk},
+	{ .compatible = "fsl,mpc8379-esdhc" },
+	{ .compatible = "fsl,mpc8536-esdhc" },
+	{ .compatible = "fsl,esdhc" },
+	{ }
+};
+MODULE_DEVICE_TABLE(of, sdhci_esdhc_of_match);
 
 struct sdhci_esdhc {
 	u8 vendor_ver;
 	u8 spec_ver;
-	u32 soc_ver;
-	u8 soc_rev;
-	u8 adapter_type;
+	bool quirk_incorrect_hostver;
+	bool quirk_limited_clk_division;
+	bool quirk_unreliable_pulse_detection;
+	bool quirk_fixup_tuning;
+	bool quirk_incorrect_delay_chain;
 	unsigned int peripheral_clock;
+	const struct esdhc_clk_fixup *clk_fixup;
+	u32 div_ratio;
 };
 
 /**
@@ -68,9 +106,7 @@ static u32 esdhc_readl_fixup(struct sdhci_host *host,
 				     int spec_reg, u32 value)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_esdhc *esdhc = pltfm_host->priv;
-	u32 clsl;
-	u32 dlsl;
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 	u32 ret;
 
 	/*
@@ -87,42 +123,31 @@ static u32 esdhc_readl_fixup(struct sdhci_host *host,
 			return ret;
 		}
 	}
-
-	if (spec_reg == SDHCI_CAPABILITIES_1) {
-		switch (esdhc->adapter_type) {
-		case ESDHC_ADAPTER_TYPE_EMMC45:
-			if (value & ESDHC_SPEED_MODE_SDR104)
-				host->mmc->caps2 |= MMC_CAP2_HS200;
-			break;
-		case ESDHC_ADAPTER_TYPE_SDMMC_LEGACY:
-			if (value & ESDHC_SPEED_MODE_MASK) {
-				/* If it exists UHS-I support, enable SDR50 */
-				host->mmc->caps |= (MMC_CAP_UHS_SDR50 |
-						    MMC_CAP_UHS_SDR25 |
-						    MMC_CAP_UHS_SDR12);
-			}
-			break;
-		case ESDHC_ADAPTER_TYPE_EMMC44:
-			if (value & ESDHC_SPEED_MODE_DDR50) {
-				ret = value & ESDHC_SPEED_MODE_DDR50_SEL;
-				/* enable 1/8V DDR capable */
-				host->mmc->caps |= MMC_CAP_1_8V_DDR;
-				return ret;
-			}
-			break;
-		}
-		ret = value & (~ESDHC_SPEED_MODE_MASK);
-		return ret;
-	}
-
+	/*
+	 * The DAT[3:0] line signal levels and the CMD line signal level are
+	 * not compatible with standard SDHC register. The line signal levels
+	 * DAT[7:0] are at bits 31:24 and the command line signal level is at
+	 * bit 23. All other bits are the same as in the standard SDHC
+	 * register.
+	 */
 	if (spec_reg == SDHCI_PRESENT_STATE) {
-		clsl = value & ESDHC_CLSL_MASK;
-		dlsl = value & ESDHC_DLSL_MASK;
-		ret = value &
-		      (~((ESDHC_CLSL_MASK << 1) | (ESDHC_DLSL_MASK >> 4)));
-		ret |= ((clsl << 1) | (dlsl >> 4));
+		ret = value & 0x000fffff;
+		ret |= (value >> 4) & SDHCI_DATA_LVL_MASK;
+		ret |= (value << 1) & SDHCI_CMD_LVL;
 		return ret;
 	}
+
+	/*
+	 * DTS properties of mmc host are used to enable each speed mode
+	 * according to soc and board capability. So clean up
+	 * SDR50/SDR104/DDR50 support bits here.
+	 */
+	if (spec_reg == SDHCI_CAPABILITIES_1) {
+		ret = value & ~(SDHCI_SUPPORT_SDR50 | SDHCI_SUPPORT_SDR104 |
+				SDHCI_SUPPORT_DDR50);
+		return ret;
+	}
+
 	ret = value;
 	return ret;
 }
@@ -131,7 +156,7 @@ static u16 esdhc_readw_fixup(struct sdhci_host *host,
 				     int spec_reg, u32 value)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_esdhc *esdhc = pltfm_host->priv;
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 	u16 ret;
 	int shift = (spec_reg & 0x2) * 8;
 
@@ -139,15 +164,11 @@ static u16 esdhc_readw_fixup(struct sdhci_host *host,
 		ret = value & 0xffff;
 	else
 		ret = (value >> shift) & 0xffff;
-
-	/* Workaround for T4240-4160-4080-R1.0-R2.0 eSDHC which has incorrect
+	/* Workaround for T4240-R1.0-R2.0 eSDHC which has incorrect
 	 * vendor version and spec version information.
 	 */
 	if ((spec_reg == SDHCI_HOST_VERSION) &&
-	    ((esdhc->soc_ver == SVR_T4240) ||
-	     (esdhc->soc_ver == SVR_T4160) ||
-	     (esdhc->soc_ver == SVR_T4080)) &&
-	    (esdhc->soc_rev <= 0x20))
+	    (esdhc->quirk_incorrect_hostver))
 		ret = (VENDOR_V_23 << SDHCI_VENDOR_VER_SHIFT) | SDHCI_SPEC_200;
 	return ret;
 }
@@ -278,8 +299,6 @@ static u32 esdhc_writeb_fixup(struct sdhci_host *host,
 
 		/* Prevent SDHCI core from writing reserved bits (e.g. HISPD) */
 		ret &= ~ESDHC_HOST_CONTROL_RES;
-		ret &= ~SDHCI_CTRL_HISPD;
-		ret |= (old_value & SDHCI_CTRL_HISPD);
 		return ret;
 	}
 
@@ -292,15 +311,11 @@ static u32 esdhc_be_readl(struct sdhci_host *host, int reg)
 	u32 ret;
 	u32 value;
 
-	/*
-	 * The eSDHC CAPABILITIES_1 register has a large address offset
-	 * from the standard CAPABILITIES_1 register. So, we have to
-	 * fix this here rather than in fixup function.
-	 */
 	if (reg == SDHCI_CAPABILITIES_1)
 		value = ioread32be(host->ioaddr + ESDHC_CAPABILITIES_1);
 	else
 		value = ioread32be(host->ioaddr + reg);
+
 	ret = esdhc_readl_fixup(host, reg, value);
 
 	return ret;
@@ -311,15 +326,11 @@ static u32 esdhc_le_readl(struct sdhci_host *host, int reg)
 	u32 ret;
 	u32 value;
 
-	/*
-	 * The eSDHC CAPABILITIES_1 register has a large address offset
-	 * from the standard CAPABILITIES_1 register. So, we have to
-	 * fix this here rather than in fixup function.
-	 */
 	if (reg == SDHCI_CAPABILITIES_1)
 		value = ioread32(host->ioaddr + ESDHC_CAPABILITIES_1);
 	else
 		value = ioread32(host->ioaddr + reg);
+
 	ret = esdhc_readl_fixup(host, reg, value);
 
 	return ret;
@@ -441,7 +452,7 @@ static void esdhc_le_writeb(struct sdhci_host *host, u8 val, int reg)
 static void esdhc_of_adma_workaround(struct sdhci_host *host, u32 intmask)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_esdhc *esdhc = pltfm_host->priv;
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 	bool applicable;
 	dma_addr_t dmastart;
 	dma_addr_t dmanow;
@@ -449,102 +460,29 @@ static void esdhc_of_adma_workaround(struct sdhci_host *host, u32 intmask)
 	applicable = (intmask & SDHCI_INT_DATA_END) &&
 		     (intmask & SDHCI_INT_BLK_GAP) &&
 		     (esdhc->vendor_ver == VENDOR_V_23);
-	if (applicable) {
-
-		sdhci_reset(host, SDHCI_RESET_DATA);
-		host->data->error = 0;
-		dmastart = sg_dma_address(host->data->sg);
-		dmanow = dmastart + host->data->bytes_xfered;
-		/*
-		 * Force update to the next DMA block boundary.
-		 */
-		dmanow = (dmanow & ~(SDHCI_DEFAULT_BOUNDARY_SIZE - 1)) +
-			SDHCI_DEFAULT_BOUNDARY_SIZE;
-		host->data->bytes_xfered = dmanow - dmastart;
-		sdhci_writel(host, dmanow, SDHCI_DMA_ADDRESS);
-
+	if (!applicable)
 		return;
-	}
 
+	host->data->error = 0;
+	dmastart = sg_dma_address(host->data->sg);
+	dmanow = dmastart + host->data->bytes_xfered;
 	/*
-	 * Check for A-004388: eSDHC DMA might not stop if error
-	 * occurs on system transaction
-	 * Impact list:
-	 * T4240-4160-4080-R1.0 B4860-4420-R1.0-R2.0 P1010-1014-R1.0
-	 * P3041-R1.0-R2.0-R1.1 P2041-2040-R1.0-R1.1-R2.0
-	 * P5020-5010-R2.0-R1.0 P5040-5021-R2.0-R2.1
+	 * Force update to the next DMA block boundary.
 	 */
-	if (!(((esdhc->soc_ver == SVR_T4240) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_T4160) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_T4080) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_B4860) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_B4860) && (esdhc->soc_rev == 0x20)) ||
-		((esdhc->soc_ver == SVR_B4420) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_B4420) && (esdhc->soc_rev == 0x20)) ||
-		((esdhc->soc_ver == SVR_P1010) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_P1014) && (esdhc->soc_rev == 0x10)) ||
-		((esdhc->soc_ver == SVR_P3041) && (esdhc->soc_rev <= 0x20)) ||
-		((esdhc->soc_ver == SVR_P2041) && (esdhc->soc_rev <= 0x20)) ||
-		((esdhc->soc_ver == SVR_P2040) && (esdhc->soc_rev <= 0x20)) ||
-		((esdhc->soc_ver == SVR_P5020) && (esdhc->soc_rev <= 0x20)) ||
-		((esdhc->soc_ver == SVR_P5010) && (esdhc->soc_rev <= 0x20)) ||
-		((esdhc->soc_ver == SVR_P5040) && (esdhc->soc_rev <= 0x21)) ||
-		((esdhc->soc_ver == SVR_P5021) && (esdhc->soc_rev <= 0x21))))
-		return;
-
-	sdhci_reset(host, SDHCI_RESET_DATA);
-
-	if (host->flags & SDHCI_USE_ADMA) {
-		u32 mod, i, offset;
-		u8 *desc;
-		dma_addr_t addr;
-		struct scatterlist *sg;
-		__le32 *dataddr;
-		__le32 *cmdlen;
-
-		/*
-		 * If block count was enabled, in case read transfer there
-		 * is no data was corrupted
-		 */
-		mod = sdhci_readl(host, SDHCI_TRANSFER_MODE);
-		if ((mod & SDHCI_TRNS_BLK_CNT_EN) &&
-				(host->data->flags & MMC_DATA_READ))
-			host->data->error = 0;
-
-		BUG_ON(!host->data);
-		desc = host->adma_table;
-		for_each_sg(host->data->sg, sg, host->sg_count, i) {
-			addr = sg_dma_address(sg);
-			offset = (4 - (addr & 0x3)) & 0x3;
-			if (offset)
-				desc += 8;
-			desc += 8;
-		}
-
-		/*
-		 * Add an extra zero descriptor next to the
-		 * terminating descriptor.
-		 */
-		desc += 8;
-		WARN_ON((desc - (u8 *)(host->adma_table)) > (128 * 2 + 1) * 4);
-
-		dataddr = (__le32 __force *)(desc + 4);
-		cmdlen = (__le32 __force *)desc;
-
-		cmdlen[0] = cpu_to_le32(0);
-		dataddr[0] = cpu_to_le32(0);
-	}
-
-	if ((host->flags & SDHCI_USE_SDMA) &&
-			(host->data->flags & MMC_DATA_READ))
-		host->data->error = 0;
-
-	return;
+	dmanow = (dmanow & ~(SDHCI_DEFAULT_BOUNDARY_SIZE - 1)) +
+		SDHCI_DEFAULT_BOUNDARY_SIZE;
+	host->data->bytes_xfered = dmanow - dmastart;
+	sdhci_writel(host, dmanow, SDHCI_DMA_ADDRESS);
 }
 
 static int esdhc_of_enable_dma(struct sdhci_host *host)
 {
 	u32 value;
+	struct device *dev = mmc_dev(host->mmc);
+
+	if (of_device_is_compatible(dev->of_node, "fsl,ls1043a-esdhc") ||
+	    of_device_is_compatible(dev->of_node, "fsl,ls1046a-esdhc"))
+		dma_set_mask_and_coherent(dev, DMA_BIT_MASK(40));
 
 	value = sdhci_readl(host, ESDHC_DMA_SYSCTL);
 	value |= ESDHC_DMA_SNOOP;
@@ -555,30 +493,78 @@ static int esdhc_of_enable_dma(struct sdhci_host *host)
 static unsigned int esdhc_of_get_max_clock(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 
-	return pltfm_host->clock;
+	if (esdhc->peripheral_clock)
+		return esdhc->peripheral_clock;
+	else
+		return pltfm_host->clock;
 }
 
 static unsigned int esdhc_of_get_min_clock(struct sdhci_host *host)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
+	unsigned int clock;
 
-	return pltfm_host->clock / 256 / 16;
+	if (esdhc->peripheral_clock)
+		clock = esdhc->peripheral_clock;
+	else
+		clock = pltfm_host->clock;
+	return clock / 256 / 16;
 }
+
+static void esdhc_clock_enable(struct sdhci_host *host, bool enable)
+{
+	u32 val;
+	ktime_t timeout;
+
+	val = sdhci_readl(host, ESDHC_SYSTEM_CONTROL);
+
+	if (enable)
+		val |= ESDHC_CLOCK_SDCLKEN;
+	else
+		val &= ~ESDHC_CLOCK_SDCLKEN;
+
+	sdhci_writel(host, val, ESDHC_SYSTEM_CONTROL);
+
+	/* Wait max 20 ms */
+	timeout = ktime_add_ms(ktime_get(), 20);
+	val = ESDHC_CLOCK_STABLE;
+	while  (1) {
+		bool timedout = ktime_after(ktime_get(), timeout);
+
+		if (sdhci_readl(host, ESDHC_PRSSTAT) & val)
+			break;
+		if (timedout) {
+			pr_err("%s: Internal clock never stabilised.\n",
+				mmc_hostname(host->mmc));
+			break;
+		}
+		udelay(10);
+	}
+}
+
+static struct soc_device_attribute soc_incorrect_delay_chain[] = {
+	{ .family = "QorIQ LX2160A", .revision = "1.0", },
+	{ },
+};
 
 static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 {
 	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_esdhc *esdhc = pltfm_host->priv;
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
 	int pre_div = 1;
 	int div = 1;
+	int division;
+	ktime_t timeout;
+	long fixup = 0;
 	u32 temp;
-	u32 timeout;
 
 	host->mmc->actual_clock = 0;
 
 	if (clock == 0) {
-		esdhc_clock_control(host, false);
+		esdhc_clock_enable(host, false);
 		return;
 	}
 
@@ -586,25 +572,18 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 	if (esdhc->vendor_ver < VENDOR_V_23)
 		pre_div = 2;
 
-	/*
-	 * Workaround to limit SD clock to 167MHz for ls1046a
-	 * according to ls1046a datasheet
-	 */
-	if (clock > 167000000 &&
-	    of_find_compatible_node(NULL, NULL, "fsl,ls1046a-esdhc"))
-		clock = 167000000;
+	if (host->mmc->card && mmc_card_sd(host->mmc->card) &&
+		esdhc->clk_fixup && host->mmc->ios.timing == MMC_TIMING_LEGACY)
+		fixup = esdhc->clk_fixup->sd_dflt_max_clk;
+	else if (esdhc->clk_fixup)
+		fixup = esdhc->clk_fixup->max_clk[host->mmc->ios.timing];
 
-	/* Workaround to reduce the clock frequency for p1010 esdhc */
-	if (of_find_compatible_node(NULL, NULL, "fsl,p1010-esdhc")) {
-		if (clock > 20000000)
-			clock -= 5000000;
-		if (clock > 40000000)
-			clock -= 5000000;
-	}
+	if (fixup && clock > fixup)
+		clock = fixup;
 
 	temp = sdhci_readl(host, ESDHC_SYSTEM_CONTROL);
-	temp &= ~(ESDHC_CLOCK_IPGEN | ESDHC_CLOCK_HCKEN | ESDHC_CLOCK_PEREN
-		| ESDHC_CLOCK_CRDEN | ESDHC_CLOCK_MASK);
+	temp &= ~(ESDHC_CLOCK_SDCLKEN | ESDHC_CLOCK_IPGEN | ESDHC_CLOCK_HCKEN |
+		  ESDHC_CLOCK_PEREN | ESDHC_CLOCK_MASK);
 	sdhci_writel(host, temp, ESDHC_SYSTEM_CONTROL);
 
 	while (host->max_clk / pre_div / 16 > clock && pre_div < 256)
@@ -613,9 +592,30 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 	while (host->max_clk / pre_div / div > clock && div < 16)
 		div++;
 
+	if (esdhc->quirk_limited_clk_division &&
+	    clock == MMC_HS200_MAX_DTR &&
+	    (host->mmc->ios.timing == MMC_TIMING_MMC_HS400 ||
+	     host->flags & SDHCI_HS400_TUNING)) {
+		division = pre_div * div;
+		if (division <= 4) {
+			pre_div = 4;
+			div = 1;
+		} else if (division <= 8) {
+			pre_div = 4;
+			div = 2;
+		} else if (division <= 12) {
+			pre_div = 4;
+			div = 3;
+		} else {
+			pr_warn("%s: using upsupported clock division.\n",
+				mmc_hostname(host->mmc));
+		}
+	}
+
 	dev_dbg(mmc_dev(host->mmc), "desired SD clock: %d, actual: %d\n",
 		clock, host->max_clk / pre_div / div);
 	host->mmc->actual_clock = host->max_clk / pre_div / div;
+	esdhc->div_ratio = pre_div * div;
 	pre_div >>= 1;
 	div--;
 
@@ -625,19 +625,46 @@ static void esdhc_of_set_clock(struct sdhci_host *host, unsigned int clock)
 		| (pre_div << ESDHC_PREDIV_SHIFT));
 	sdhci_writel(host, temp, ESDHC_SYSTEM_CONTROL);
 
+	if (host->mmc->ios.timing == MMC_TIMING_MMC_HS400 &&
+	    clock == MMC_HS200_MAX_DTR) {
+		temp = sdhci_readl(host, ESDHC_TBCTL);
+		sdhci_writel(host, temp | ESDHC_HS400_MODE, ESDHC_TBCTL);
+		temp = sdhci_readl(host, ESDHC_SDCLKCTL);
+		sdhci_writel(host, temp | ESDHC_CMD_CLK_CTL, ESDHC_SDCLKCTL);
+		esdhc_clock_enable(host, true);
+
+		temp = sdhci_readl(host, ESDHC_DLLCFG0);
+		temp |= ESDHC_DLL_ENABLE;
+		if (host->mmc->actual_clock == MMC_HS200_MAX_DTR ||
+		    esdhc->quirk_incorrect_delay_chain == false)
+			temp |= ESDHC_DLL_FREQ_SEL;
+		sdhci_writel(host, temp, ESDHC_DLLCFG0);
+		temp = sdhci_readl(host, ESDHC_TBCTL);
+		sdhci_writel(host, temp | ESDHC_HS400_WNDW_ADJUST, ESDHC_TBCTL);
+
+		esdhc_clock_enable(host, false);
+		temp = sdhci_readl(host, ESDHC_DMA_SYSCTL);
+		temp |= ESDHC_FLUSH_ASYNC_FIFO;
+		sdhci_writel(host, temp, ESDHC_DMA_SYSCTL);
+	}
+
 	/* Wait max 20 ms */
-	timeout = 20;
-	while (!(sdhci_readl(host, ESDHC_PRESENT_STATE) & ESDHC_CLOCK_STABLE)) {
-		if (timeout == 0) {
+	timeout = ktime_add_ms(ktime_get(), 20);
+	while (1) {
+		bool timedout = ktime_after(ktime_get(), timeout);
+
+		if (sdhci_readl(host, ESDHC_PRSSTAT) & ESDHC_CLOCK_STABLE)
+			break;
+		if (timedout) {
 			pr_err("%s: Internal clock never stabilised.\n",
 				mmc_hostname(host->mmc));
 			return;
 		}
-		timeout--;
-		mdelay(1);
+		udelay(10);
 	}
 
-	temp |= ESDHC_CLOCK_CRDEN;
+	temp = sdhci_readl(host, ESDHC_SYSTEM_CONTROL);
+	temp |= ESDHC_CLOCK_SDCLKEN;
 	sdhci_writel(host, temp, ESDHC_SYSTEM_CONTROL);
 }
 
@@ -663,81 +690,208 @@ static void esdhc_pltfm_set_bus_width(struct sdhci_host *host, int width)
 	sdhci_writel(host, ctrl, ESDHC_PROCTL);
 }
 
-/*
- * A-003980: SDHC: Glitch is generated on the card clock with software reset
- * or clock divider change
- * Workaround:
- * A simple workaround is to disable the SD card clock before the software
- * reset, and enable it when the module resumes normal operation. The Host
- * and the SD card are in a master-slave relationship. The Host provides
- * clock and control transfer across the interface. Therefore, any existing
- * operation is discarded when the Host controller is reset.
- */
-static int esdhc_of_reset_workaround(struct sdhci_host *host, u8 mask)
-{
-	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
-	struct sdhci_esdhc *esdhc = pltfm_host->priv;
-	bool disable_clk_before_reset = false;
-	u32 temp;
-
-	/*
-	 * Check for A-003980
-	 * Impact list:
-	 * T4240-4160-4080-R1.0-R2.0 B4860-4420-R1.0-R2.0
-	 * P5040-5021-R1.0-R2.0-R2.1 P5020-5010-R1.0-R2.0
-	 * P3041-R1.0-R1.1-R2.0 P2041-2040-R1.0-R1.1-R2.0
-	 * P1010-1014-R1.0
-	 */
-	if (((esdhc->soc_ver == SVR_T4240) && (esdhc->soc_rev == 0x10)) ||
-	    ((esdhc->soc_ver == SVR_T4240) && (esdhc->soc_rev == 0x20)) ||
-	    ((esdhc->soc_ver == SVR_T4160) && (esdhc->soc_rev == 0x10)) ||
-	    ((esdhc->soc_ver == SVR_T4160) && (esdhc->soc_rev == 0x20)) ||
-	    ((esdhc->soc_ver == SVR_T4080) && (esdhc->soc_rev == 0x10)) ||
-	    ((esdhc->soc_ver == SVR_T4080) && (esdhc->soc_rev == 0x20)) ||
-	    ((esdhc->soc_ver == SVR_B4860) && (esdhc->soc_rev == 0x10)) ||
-	    ((esdhc->soc_ver == SVR_B4860) && (esdhc->soc_rev == 0x20)) ||
-	    ((esdhc->soc_ver == SVR_B4420) && (esdhc->soc_rev == 0x10)) ||
-	    ((esdhc->soc_ver == SVR_B4420) && (esdhc->soc_rev == 0x20)) ||
-	    ((esdhc->soc_ver == SVR_P5040) && (esdhc->soc_rev <= 0x21)) ||
-	    ((esdhc->soc_ver == SVR_P5021) && (esdhc->soc_rev <= 0x21)) ||
-	    ((esdhc->soc_ver == SVR_P5020) && (esdhc->soc_rev <= 0x20)) ||
-	    ((esdhc->soc_ver == SVR_P5010) && (esdhc->soc_rev <= 0x20)) ||
-	    ((esdhc->soc_ver == SVR_P3041) && (esdhc->soc_rev <= 0x20)) ||
-	    ((esdhc->soc_ver == SVR_P2041) && (esdhc->soc_rev <= 0x20)) ||
-	    ((esdhc->soc_ver == SVR_P2040) && (esdhc->soc_rev <= 0x20)) ||
-	    ((esdhc->soc_ver == SVR_P1014) && (esdhc->soc_rev == 0x10)) ||
-	    ((esdhc->soc_ver == SVR_P1010) && (esdhc->soc_rev == 0x10)))
-		disable_clk_before_reset = true;
-
-	if (disable_clk_before_reset && (mask & SDHCI_RESET_ALL)) {
-		temp = sdhci_readl(host, ESDHC_SYSTEM_CONTROL);
-		temp &= ~ESDHC_CLOCK_CRDEN;
-		sdhci_writel(host, temp, ESDHC_SYSTEM_CONTROL);
-		sdhci_reset(host, mask);
-		temp = sdhci_readl(host, ESDHC_SYSTEM_CONTROL);
-		temp |= ESDHC_CLOCK_CRDEN;
-		sdhci_writel(host, temp, ESDHC_SYSTEM_CONTROL);
-		return 1;
-	}
-	return 0;
-}
-
 static void esdhc_reset(struct sdhci_host *host, u8 mask)
 {
-	if (!esdhc_of_reset_workaround(host, mask))
-		sdhci_reset(host, mask);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
+	u32 val;
+
+	sdhci_reset(host, mask);
 
 	sdhci_writel(host, host->ier, SDHCI_INT_ENABLE);
 	sdhci_writel(host, host->ier, SDHCI_SIGNAL_ENABLE);
+
+	if (of_find_compatible_node(NULL, NULL, "fsl,p2020-esdhc"))
+		mdelay(5);
+
+	if (mask & SDHCI_RESET_ALL) {
+		val = sdhci_readl(host, ESDHC_TBCTL);
+		val &= ~ESDHC_TB_EN;
+		sdhci_writel(host, val, ESDHC_TBCTL);
+
+		if (esdhc->quirk_unreliable_pulse_detection) {
+			val = sdhci_readl(host, ESDHC_DLLCFG1);
+			val &= ~ESDHC_DLL_PD_PULSE_STRETCH_SEL;
+			sdhci_writel(host, val, ESDHC_DLLCFG1);
+		}
+	}
 }
 
-#ifdef CONFIG_PM
+/* The SCFG, Supplemental Configuration Unit, provides SoC specific
+ * configuration and status registers for the device. There is a
+ * SDHC IO VSEL control register on SCFG for some platforms. It's
+ * used to support SDHC IO voltage switching.
+ */
+static const struct of_device_id scfg_device_ids[] = {
+	{ .compatible = "fsl,t1040-scfg", },
+	{ .compatible = "fsl,ls1012a-scfg", },
+	{ .compatible = "fsl,ls1046a-scfg", },
+	{}
+};
+
+/* SDHC IO VSEL control register definition */
+#define SCFG_SDHCIOVSELCR	0x408
+#define SDHCIOVSELCR_TGLEN	0x80000000
+#define SDHCIOVSELCR_VSELVAL	0x60000000
+#define SDHCIOVSELCR_SDHC_VS	0x00000001
+
+static int esdhc_signal_voltage_switch(struct mmc_host *mmc,
+				       struct mmc_ios *ios)
+{
+	struct sdhci_host *host = mmc_priv(mmc);
+	struct device_node *scfg_node;
+	void __iomem *scfg_base = NULL;
+	u32 sdhciovselcr;
+	u32 val;
+
+	/*
+	 * Signal Voltage Switching is only applicable for Host Controllers
+	 * v3.00 and above.
+	 */
+	if (host->version < SDHCI_SPEC_300)
+		return 0;
+
+	val = sdhci_readl(host, ESDHC_PROCTL);
+
+	switch (ios->signal_voltage) {
+	case MMC_SIGNAL_VOLTAGE_330:
+		val &= ~ESDHC_VOLT_SEL;
+		sdhci_writel(host, val, ESDHC_PROCTL);
+		return 0;
+	case MMC_SIGNAL_VOLTAGE_180:
+		scfg_node = of_find_matching_node(NULL, scfg_device_ids);
+		if (scfg_node)
+			scfg_base = of_iomap(scfg_node, 0);
+		if (scfg_base) {
+			sdhciovselcr = SDHCIOVSELCR_TGLEN |
+				       SDHCIOVSELCR_VSELVAL;
+			iowrite32be(sdhciovselcr,
+				scfg_base + SCFG_SDHCIOVSELCR);
+
+			val |= ESDHC_VOLT_SEL;
+			sdhci_writel(host, val, ESDHC_PROCTL);
+			mdelay(5);
+
+			sdhciovselcr = SDHCIOVSELCR_TGLEN |
+				       SDHCIOVSELCR_SDHC_VS;
+			iowrite32be(sdhciovselcr,
+				scfg_base + SCFG_SDHCIOVSELCR);
+			iounmap(scfg_base);
+		} else {
+			val |= ESDHC_VOLT_SEL;
+			sdhci_writel(host, val, ESDHC_PROCTL);
+		}
+		return 0;
+	default:
+		return 0;
+	}
+}
+
+static struct soc_device_attribute soc_fixup_tuning[] = {
+	{ .family = "QorIQ T1040", .revision = "1.0", },
+	{ .family = "QorIQ T2080", .revision = "1.0", },
+	{ .family = "QorIQ T1023", .revision = "1.0", },
+	{ .family = "QorIQ LS1021A", .revision = "1.0", },
+	{ .family = "QorIQ LS1080A", .revision = "1.0", },
+	{ .family = "QorIQ LS2080A", .revision = "1.0", },
+	{ .family = "QorIQ LS1012A", .revision = "1.0", },
+	{ .family = "QorIQ LS1043A", .revision = "1.*", },
+	{ .family = "QorIQ LS1046A", .revision = "1.0", },
+	{ },
+};
+
+static void esdhc_tuning_block_enable(struct sdhci_host *host, bool enable)
+{
+	u32 val;
+
+	esdhc_clock_enable(host, false);
+
+	val = sdhci_readl(host, ESDHC_DMA_SYSCTL);
+	val |= ESDHC_FLUSH_ASYNC_FIFO;
+	sdhci_writel(host, val, ESDHC_DMA_SYSCTL);
+
+	val = sdhci_readl(host, ESDHC_TBCTL);
+	if (enable)
+		val |= ESDHC_TB_EN;
+	else
+		val &= ~ESDHC_TB_EN;
+	sdhci_writel(host, val, ESDHC_TBCTL);
+
+	esdhc_clock_enable(host, true);
+}
+
+static int esdhc_execute_tuning(struct mmc_host *mmc, u32 opcode)
+{
+	struct sdhci_host *host = mmc_priv(mmc);
+	struct sdhci_pltfm_host *pltfm_host = sdhci_priv(host);
+	struct sdhci_esdhc *esdhc = sdhci_pltfm_priv(pltfm_host);
+	bool hs400_tuning;
+	unsigned int clk;
+	u32 val;
+	int ret;
+
+	/* For tuning mode, the sd clock divisor value
+	 * must be larger than 3 according to reference manual.
+	 */
+	clk = esdhc->peripheral_clock / 3;
+	if (host->clock > clk)
+		esdhc_of_set_clock(host, clk);
+
+	if (esdhc->quirk_limited_clk_division &&
+	    host->flags & SDHCI_HS400_TUNING)
+		esdhc_of_set_clock(host, host->clock);
+
+	esdhc_tuning_block_enable(host, true);
+
+	hs400_tuning = host->flags & SDHCI_HS400_TUNING;
+	ret = sdhci_execute_tuning(mmc, opcode);
+
+	if (hs400_tuning) {
+		val = sdhci_readl(host, ESDHC_SDTIMNGCTL);
+		val |= ESDHC_FLW_CTL_BG;
+		sdhci_writel(host, val, ESDHC_SDTIMNGCTL);
+	}
+
+	if (host->tuning_err == -EAGAIN && esdhc->quirk_fixup_tuning) {
+
+		/* program TBPTR[TB_WNDW_END_PTR] = 3*DIV_RATIO and
+		 * program TBPTR[TB_WNDW_START_PTR] = 5*DIV_RATIO
+		 */
+		val = sdhci_readl(host, ESDHC_TBPTR);
+		val = (val & ~((0x7f << 8) | 0x7f)) |
+		(3 * esdhc->div_ratio) | ((5 * esdhc->div_ratio) << 8);
+		sdhci_writel(host, val, ESDHC_TBPTR);
+
+		/* program the software tuning mode by setting
+		 * TBCTL[TB_MODE]=2'h3
+		 */
+		val = sdhci_readl(host, ESDHC_TBCTL);
+		val |= 0x3;
+		sdhci_writel(host, val, ESDHC_TBCTL);
+		sdhci_execute_tuning(mmc, opcode);
+	}
+	return ret;
+}
+
+static void esdhc_set_uhs_signaling(struct sdhci_host *host,
+				   unsigned int timing)
+{
+	if (timing == MMC_TIMING_MMC_HS400)
+		esdhc_tuning_block_enable(host, true);
+	else
+		sdhci_set_uhs_signaling(host, timing);
+}
+
+#ifdef CONFIG_PM_SLEEP
 static u32 esdhc_proctl;
 static int esdhc_of_suspend(struct device *dev)
 {
 	struct sdhci_host *host = dev_get_drvdata(dev);
 
 	esdhc_proctl = sdhci_readl(host, SDHCI_HOST_CONTROL);
+
+	if (host->tuning_mode != SDHCI_TUNING_MODE_3)
+		mmc_retune_needed(host->mmc);
 
 	return sdhci_suspend_host(host);
 }
@@ -747,174 +901,18 @@ static int esdhc_of_resume(struct device *dev)
 	struct sdhci_host *host = dev_get_drvdata(dev);
 	int ret = sdhci_resume_host(host);
 
-	if (ret == 0)
+	if (ret == 0) {
+		/* Isn't this already done by sdhci_resume_host() ? --rmk */
+		esdhc_of_enable_dma(host);
 		sdhci_writel(host, esdhc_proctl, SDHCI_HOST_CONTROL);
-
+	}
 	return ret;
 }
-
-static const struct dev_pm_ops esdhc_pmops = {
-	.suspend	= esdhc_of_suspend,
-	.resume		= esdhc_of_resume,
-};
-#define ESDHC_PMOPS (&esdhc_pmops)
-#else
-#define ESDHC_PMOPS NULL
 #endif
 
-static void esdhc_clock_control(struct sdhci_host *host, bool enable)
-{
-	u32 val;
-	u32 timeout;
-
-	val = sdhci_readl(host, ESDHC_SYSTEM_CONTROL);
-
-	if (enable)
-		val |= ESDHC_CLOCK_CRDEN;
-	else
-		val &= ~ESDHC_CLOCK_CRDEN;
-
-	sdhci_writel(host, val, ESDHC_SYSTEM_CONTROL);
-
-	timeout = 20;
-	val = ESDHC_CLOCK_STABLE;
-	while (!(sdhci_readl(host, ESDHC_PRESENT_STATE) & val)) {
-		if (timeout == 0) {
-			pr_err("%s: Internal clock never stabilised.\n",
-				mmc_hostname(host->mmc));
-			break;
-		}
-		timeout--;
-		mdelay(1);
-	}
-}
-
-static void esdhc_set_uhs_signaling(struct sdhci_host *host, unsigned int uhs)
-{
-	u16 ctrl_2;
-	u32 val;
-	u32 timeout;
-
-	ctrl_2 = sdhci_readw(host, SDHCI_HOST_CONTROL2);
-	/* Select Bus Speed Mode for host */
-	ctrl_2 &= ~SDHCI_CTRL_UHS_MASK;
-	if ((uhs == MMC_TIMING_MMC_HS200) ||
-		(uhs == MMC_TIMING_UHS_SDR104))
-		ctrl_2 |= SDHCI_CTRL_UHS_SDR104;
-	else if (uhs == MMC_TIMING_UHS_SDR12)
-		ctrl_2 |= SDHCI_CTRL_UHS_SDR12;
-	else if (uhs == MMC_TIMING_UHS_SDR25)
-		ctrl_2 |= SDHCI_CTRL_UHS_SDR25;
-	else if (uhs == MMC_TIMING_UHS_SDR50)
-		ctrl_2 |= SDHCI_CTRL_UHS_SDR50;
-	else if ((uhs == MMC_TIMING_UHS_DDR50) ||
-		 (uhs == MMC_TIMING_MMC_DDR52))
-		ctrl_2 |= SDHCI_CTRL_UHS_DDR50;
-	else if (uhs == MMC_TIMING_MMC_HS400)
-		ctrl_2 |= SDHCI_CTRL_HS400; /* Non-standard */
-
-	if ((uhs == MMC_TIMING_UHS_DDR50) ||
-	    (uhs == MMC_TIMING_MMC_DDR52)) {
-		esdhc_clock_control(host, false);
-		sdhci_writew(host, ctrl_2, SDHCI_HOST_CONTROL2);
-		val = sdhci_readl(host, ESDHC_CLOCK_CONTROL);
-		val |= (ESDHC_LPBK_CLK_SEL | ESDHC_CMD_CLK_CTL);
-		sdhci_writel(host, val, ESDHC_CLOCK_CONTROL);
-		esdhc_clock_control(host, true);
-
-		esdhc_clock_control(host, false);
-		val = sdhci_readl(host, ESDHC_DMA_SYSCTL);
-		val |= ESDHC_FLUSH_ASYNC_FIFO;
-		sdhci_writel(host, val, ESDHC_DMA_SYSCTL);
-		/* Wait max 20 ms */
-		timeout = 20;
-		val = ESDHC_FLUSH_ASYNC_FIFO;
-		while (sdhci_readl(host, ESDHC_DMA_SYSCTL) & val) {
-			if (timeout == 0) {
-				pr_err("%s: FAF bit is auto cleaned failed.\n",
-					mmc_hostname(host->mmc));
-
-				break;
-			}
-			timeout--;
-			mdelay(1);
-		}
-		esdhc_clock_control(host, true);
-	} else
-		sdhci_writew(host, ctrl_2, SDHCI_HOST_CONTROL2);
-}
-
-static const struct of_device_id scfg_device_ids[] = {
-	{ .compatible = "fsl,t1040-scfg", },
-	{ .compatible = "fsl,ls1012a-scfg", },
-	{ .compatible = "fsl,ls1046a-scfg", },
-	{}
-};
-#define SCFG_SDHCIOVSELCR	0x408
-#define SDHCIOVSELCR_TGLEN	0x80000000
-#define SDHCIOVSELCR_VSELVAL	0x60000000
-#define SDHCIOVSELCR_SDHC_VS	0x00000001
-
-void esdhc_signal_voltage_switch(struct sdhci_host *host,
-				 unsigned char signal_voltage)
-{
-	struct device_node *scfg_node;
-	void __iomem *scfg_base = NULL;
-	u32 scfg_sdhciovselcr;
-	u32 val;
-
-	val = sdhci_readl(host, ESDHC_PROCTL);
-
-	switch (signal_voltage) {
-	case MMC_SIGNAL_VOLTAGE_330:
-		val &= (~ESDHC_VOLT_SEL);
-		sdhci_writel(host, val, ESDHC_PROCTL);
-		break;
-	case MMC_SIGNAL_VOLTAGE_180:
-		scfg_node = of_find_matching_node(NULL, scfg_device_ids);
-		if (scfg_node) {
-			scfg_base = of_iomap(scfg_node, 0);
-			of_node_put(scfg_node);
-		}
-		if (scfg_base) {
-			scfg_sdhciovselcr = SDHCIOVSELCR_TGLEN |
-					    SDHCIOVSELCR_VSELVAL;
-			iowrite32be(scfg_sdhciovselcr,
-				scfg_base + SCFG_SDHCIOVSELCR);
-
-			val |= ESDHC_VOLT_SEL;
-			sdhci_writel(host, val, ESDHC_PROCTL);
-			mdelay(5);
-
-			scfg_sdhciovselcr = SDHCIOVSELCR_TGLEN |
-					    SDHCIOVSELCR_SDHC_VS;
-			iowrite32be(scfg_sdhciovselcr,
-				scfg_base + SCFG_SDHCIOVSELCR);
-			iounmap(scfg_base);
-			break;
-		}
-		val |= ESDHC_VOLT_SEL;
-		sdhci_writel(host, val, ESDHC_PROCTL);
-		break;
-	default:
-		return;
-	}
-}
-
-void esdhc_set_tuning_block(struct sdhci_host *host)
-{
-	u32 val;
-
-	esdhc_clock_control(host, false);
-	val = sdhci_readl(host, ESDHC_DMA_SYSCTL);
-	val |= ESDHC_FLUSH_ASYNC_FIFO;
-	sdhci_writel(host, val, ESDHC_DMA_SYSCTL);
-
-	val = sdhci_readl(host, ESDHC_TBCTL);
-	val |= ESDHC_TB_EN;
-	sdhci_writel(host, val, ESDHC_TBCTL);
-	esdhc_clock_control(host, true);
-}
+static SIMPLE_DEV_PM_OPS(esdhc_of_dev_pm_ops,
+			esdhc_of_suspend,
+			esdhc_of_resume);
 
 static const struct sdhci_ops sdhci_esdhc_be_ops = {
 	.read_l = esdhc_be_readl,
@@ -931,8 +929,6 @@ static const struct sdhci_ops sdhci_esdhc_be_ops = {
 	.set_bus_width = esdhc_pltfm_set_bus_width,
 	.reset = esdhc_reset,
 	.set_uhs_signaling = esdhc_set_uhs_signaling,
-	.signal_voltage_switch = esdhc_signal_voltage_switch,
-	.set_tuning_block = esdhc_set_tuning_block,
 };
 
 static const struct sdhci_ops sdhci_esdhc_le_ops = {
@@ -950,66 +946,115 @@ static const struct sdhci_ops sdhci_esdhc_le_ops = {
 	.set_bus_width = esdhc_pltfm_set_bus_width,
 	.reset = esdhc_reset,
 	.set_uhs_signaling = esdhc_set_uhs_signaling,
-	.signal_voltage_switch = esdhc_signal_voltage_switch,
-	.set_tuning_block = esdhc_set_tuning_block,
 };
 
 static const struct sdhci_pltfm_data sdhci_esdhc_be_pdata = {
-	.quirks = ESDHC_DEFAULT_QUIRKS | SDHCI_QUIRK_BROKEN_CARD_DETECTION
-		| SDHCI_QUIRK_NO_CARD_NO_RESET
-		| SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
+	.quirks = ESDHC_DEFAULT_QUIRKS |
+#ifdef CONFIG_PPC
+		  SDHCI_QUIRK_BROKEN_CARD_DETECTION |
+#endif
+		  SDHCI_QUIRK_NO_CARD_NO_RESET |
+		  SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
 	.ops = &sdhci_esdhc_be_ops,
 };
 
 static const struct sdhci_pltfm_data sdhci_esdhc_le_pdata = {
-	.quirks = ESDHC_DEFAULT_QUIRKS | SDHCI_QUIRK_BROKEN_CARD_DETECTION
-		| SDHCI_QUIRK_NO_CARD_NO_RESET
-		| SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
+	.quirks = ESDHC_DEFAULT_QUIRKS |
+		  SDHCI_QUIRK_NO_CARD_NO_RESET |
+		  SDHCI_QUIRK_NO_ENDATTR_IN_NOPDESC,
 	.ops = &sdhci_esdhc_le_ops,
+};
+
+static struct soc_device_attribute soc_incorrect_hostver[] = {
+	{ .family = "QorIQ T4240", .revision = "1.0", },
+	{ .family = "QorIQ T4240", .revision = "2.0", },
+	{ },
+};
+
+static struct soc_device_attribute soc_fixup_sdhc_clkdivs[] = {
+	{ .family = "QorIQ LX2160A", .revision = "1.0", },
+	{ .family = "QorIQ LX2160A", .revision = "2.0", },
+	{ .family = "QorIQ LS1028A", .revision = "1.0", },
+	{ },
+};
+
+static struct soc_device_attribute soc_unreliable_pulse_detection[] = {
+	{ .family = "QorIQ LX2160A", .revision = "1.0", },
+	{ },
 };
 
 static void esdhc_init(struct platform_device *pdev, struct sdhci_host *host)
 {
+	const struct of_device_id *match;
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_esdhc *esdhc;
 	struct device_node *np;
 	struct clk *clk;
-	const __be32 *val;
-	int size;
+	u32 val;
 	u16 host_ver;
-	u32 svr;
 
 	pltfm_host = sdhci_priv(host);
-	esdhc = devm_kzalloc(&pdev->dev, sizeof(struct sdhci_esdhc),
-			     GFP_KERNEL);
-	pltfm_host->priv = esdhc;
-
-	svr = fsl_guts_get_svr();
-	esdhc->soc_ver = SVR_SOC_VER(svr);
-	esdhc->soc_rev = SVR_REV(svr);
+	esdhc = sdhci_pltfm_priv(pltfm_host);
 
 	host_ver = sdhci_readw(host, SDHCI_HOST_VERSION);
 	esdhc->vendor_ver = (host_ver & SDHCI_VENDOR_VER_MASK) >>
 			     SDHCI_VENDOR_VER_SHIFT;
 	esdhc->spec_ver = host_ver & SDHCI_SPEC_VER_MASK;
+	if (soc_device_match(soc_incorrect_hostver))
+		esdhc->quirk_incorrect_hostver = true;
+	else
+		esdhc->quirk_incorrect_hostver = false;
 
+	if (soc_device_match(soc_fixup_sdhc_clkdivs))
+		esdhc->quirk_limited_clk_division = true;
+	else
+		esdhc->quirk_limited_clk_division = false;
+
+	if (soc_device_match(soc_unreliable_pulse_detection))
+		esdhc->quirk_unreliable_pulse_detection = true;
+	else
+		esdhc->quirk_unreliable_pulse_detection = false;
+
+	if (soc_device_match(soc_incorrect_delay_chain))
+		esdhc->quirk_incorrect_delay_chain = true;
+	else
+		esdhc->quirk_incorrect_delay_chain = false;
+
+	match = of_match_node(sdhci_esdhc_of_match, pdev->dev.of_node);
+	if (match)
+		esdhc->clk_fixup = match->data;
 	np = pdev->dev.of_node;
-	val = of_get_property(np, "adapter-type", &size);
-	if (val && size == sizeof(*val) && *val)
-		esdhc->adapter_type = be32_to_cpup(val);
-
-	val = of_get_property(np, "peripheral-frequency", &size);
-	if (val && size == sizeof(*val) && *val) {
-		esdhc->peripheral_clock = be32_to_cpup(val);
-	} else {
-		clk = of_clk_get(np, 0);
-		if (IS_ERR(clk))
-			return;
-		if (of_device_is_compatible(np, "fsl,ls1046a-esdhc"))
+	clk = of_clk_get(np, 0);
+	if (!IS_ERR(clk)) {
+		/*
+		 * esdhc->peripheral_clock would be assigned with a value
+		 * which is eSDHC base clock when use periperal clock.
+		 * For some platforms, the clock value got by common clk
+		 * API is peripheral clock while the eSDHC base clock is
+		 * 1/2 peripheral clock.
+		 */
+		if (of_device_is_compatible(np, "fsl,ls1046a-esdhc") ||
+		    of_device_is_compatible(np, "fsl,ls1028a-esdhc"))
 			esdhc->peripheral_clock = clk_get_rate(clk) / 2;
 		else
 			esdhc->peripheral_clock = clk_get_rate(clk);
+
+		clk_put(clk);
 	}
+
+	if (esdhc->peripheral_clock) {
+		esdhc_clock_enable(host, false);
+		val = sdhci_readl(host, ESDHC_DMA_SYSCTL);
+		val |= ESDHC_PERIPHERAL_CLK_SEL;
+		sdhci_writel(host, val, ESDHC_DMA_SYSCTL);
+		esdhc_clock_enable(host, true);
+	}
+}
+
+static int esdhc_prepare_ddr_to_hs400(struct mmc_host *mmc)
+{
+	esdhc_tuning_block_enable(mmc_priv(mmc), false);
+	return 0;
 }
 
 static int sdhci_esdhc_probe(struct platform_device *pdev)
@@ -1019,42 +1064,52 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 	struct sdhci_pltfm_host *pltfm_host;
 	struct sdhci_esdhc *esdhc;
 	int ret;
-	u32 val;
 
 	np = pdev->dev.of_node;
 
-	if (of_get_property(np, "little-endian", NULL))
-		host = sdhci_pltfm_init(pdev, &sdhci_esdhc_le_pdata, 0);
+	if (of_property_read_bool(np, "little-endian"))
+		host = sdhci_pltfm_init(pdev, &sdhci_esdhc_le_pdata,
+					sizeof(struct sdhci_esdhc));
 	else
-		host = sdhci_pltfm_init(pdev, &sdhci_esdhc_be_pdata, 0);
+		host = sdhci_pltfm_init(pdev, &sdhci_esdhc_be_pdata,
+					sizeof(struct sdhci_esdhc));
 
 	if (IS_ERR(host))
 		return PTR_ERR(host);
+
+	host->mmc_host_ops.start_signal_voltage_switch =
+		esdhc_signal_voltage_switch;
+	host->mmc_host_ops.execute_tuning = esdhc_execute_tuning;
+	host->mmc_host_ops.prepare_ddr_to_hs400 = esdhc_prepare_ddr_to_hs400;
+	host->tuning_delay = 1;
 
 	esdhc_init(pdev, host);
 
 	sdhci_get_of_property(pdev);
 
 	pltfm_host = sdhci_priv(host);
-	esdhc = pltfm_host->priv;
+	esdhc = sdhci_pltfm_priv(pltfm_host);
+	if (soc_device_match(soc_fixup_tuning))
+		esdhc->quirk_fixup_tuning = true;
+	else
+		esdhc->quirk_fixup_tuning = false;
+
 	if (esdhc->vendor_ver == VENDOR_V_22)
 		host->quirks2 |= SDHCI_QUIRK2_HOST_NO_CMD23;
 
 	if (esdhc->vendor_ver > VENDOR_V_22)
 		host->quirks &= ~SDHCI_QUIRK_NO_BUSY_IRQ;
 
-	host->quirks2 |= SDHCI_QUIRK2_DELAY_BETWEEN_TUNING_CYCLES;
+	if (of_find_compatible_node(NULL, NULL, "fsl,p2020-esdhc")) {
+		host->quirks2 |= SDHCI_QUIRK_RESET_AFTER_REQUEST;
+		host->quirks2 |= SDHCI_QUIRK_BROKEN_TIMEOUT_VAL;
+	}
 
 	if (of_device_is_compatible(np, "fsl,p5040-esdhc") ||
 	    of_device_is_compatible(np, "fsl,p5020-esdhc") ||
 	    of_device_is_compatible(np, "fsl,p4080-esdhc") ||
 	    of_device_is_compatible(np, "fsl,p1020-esdhc") ||
-	    of_device_is_compatible(np, "fsl,t1040-esdhc") ||
-	    of_device_is_compatible(np, "fsl,ls1021a-esdhc") ||
-	    of_device_is_compatible(np, "fsl,ls2080a-esdhc") ||
-	    of_device_is_compatible(np, "fsl,ls2085a-esdhc") ||
-	    of_device_is_compatible(np, "fsl,ls1043a-esdhc") ||
-	    of_device_is_compatible(np, "fsl,ls1046a-esdhc"))
+	    of_device_is_compatible(np, "fsl,t1040-esdhc"))
 		host->quirks &= ~SDHCI_QUIRK_BROKEN_CARD_DETECTION;
 
 	if (of_device_is_compatible(np, "fsl,ls1021a-esdhc"))
@@ -1075,16 +1130,6 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 
 	mmc_of_parse_voltage(np, &host->ocr_mask);
 
-	/* Select peripheral clock as the eSDHC clock */
-	if (esdhc->peripheral_clock) {
-		pltfm_host->clock = esdhc->peripheral_clock;
-		esdhc_clock_control(host, false);
-		val = sdhci_readl(host, ESDHC_DMA_SYSCTL);
-		val |= ESDHC_PERIPHERAL_CLK_SEL;
-		sdhci_writel(host, val, ESDHC_DMA_SYSCTL);
-		esdhc_clock_control(host, true);
-	}
-
 	ret = sdhci_add_host(host);
 	if (ret)
 		goto err;
@@ -1095,19 +1140,11 @@ static int sdhci_esdhc_probe(struct platform_device *pdev)
 	return ret;
 }
 
-static const struct of_device_id sdhci_esdhc_of_match[] = {
-	{ .compatible = "fsl,mpc8379-esdhc" },
-	{ .compatible = "fsl,mpc8536-esdhc" },
-	{ .compatible = "fsl,esdhc" },
-	{ }
-};
-MODULE_DEVICE_TABLE(of, sdhci_esdhc_of_match);
-
 static struct platform_driver sdhci_esdhc_driver = {
 	.driver = {
 		.name = "sdhci-esdhc",
 		.of_match_table = sdhci_esdhc_of_match,
-		.pm = ESDHC_PMOPS,
+		.pm = &esdhc_of_dev_pm_ops,
 	},
 	.probe = sdhci_esdhc_probe,
 	.remove = sdhci_pltfm_unregister,

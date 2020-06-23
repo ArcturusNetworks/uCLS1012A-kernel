@@ -58,22 +58,24 @@ static irqreturn_t deferred_fiq(int irq, void *dev_id)
 		irq_num = gpio_to_irq(gpio);
 		fiq_count = fiq_buffer[FIQ_CNT_INT_00 + gpio];
 
-		while (irq_counter[gpio] < fiq_count) {
-			if (gpio != AMS_DELTA_GPIO_PIN_KEYBRD_CLK) {
-				struct irq_data *d = irq_get_irq_data(irq_num);
+		if (irq_counter[gpio] < fiq_count &&
+				gpio != AMS_DELTA_GPIO_PIN_KEYBRD_CLK) {
+			struct irq_data *d = irq_get_irq_data(irq_num);
 
-				/*
-				 * It looks like handle_edge_irq() that
-				 * OMAP GPIO edge interrupts default to,
-				 * expects interrupt already unmasked.
-				 */
-				if (irq_chip && irq_chip->irq_unmask)
+			/*
+			 * handle_simple_irq() that OMAP GPIO edge
+			 * interrupts default to since commit 80ac93c27441
+			 * requires interrupt already acked and unmasked.
+			 */
+			if (irq_chip) {
+				if (irq_chip->irq_ack)
+					irq_chip->irq_ack(d);
+				if (irq_chip->irq_unmask)
 					irq_chip->irq_unmask(d);
 			}
-			generic_handle_irq(irq_num);
-
-			irq_counter[gpio]++;
 		}
+		for (; irq_counter[gpio] < fiq_count; irq_counter[gpio]++)
+			generic_handle_irq(irq_num);
 	}
 	return IRQ_HANDLED;
 }
@@ -109,7 +111,8 @@ void __init ams_delta_init_fiq(void)
 	 * Since no set_type() method is provided by OMAP irq chip,
 	 * switch to edge triggered interrupt type manually.
 	 */
-	offset = IRQ_ILR0_REG_OFFSET + INT_DEFERRED_FIQ * 0x4;
+	offset = IRQ_ILR0_REG_OFFSET +
+			((INT_DEFERRED_FIQ - NR_IRQS_LEGACY) & 0x1f) * 0x4;
 	val = omap_readl(DEFERRED_FIQ_IH_BASE + offset) & ~(1 << 1);
 	omap_writel(val, DEFERRED_FIQ_IH_BASE + offset);
 
@@ -136,7 +139,7 @@ void __init ams_delta_init_fiq(void)
 		fiq_buffer[i] = 0;
 
 	/*
-	 * FIQ mode r9 always points to the fiq_buffer, becauses the FIQ isr
+	 * FIQ mode r9 always points to the fiq_buffer, because the FIQ isr
 	 * will run in an unpredictable context. The fiq_buffer is the FIQ isr's
 	 * only means of communication with the IRQ level and other kernel
 	 * context code.
@@ -149,7 +152,7 @@ void __init ams_delta_init_fiq(void)
 	/*
 	 * Redirect GPIO interrupts to FIQ
 	 */
-	offset = IRQ_ILR0_REG_OFFSET + INT_GPIO_BANK1 * 0x4;
+	offset = IRQ_ILR0_REG_OFFSET + (INT_GPIO_BANK1 - NR_IRQS_LEGACY) * 0x4;
 	val = omap_readl(OMAP_IH1_BASE + offset) | 1;
 	omap_writel(val, OMAP_IH1_BASE + offset);
 }

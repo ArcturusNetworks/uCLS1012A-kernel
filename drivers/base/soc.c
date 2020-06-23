@@ -6,7 +6,6 @@
  */
 
 #include <linux/sysfs.h>
-#include <linux/module.h>
 #include <linux/init.h>
 #include <linux/stat.h>
 #include <linux/slab.h>
@@ -17,7 +16,6 @@
 #include <linux/glob.h>
 
 static DEFINE_IDA(soc_ida);
-static DEFINE_SPINLOCK(soc_lock);
 
 static ssize_t soc_info_get(struct device *dev,
 			    struct device_attribute *attr,
@@ -111,10 +109,19 @@ static void soc_release(struct device *dev)
 	kfree(soc_dev);
 }
 
+static struct soc_device_attribute *early_soc_dev_attr;
+
 struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr)
 {
 	struct soc_device *soc_dev;
 	int ret;
+
+	if (!soc_bus_type.p) {
+		if (early_soc_dev_attr)
+			return ERR_PTR(-EBUSY);
+		early_soc_dev_attr = soc_dev_attr;
+		return NULL;
+	}
 
 	soc_dev = kzalloc(sizeof(*soc_dev), GFP_KERNEL);
 	if (!soc_dev) {
@@ -123,20 +130,10 @@ struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr
 	}
 
 	/* Fetch a unique (reclaimable) SOC ID. */
-	do {
-		if (!ida_pre_get(&soc_ida, GFP_KERNEL)) {
-			ret = -ENOMEM;
-			goto out2;
-		}
-
-		spin_lock(&soc_lock);
-		ret = ida_get_new(&soc_ida, &soc_dev->soc_dev_num);
-		spin_unlock(&soc_lock);
-
-	} while (ret == -EAGAIN);
-
-	if (ret)
+	ret = ida_simple_get(&soc_ida, 0, 0, GFP_KERNEL);
+	if (ret < 0)
 		goto out2;
+	soc_dev->soc_dev_num = ret;
 
 	soc_dev->attr = soc_dev_attr;
 	soc_dev->dev.bus = &soc_bus_type;
@@ -152,7 +149,7 @@ struct soc_device *soc_device_register(struct soc_device_attribute *soc_dev_attr
 	return soc_dev;
 
 out3:
-	ida_remove(&soc_ida, soc_dev->soc_dev_num);
+	ida_simple_remove(&soc_ida, soc_dev->soc_dev_num);
 out2:
 	kfree(soc_dev);
 out1:
@@ -162,47 +159,54 @@ out1:
 /* Ensure soc_dev->attr is freed prior to calling soc_device_unregister. */
 void soc_device_unregister(struct soc_device *soc_dev)
 {
-	ida_remove(&soc_ida, soc_dev->soc_dev_num);
+	ida_simple_remove(&soc_ida, soc_dev->soc_dev_num);
 
 	device_unregister(&soc_dev->dev);
+	early_soc_dev_attr = NULL;
 }
 
 static int __init soc_bus_register(void)
 {
-	return bus_register(&soc_bus_type);
+	int ret;
+
+	ret = bus_register(&soc_bus_type);
+	if (ret)
+		return ret;
+
+	if (early_soc_dev_attr)
+		return PTR_ERR(soc_device_register(early_soc_dev_attr));
+
+	return 0;
 }
 core_initcall(soc_bus_register);
 
-static void __exit soc_bus_unregister(void)
+static int soc_device_match_attr(const struct soc_device_attribute *attr,
+				 const struct soc_device_attribute *match)
 {
-	ida_destroy(&soc_ida);
+	if (match->machine &&
+	    (!attr->machine || !glob_match(match->machine, attr->machine)))
+		return 0;
 
-	bus_unregister(&soc_bus_type);
+	if (match->family &&
+	    (!attr->family || !glob_match(match->family, attr->family)))
+		return 0;
+
+	if (match->revision &&
+	    (!attr->revision || !glob_match(match->revision, attr->revision)))
+		return 0;
+
+	if (match->soc_id &&
+	    (!attr->soc_id || !glob_match(match->soc_id, attr->soc_id)))
+		return 0;
+
+	return 1;
 }
-module_exit(soc_bus_unregister);
 
 static int soc_device_match_one(struct device *dev, void *arg)
 {
 	struct soc_device *soc_dev = container_of(dev, struct soc_device, dev);
-	const struct soc_device_attribute *match = arg;
 
-	if (match->machine &&
-	    !glob_match(match->machine, soc_dev->attr->machine))
-		return 0;
-
-	if (match->family &&
-	    !glob_match(match->family, soc_dev->attr->family))
-		return 0;
-
-	if (match->revision &&
-	    !glob_match(match->revision, soc_dev->attr->revision))
-		return 0;
-
-	if (match->soc_id &&
-	    !glob_match(match->soc_id, soc_dev->attr->soc_id))
-		return 0;
-
-	return 1;
+	return soc_device_match_attr(soc_dev->attr, arg);
 }
 
 /*
@@ -226,20 +230,27 @@ static int soc_device_match_one(struct device *dev, void *arg)
 const struct soc_device_attribute *soc_device_match(
 	const struct soc_device_attribute *matches)
 {
-	struct device *dev;
-	int ret;
+	int ret = 0;
 
-	do {
+	if (!matches)
+		return NULL;
+
+	while (!ret) {
 		if (!(matches->machine || matches->family ||
 		      matches->revision || matches->soc_id))
-			return NULL;
-		dev = NULL;
-		ret = bus_for_each_dev(&soc_bus_type, dev, (void *)matches,
-				       soc_device_match_one);
-		if (ret)
 			break;
-	} while (matches++);
-
-	return matches;
+		ret = bus_for_each_dev(&soc_bus_type, NULL, (void *)matches,
+				       soc_device_match_one);
+		if (ret < 0 && early_soc_dev_attr)
+			ret = soc_device_match_attr(early_soc_dev_attr,
+						    matches);
+		if (ret < 0)
+			return NULL;
+		if (!ret)
+			matches++;
+		else
+			return matches;
+	}
+	return NULL;
 }
 EXPORT_SYMBOL_GPL(soc_device_match);

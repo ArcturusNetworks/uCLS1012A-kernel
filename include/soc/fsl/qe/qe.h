@@ -104,8 +104,6 @@ int cpm_muram_init(void);
 unsigned long cpm_muram_alloc(unsigned long size, unsigned long align);
 int cpm_muram_free(unsigned long offset);
 unsigned long cpm_muram_alloc_fixed(unsigned long offset, unsigned long size);
-unsigned long cpm_muram_alloc_common(unsigned long size, genpool_algo_t algo,
-				     void *data);
 void __iomem *cpm_muram_addr(unsigned long offset);
 unsigned long cpm_muram_offset(void __iomem *addr);
 dma_addr_t cpm_muram_dma(void __iomem *addr);
@@ -244,6 +242,7 @@ static inline int qe_alive_during_sleep(void)
 #define qe_muram_free cpm_muram_free
 #define qe_muram_addr cpm_muram_addr
 #define qe_muram_offset cpm_muram_offset
+#define qe_muram_dma cpm_muram_dma
 
 #define qe_setbits32(_addr, _v) iowrite32be(ioread32be(_addr) |  (_v), (_addr))
 #define qe_clrbits32(_addr, _v) iowrite32be(ioread32be(_addr) & ~(_v), (_addr))
@@ -332,26 +331,6 @@ struct qe_bd {
 
 #define BD_STATUS_MASK	0xffff0000
 #define BD_LENGTH_MASK	0x0000ffff
-
-/* Buffer descriptor control/status used by serial
- */
-#define BD_SC_EMPTY	(0x8000)	/* Receive is empty */
-#define BD_SC_READY	(0x8000)	/* Transmit is ready */
-#define BD_SC_WRAP	(0x2000)	/* Last buffer descriptor */
-#define BD_SC_INTRPT	(0x1000)	/* Interrupt on change */
-#define BD_SC_LAST	(0x0800)	/* Last buffer in frame */
-#define BD_SC_TC	(0x0400)	/* Transmit CRC */
-#define BD_SC_CM	(0x0200)	/* Continuous mode */
-#define BD_SC_ID	(0x0100)	/* Rec'd too many idles */
-#define BD_SC_P		(0x0100)	/* xmt preamble */
-#define BD_SC_BR	(0x0020)	/* Break received */
-#define BD_SC_FR	(0x0010)	/* Framing error */
-#define BD_SC_PR	(0x0008)	/* Parity error */
-#define BD_SC_NAK	(0x0004)	/* NAK - did not respond */
-#define BD_SC_OV	(0x0002)	/* Overrun */
-#define BD_SC_UN	(0x0002)	/* Underrun */
-#define BD_SC_CD	(0x0001)	/* */
-#define BD_SC_CL	(0x0001)	/* Collision */
 
 /* Alignment */
 #define QE_INTR_TABLE_ALIGN	16	/* ??? */
@@ -678,6 +657,7 @@ struct ucc_slow_pram {
 #define UCC_SLOW_GUMR_L_MODE_QMC	0x00000002
 
 /* General UCC FAST Mode Register */
+#define UCC_FAST_GUMR_LOOPBACK	0x40000000
 #define UCC_FAST_GUMR_TCI	0x20000000
 #define UCC_FAST_GUMR_TRX	0x10000000
 #define UCC_FAST_GUMR_TTX	0x08000000
@@ -687,6 +667,10 @@ struct ucc_slow_pram {
 #define UCC_FAST_GUMR_CTSS	0x00800000
 #define UCC_FAST_GUMR_TXSY	0x00020000
 #define UCC_FAST_GUMR_RSYN	0x00010000
+#define UCC_FAST_GUMR_SYNL_MASK	0x0000C000
+#define UCC_FAST_GUMR_SYNL_16	0x0000C000
+#define UCC_FAST_GUMR_SYNL_8	0x00008000
+#define UCC_FAST_GUMR_SYNL_AUTO	0x00004000
 #define UCC_FAST_GUMR_RTSM	0x00002000
 #define UCC_FAST_GUMR_REVD	0x00000400
 #define UCC_FAST_GUMR_ENR	0x00000020
@@ -803,6 +787,11 @@ struct ucc_slow_pram {
 #define UCC_GETH_UPSMR_BRO      0x00000200
 #define UCC_GETH_UPSMR_SMM	0x00000080
 #define UCC_GETH_UPSMR_SGMM	0x00000020
+
+/* UCC Protocol Specific Mode Register (UPSMR), when used for HDLC */
+#define UCC_HDLC_UPSMR_RTE	0x02000000
+#define UCC_HDLC_UPSMR_BUS	0x00200000
+#define UCC_HDLC_UPSMR_CW8	0x00007000
 
 /* UCC Transmit On Demand Register (UTODR) */
 #define UCC_SLOW_TOD	0x8000

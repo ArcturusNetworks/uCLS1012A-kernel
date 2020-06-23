@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __ASM_PCI_H
 #define __ASM_PCI_H
 #ifdef __KERNEL__
@@ -7,8 +8,6 @@
 #include <linux/dma-mapping.h>
 
 #include <asm/io.h>
-#include <asm-generic/pci-bridge.h>
-#include <asm-generic/pci-dma-compat.h>
 
 #define PCIBIOS_MIN_IO		0x1000
 #define PCIBIOS_MIN_MEM		0
@@ -24,6 +23,8 @@
  */
 #define PCI_DMA_BUS_IS_PHYS	(0)
 
+#define ARCH_GENERIC_PCI_MMAP_RESOURCE	1
+
 extern int isa_dma_bridge_buggy;
 
 #ifdef CONFIG_PCI
@@ -33,9 +34,6 @@ static inline int pci_get_legacy_ide_irq(struct pci_dev *dev, int channel)
 	return -ENODEV;
 }
 
-#define HAVE_PCI_MMAP
-extern int pci_mmap_page_range(struct pci_dev *dev, struct vm_area_struct *vma,
-			       enum pci_mmap_state mmap_state, int write_combine);
 static inline int pci_proc_domain(struct pci_bus *bus)
 {
 	return 1;

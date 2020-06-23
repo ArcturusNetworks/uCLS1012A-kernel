@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  *  arch/s390/kernel/base.S
  *
@@ -8,18 +9,22 @@
 
 #include <linux/linkage.h>
 #include <asm/asm-offsets.h>
+#include <asm/nospec-insn.h>
 #include <asm/ptrace.h>
 #include <asm/sigp.h>
+
+	GEN_BR_THUNK %r9
+	GEN_BR_THUNK %r14
 
 ENTRY(s390_base_mcck_handler)
 	basr	%r13,0
 0:	lg	%r15,__LC_PANIC_STACK	# load panic stack
 	aghi	%r15,-STACK_FRAME_OVERHEAD
 	larl	%r1,s390_base_mcck_handler_fn
-	lg	%r1,0(%r1)
-	ltgr	%r1,%r1
+	lg	%r9,0(%r1)
+	ltgr	%r9,%r9
 	jz	1f
-	basr	%r14,%r1
+	BASR_EX	%r14,%r9
 1:	la	%r1,4095
 	lmg	%r0,%r15,__LC_GPREGS_SAVE_AREA-4095(%r1)
 	lpswe	__LC_MCK_OLD_PSW
@@ -36,10 +41,10 @@ ENTRY(s390_base_ext_handler)
 	basr	%r13,0
 0:	aghi	%r15,-STACK_FRAME_OVERHEAD
 	larl	%r1,s390_base_ext_handler_fn
-	lg	%r1,0(%r1)
-	ltgr	%r1,%r1
+	lg	%r9,0(%r1)
+	ltgr	%r9,%r9
 	jz	1f
-	basr	%r14,%r1
+	BASR_EX	%r14,%r9
 1:	lmg	%r0,%r15,__LC_SAVE_AREA_ASYNC
 	ni	__LC_EXT_OLD_PSW+1,0xfd	# clear wait state bit
 	lpswe	__LC_EXT_OLD_PSW
@@ -56,10 +61,10 @@ ENTRY(s390_base_pgm_handler)
 	basr	%r13,0
 0:	aghi	%r15,-STACK_FRAME_OVERHEAD
 	larl	%r1,s390_base_pgm_handler_fn
-	lg	%r1,0(%r1)
-	ltgr	%r1,%r1
+	lg	%r9,0(%r1)
+	ltgr	%r9,%r9
 	jz	1f
-	basr	%r14,%r1
+	BASR_EX	%r14,%r9
 	lmg	%r0,%r15,__LC_SAVE_AREA_SYNC
 	lpswe	__LC_PGM_OLD_PSW
 1:	lpswe	disabled_wait_psw-0b(%r13)
@@ -78,15 +83,20 @@ s390_base_pgm_handler_fn:
 #
 # Calls diag 308 subcode 1 and continues execution
 #
-# The following conditions must be ensured before calling this function:
-# * Prefix register = 0
-# * Lowcore protection is disabled
-#
 ENTRY(diag308_reset)
 	larl	%r4,.Lctlregs		# Save control registers
 	stctg	%c0,%c15,0(%r4)
+	lg	%r2,0(%r4)		# Disable lowcore protection
+	nilh	%r2,0xefff
+	larl	%r4,.Lctlreg0
+	stg	%r2,0(%r4)
+	lctlg	%c0,%c0,0(%r4)
 	larl	%r4,.Lfpctl		# Floating point control register
 	stfpc	0(%r4)
+	larl	%r4,.Lprefix		# Save prefix register
+	stpx	0(%r4)
+	larl	%r4,.Lprefix_zero	# Set prefix register to 0
+	spx	0(%r4)
 	larl	%r4,.Lcontinue_psw	# Save PSW flags
 	epsw	%r2,%r3
 	stm	%r2,%r3,0(%r4)
@@ -106,10 +116,12 @@ ENTRY(diag308_reset)
 	lctlg	%c0,%c15,0(%r4)
 	larl	%r4,.Lfpctl		# Restore floating point ctl register
 	lfpc	0(%r4)
+	larl	%r4,.Lprefix		# Restore prefix register
+	spx	0(%r4)
 	larl	%r4,.Lcontinue_psw	# Restore PSW flags
 	lpswe	0(%r4)
 .Lcontinue:
-	br	%r14
+	BR_EX	%r14
 .align 16
 .Lrestart_psw:
 	.long	0x00080000,0x80000000 + .Lrestart_part2
@@ -122,10 +134,16 @@ ENTRY(diag308_reset)
 
 	.section .bss
 .align 8
+.Lctlreg0:
+	.quad	0
 .Lctlregs:
 	.rept	16
 	.quad	0
 	.endr
 .Lfpctl:
+	.long	0
+.Lprefix:
+	.long	0
+.Lprefix_zero:
 	.long	0
 	.previous

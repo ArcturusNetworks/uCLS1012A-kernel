@@ -371,6 +371,16 @@ static int usdpaa_open(struct inode *inode, struct file *filp)
 
 #define DQRR_MAXFILL 15
 
+
+/* Invalidate a portal */
+void dbci_portal(void *addr)
+{
+	int i;
+
+	for (i = 0; i < 0x4000; i += 64)
+		dcbi(addr + i);
+}
+
 /* Reset a QMan portal to its default state */
 static int init_qm_portal(struct qm_portal_config *config,
 			  struct qm_portal *portal)
@@ -383,6 +393,13 @@ static int init_qm_portal(struct qm_portal_config *config,
 
 	/* Make sure interrupts are inhibited */
 	qm_out(IIR, 1);
+
+	/*
+	 * Invalidate the entire CE portal are to ensure no stale
+	 * cachelines are present.  This should be done on all
+	 * cores as the portal is mapped as M=0 (non-coherent).
+	 */
+	on_each_cpu(dbci_portal, portal->addr.addr_ce, 1);
 
 	/* Initialize the DQRR.  This will stop any dequeue
 	   commands that are in progress */
@@ -434,6 +451,13 @@ static int init_bm_portal(struct bm_portal_config *config,
 {
 	portal->addr.addr_ce = config->addr_virt[DPA_PORTAL_CE];
 	portal->addr.addr_ci = config->addr_virt[DPA_PORTAL_CI];
+
+	/*
+	 * Invalidate the entire CE portal are to ensure no stale
+	 * cachelines are present.  This should be done on all
+	 * cores as the portal is mapped as M=0 (non-coherent).
+	 */
+	on_each_cpu(dbci_portal, portal->addr.addr_ce, 1);
 
 	if (bm_rcr_init(portal, bm_rcr_pvb, bm_rcr_cce)) {
 		pr_err("Bman RCR initialisation failed\n");
@@ -535,6 +559,7 @@ static bool check_portal_channel(void *ctx, u32 channel)
 
 static int usdpaa_release(struct inode *inode, struct file *filp)
 {
+	int err = 0;
 	struct ctx *ctx = filp->private_data;
 	struct mem_mapping *map, *tmpmap;
 	struct portal_mapping *portal, *tmpportal;
@@ -545,8 +570,13 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 	struct qm_portal_config *qm_alloced_portal = NULL;
 	struct bm_portal_config *bm_alloced_portal = NULL;
 
-	struct qm_portal *portal_array[qman_portal_max];
+	struct qm_portal **portal_array;
 	int portal_count = 0;
+
+	portal_array = kmalloc_array(qman_portal_max,
+				     sizeof(struct qm_portal *), GFP_KERNEL);
+	if (!portal_array)
+		return -ENOMEM;
 
 	/* Ensure the release operation cannot be migrated to another
 	   CPU as CPU specific variables may be needed during cleanup */
@@ -588,18 +618,14 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 		qm_alloced_portal = qm_get_unused_portal();
 		if (!qm_alloced_portal) {
 			pr_crit("No QMan portal avalaible for cleanup\n");
-#ifdef CONFIG_PREEMPT_RT_FULL
-			migrate_enable();
-#endif
-			return -1;
+			err = -1;
+			goto done;
 		}
 		qm_cleanup_portal = kmalloc(sizeof(struct qm_portal),
 					    GFP_KERNEL);
 		if (!qm_cleanup_portal) {
-#ifdef CONFIG_PREEMPT_RT_FULL
-			migrate_enable();
-#endif
-			return -ENOMEM;
+			err = -ENOMEM;
+			goto done;
 		}
 		init_qm_portal(qm_alloced_portal, qm_cleanup_portal);
 		portal_array[portal_count] = qm_cleanup_portal;
@@ -609,18 +635,14 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 		bm_alloced_portal = bm_get_unused_portal();
 		if (!bm_alloced_portal) {
 			pr_crit("No BMan portal avalaible for cleanup\n");
-#ifdef CONFIG_PREEMPT_RT_FULL
-			migrate_enable();
-#endif
-			return -1;
+			err = -1;
+			goto done;
 		}
 		bm_cleanup_portal = kmalloc(sizeof(struct bm_portal),
 					    GFP_KERNEL);
 		if (!bm_cleanup_portal) {
-#ifdef CONFIG_PREEMPT_RT_FULL
-			migrate_enable();
-#endif
-			return -ENOMEM;
+			err = -ENOMEM;
+			goto done;
 		}
 		init_bm_portal(bm_alloced_portal, bm_cleanup_portal);
 	}
@@ -697,10 +719,12 @@ static int usdpaa_release(struct inode *inode, struct file *filp)
 	}
 
 	kfree(ctx);
+done:
 #ifdef CONFIG_PREEMPT_RT_FULL
 	migrate_enable();
 #endif
-	return 0;
+	kfree(portal_array);
+	return err;
 }
 
 static int check_mmap_dma(struct ctx *ctx, struct vm_area_struct *vma,
@@ -1135,7 +1159,8 @@ out:
 					 : PROT_WRITE),
 					MAP_SHARED,
 					start_frag->pfn_base,
-					&populate);
+					&populate,
+					NULL);
 		up_write(&current->mm->mmap_sem);
 		if (longret & ~PAGE_MASK) {
 			ret = (int)longret;
@@ -1214,7 +1239,7 @@ map_match:
 
 	base = vma->vm_start;
 	sz = vma->vm_end - vma->vm_start;
-	do_munmap(current->mm, base, sz);
+	do_munmap(current->mm, base, sz, NULL);
 	ret = 0;
  out:
 	up_write(&current->mm->mmap_sem);
@@ -1320,7 +1345,7 @@ static int portal_mmap(struct file *fp, struct resource *res, void **ptr)
 		return -EINVAL;
 	longret = do_mmap_pgoff(fp, PAGE_SIZE, (unsigned long)len,
 				PROT_READ | PROT_WRITE, MAP_SHARED,
-				res->start >> PAGE_SHIFT, &populate);
+				res->start >> PAGE_SHIFT, &populate, NULL);
 	up_write(&current->mm->mmap_sem);
 
 	if (longret & ~PAGE_MASK)
@@ -1333,7 +1358,7 @@ static int portal_mmap(struct file *fp, struct resource *res, void **ptr)
 static void portal_munmap(struct resource *res, void  *ptr)
 {
 	down_write(&current->mm->mmap_sem);
-	do_munmap(current->mm, (unsigned long)ptr, resource_size(res));
+	do_munmap(current->mm, (unsigned long)ptr, resource_size(res), NULL);
 	up_write(&current->mm->mmap_sem);
 }
 

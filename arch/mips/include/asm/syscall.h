@@ -51,7 +51,7 @@ static inline unsigned long mips_get_syscall_arg(unsigned long *arg,
 #ifdef CONFIG_64BIT
 	case 4: case 5: case 6: case 7:
 #ifdef CONFIG_MIPS32_O32
-		if (test_thread_flag(TIF_32BIT_REGS))
+		if (test_tsk_thread_flag(task, TIF_32BIT_REGS))
 			return get_user(*arg, (int *)usp + n);
 		else
 #endif
@@ -85,7 +85,7 @@ static inline void syscall_set_return_value(struct task_struct *task,
 {
 	if (error) {
 		regs->regs[2] = -error;
-		regs->regs[7] = -1;
+		regs->regs[7] = 1;
 	} else {
 		regs->regs[2] = val;
 		regs->regs[7] = 0;
@@ -99,7 +99,7 @@ static inline void syscall_get_arguments(struct task_struct *task,
 {
 	int ret;
 	/* O32 ABI syscall() - Either 64-bit with O32 or 32-bit */
-	if ((config_enabled(CONFIG_32BIT) ||
+	if ((IS_ENABLED(CONFIG_32BIT) ||
 	    test_tsk_thread_flag(task, TIF_32BIT_REGS)) &&
 	    (regs->regs[2] == __NR_syscall))
 		i++;

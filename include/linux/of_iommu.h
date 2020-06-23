@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 #ifndef __OF_IOMMU_H
 #define __OF_IOMMU_H
 
@@ -11,10 +12,12 @@ extern int of_get_dma_window(struct device_node *dn, const char *prefix,
 			     int index, unsigned long *busno, dma_addr_t *addr,
 			     size_t *size);
 
-extern void of_iommu_init(void);
-extern struct iommu_ops *of_iommu_configure(struct device *dev,
+extern const struct iommu_ops *of_iommu_configure(struct device *dev,
 					struct device_node *master_np);
 
+int of_map_rid(struct device_node *np, u32 rid,
+	       const char *map_name, const char *map_mask_name,
+	       struct device_node **target, u32 *id_out);
 #else
 
 static inline int of_get_dma_window(struct device_node *dn, const char *prefix,
@@ -24,17 +27,20 @@ static inline int of_get_dma_window(struct device_node *dn, const char *prefix,
 	return -EINVAL;
 }
 
-static inline void of_iommu_init(void) { }
-static inline struct iommu_ops *of_iommu_configure(struct device *dev,
+static inline const struct iommu_ops *of_iommu_configure(struct device *dev,
 					 struct device_node *master_np)
 {
 	return NULL;
 }
 
-#endif	/* CONFIG_OF_IOMMU */
+static inline int of_map_rid(struct device_node *np, u32 rid,
+			const char *map_name, const char *map_mask_name,
+			struct device_node **target, u32 *id_out)
+{
+	return -EINVAL;
+}
 
-void of_iommu_set_ops(struct device_node *np, struct iommu_ops *ops);
-struct iommu_ops *of_iommu_get_ops(struct device_node *np);
+#endif	/* CONFIG_OF_IOMMU */
 
 extern struct of_device_id __iommu_of_table;
 

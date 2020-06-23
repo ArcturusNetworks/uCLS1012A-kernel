@@ -22,6 +22,7 @@
 #include <linux/module.h>
 #include <linux/kernel.h>
 #include <linux/compiler.h>
+#include <linux/sched.h>
 #include <linux/spinlock.h>
 #include <linux/delay.h>
 #include <linux/types.h>
@@ -34,7 +35,6 @@
 #include <linux/irqdomain.h>
 #include <linux/of_address.h>
 #include <linux/of_irq.h>
-#include <linux/sched.h>
 
 struct fsl_ifc_ctrl *fsl_ifc_ctrl_dev;
 EXPORT_SYMBOL(fsl_ifc_ctrl_dev);
@@ -80,7 +80,7 @@ EXPORT_SYMBOL(fsl_ifc_find);
 
 static int fsl_ifc_ctrl_init(struct fsl_ifc_ctrl *ctrl)
 {
-	struct fsl_ifc_fcm __iomem *ifc = ctrl->gregs;
+	struct fsl_ifc_global __iomem *ifc = ctrl->gregs;
 
 	/*
 	 * Clear all the common status and event registers
@@ -162,7 +162,7 @@ static irqreturn_t fsl_ifc_nand_irq(int irqno, void *data)
 static irqreturn_t fsl_ifc_ctrl_irq(int irqno, void *data)
 {
 	struct fsl_ifc_ctrl *ctrl = data;
-	struct fsl_ifc_fcm __iomem *ifc = ctrl->gregs;
+	struct fsl_ifc_global __iomem *ifc = ctrl->gregs;
 	u32 err_axiid, err_srcid, status, cs_err, err_addr;
 	irqreturn_t ret = IRQ_NONE;
 
@@ -258,11 +258,10 @@ static int fsl_ifc_ctrl_probe(struct platform_device *dev)
 
 	addr = fsl_ifc_ctrl_dev->gregs;
 	if (version >= FSL_IFC_VERSION_2_0_0)
-		fsl_ifc_ctrl_dev->rregs =
-			(struct fsl_ifc_runtime *)(addr + PGOFFSET_64K);
+		addr += PGOFFSET_64K;
 	else
-		fsl_ifc_ctrl_dev->rregs =
-			(struct fsl_ifc_runtime *)(addr + PGOFFSET_4K);
+		addr += PGOFFSET_4K;
+	fsl_ifc_ctrl_dev->rregs = addr;
 
 	/* get the Controller level irq */
 	fsl_ifc_ctrl_dev->irq = irq_of_parse_and_map(dev->dev.of_node, 0);
@@ -320,13 +319,13 @@ err:
 static int fsl_ifc_suspend(struct device *dev)
 {
 	struct fsl_ifc_ctrl *ctrl = dev_get_drvdata(dev);
-	struct fsl_ifc_fcm __iomem *fcm = ctrl->gregs;
+	struct fsl_ifc_global __iomem *fcm = ctrl->gregs;
 	struct fsl_ifc_runtime __iomem *runtime = ctrl->rregs;
 	__be32 nand_evter_intr_en, cm_evter_intr_en, nor_evter_intr_en,
 							 gpcm_evter_intr_en;
 	uint32_t ifc_bank, i;
 
-	ctrl->saved_gregs = kzalloc(sizeof(struct fsl_ifc_fcm), GFP_KERNEL);
+	ctrl->saved_gregs = kzalloc(sizeof(struct fsl_ifc_global), GFP_KERNEL);
 	if (!ctrl->saved_gregs)
 		return -ENOMEM;
 	ctrl->saved_rregs = kzalloc(sizeof(struct fsl_ifc_runtime), GFP_KERNEL);
@@ -447,9 +446,9 @@ static int fsl_ifc_suspend(struct device *dev)
 static int fsl_ifc_resume(struct device *dev)
 {
 	struct fsl_ifc_ctrl *ctrl = dev_get_drvdata(dev);
-	struct fsl_ifc_fcm __iomem *fcm = ctrl->gregs;
+	struct fsl_ifc_global __iomem *fcm = ctrl->gregs;
 	struct fsl_ifc_runtime __iomem *runtime = ctrl->rregs;
-	struct fsl_ifc_fcm *savd_gregs = ctrl->saved_gregs;
+	struct fsl_ifc_global *savd_gregs = ctrl->saved_gregs;
 	struct fsl_ifc_runtime *savd_rregs = ctrl->saved_rregs;
 	uint32_t ver = 0, ncfgr, timeout, ifc_bank, i;
 

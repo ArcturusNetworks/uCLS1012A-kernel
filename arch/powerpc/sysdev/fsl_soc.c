@@ -23,13 +23,13 @@
 #include <linux/device.h>
 #include <linux/platform_device.h>
 #include <linux/of.h>
-#include <linux/of_address.h>
 #include <linux/of_platform.h>
 #include <linux/phy.h>
 #include <linux/spi/spi.h>
 #include <linux/fsl_devices.h>
 #include <linux/fs_enet_pd.h>
 #include <linux/fs_uart_pd.h>
+#include <linux/reboot.h>
 
 #include <linux/atomic.h>
 #include <asm/io.h>
@@ -46,6 +46,37 @@ extern void init_fcc_ioports(struct fs_platform_info*);
 extern void init_fec_ioports(struct fs_platform_info*);
 extern void init_smc_ioports(struct fs_uart_platform_info*);
 static phys_addr_t immrbase = -1;
+static phys_addr_t dcsrbase = -1;
+
+phys_addr_t get_dcsrbase(void)
+{
+	struct device_node *np;
+	const __be32 *prop;
+	int size;
+	u32 naddr;
+
+	if (dcsrbase != -1)
+		return dcsrbase;
+
+	np = of_find_compatible_node(NULL, NULL, "fsl,dcsr");
+	if (!np)
+		return -1;
+
+	prop = of_get_property(np, "#address-cells", &size);
+	if (prop && size == 4)
+		naddr = be32_to_cpup(prop);
+	else
+		naddr = 2;
+
+	prop = of_get_property(np, "ranges", NULL);
+	if (prop)
+		dcsrbase = of_translate_address(np, prop + naddr);
+
+	of_node_put(np);
+
+	return dcsrbase;
+}
+EXPORT_SYMBOL(get_dcsrbase);
 
 phys_addr_t get_immrbase(void)
 {
@@ -77,13 +108,10 @@ phys_addr_t get_immrbase(void)
 
 EXPORT_SYMBOL(get_immrbase);
 
-static u32 sysfreq = -1;
-
 u32 fsl_get_sys_freq(void)
 {
+	static u32 sysfreq = -1;
 	struct device_node *soc;
-	const u32 *prop;
-	int size;
 
 	if (sysfreq != -1)
 		return sysfreq;
@@ -92,37 +120,28 @@ u32 fsl_get_sys_freq(void)
 	if (!soc)
 		return -1;
 
-	prop = of_get_property(soc, "clock-frequency", &size);
-	if (!prop || size != sizeof(*prop) || *prop == 0)
-		prop = of_get_property(soc, "bus-frequency", &size);
-
-	if (prop && size == sizeof(*prop))
-		sysfreq = *prop;
+	of_property_read_u32(soc, "clock-frequency", &sysfreq);
+	if (sysfreq == -1 || !sysfreq)
+		of_property_read_u32(soc, "bus-frequency", &sysfreq);
 
 	of_node_put(soc);
 	return sysfreq;
 }
 EXPORT_SYMBOL(fsl_get_sys_freq);
 
-#if defined(CONFIG_CPM2) || defined(CONFIG_QUICC_ENGINE) || defined(CONFIG_8xx)
-
-static u32 brgfreq = -1;
+#if defined(CONFIG_CPM) || defined(CONFIG_QUICC_ENGINE)
 
 u32 get_brgfreq(void)
 {
+	static u32 brgfreq = -1;
 	struct device_node *node;
-	const unsigned int *prop;
-	int size;
 
 	if (brgfreq != -1)
 		return brgfreq;
 
 	node = of_find_compatible_node(NULL, NULL, "fsl,cpm-brg");
 	if (node) {
-		prop = of_get_property(node, "clock-frequency", &size);
-		if (prop && size == 4)
-			brgfreq = *prop;
-
+		of_property_read_u32(node, "clock-frequency", &brgfreq);
 		of_node_put(node);
 		return brgfreq;
 	}
@@ -135,15 +154,11 @@ u32 get_brgfreq(void)
 		node = of_find_node_by_type(NULL, "qe");
 
 	if (node) {
-		prop = of_get_property(node, "brg-frequency", &size);
-		if (prop && size == 4)
-			brgfreq = *prop;
-
-		if (brgfreq == -1 || brgfreq == 0) {
-			prop = of_get_property(node, "bus-frequency", &size);
-			if (prop && size == 4)
-				brgfreq = *prop / 2;
-		}
+		of_property_read_u32(node, "brg-frequency", &brgfreq);
+		if (brgfreq == -1 || !brgfreq)
+			if (!of_property_read_u32(node, "bus-frequency",
+						  &brgfreq))
+				brgfreq /= 2;
 		of_node_put(node);
 	}
 
@@ -152,10 +167,9 @@ u32 get_brgfreq(void)
 
 EXPORT_SYMBOL(get_brgfreq);
 
-static u32 fs_baudrate = -1;
-
 u32 get_baudrate(void)
 {
+	static u32 fs_baudrate = -1;
 	struct device_node *node;
 
 	if (fs_baudrate != -1)
@@ -163,12 +177,7 @@ u32 get_baudrate(void)
 
 	node = of_find_node_by_type(NULL, "serial");
 	if (node) {
-		int size;
-		const unsigned int *prop = of_get_property(node,
-				"current-speed", &size);
-
-		if (prop)
-			fs_baudrate = *prop;
+		of_property_read_u32(node, "current-speed", &fs_baudrate);
 		of_node_put(node);
 	}
 
@@ -181,22 +190,37 @@ EXPORT_SYMBOL(get_baudrate);
 #if defined(CONFIG_FSL_SOC_BOOKE) || defined(CONFIG_PPC_86xx)
 static __be32 __iomem *rstcr;
 
+static int fsl_rstcr_restart(struct notifier_block *this,
+			     unsigned long mode, void *cmd)
+{
+	local_irq_disable();
+	/* set reset control register */
+	out_be32(rstcr, 0x2);	/* HRESET_REQ */
+
+	return NOTIFY_DONE;
+}
+
 static int __init setup_rstcr(void)
 {
 	struct device_node *np;
 
+	static struct notifier_block restart_handler = {
+		.notifier_call = fsl_rstcr_restart,
+		.priority = 128,
+	};
+
 	for_each_node_by_name(np, "global-utilities") {
 		if ((of_get_property(np, "fsl,has-rstcr", NULL))) {
 			rstcr = of_iomap(np, 0) + 0xb0;
-			if (!rstcr)
+			if (!rstcr) {
 				printk (KERN_ERR "Error: reset control "
 						"register not mapped!\n");
+			} else {
+				register_restart_handler(&restart_handler);
+			}
 			break;
 		}
 	}
-
-	if (!rstcr && ppc_md.restart == fsl_rstcr_restart)
-		printk(KERN_ERR "No RSTCR register, warm reboot won't work\n");
 
 	of_node_put(np);
 
@@ -205,19 +229,12 @@ static int __init setup_rstcr(void)
 
 arch_initcall(setup_rstcr);
 
-void fsl_rstcr_restart(char *cmd)
-{
-	local_irq_disable();
-	if (rstcr)
-		/* set reset control register */
-		out_be32(rstcr, 0x2);	/* HRESET_REQ */
-
-	while (1) ;
-}
 #endif
 
+#if defined(CONFIG_FB_FSL_DIU) || defined(CONFIG_FB_FSL_DIU_MODULE)
 struct platform_diu_data_ops diu_ops;
 EXPORT_SYMBOL(diu_ops);
+#endif
 
 #ifdef CONFIG_EPAPR_PARAVIRT
 /*
@@ -227,10 +244,11 @@ EXPORT_SYMBOL(diu_ops);
  * to initiate a partition restart when we're running under the Freescale
  * hypervisor.
  */
-void fsl_hv_restart(char *cmd)
+void __noreturn fsl_hv_restart(char *cmd)
 {
 	pr_info("hv restart\n");
 	fh_partition_restart(-1);
+	while (1) ;
 }
 
 /*
@@ -240,52 +258,10 @@ void fsl_hv_restart(char *cmd)
  * function pointers, to shut down the partition when we're running under
  * the Freescale hypervisor.
  */
-void fsl_hv_halt(void)
+void __noreturn fsl_hv_halt(void)
 {
 	pr_info("hv exit\n");
 	fh_partition_stop(-1);
+	while (1) ;
 }
-#endif
-
-#ifdef CONFIG_KVM
-static const struct of_device_id cpc_matches[] = {
-	{ .compatible = "fsl,b4-l3-cache-controller" },
-	{ .compatible = "fsl,b4420-l3-cache-controller" },
-	{ .compatible = "fsl,b4860-l3-cache-controller" },
-	{ .compatible = "fsl,t2080-l3-cache-controller" },
-	{ .compatible = "fsl,t4240-l3-cache-controller" },
-	{}
-};
-
-static int __init cpc_disable_sole_data(void)
-{
-	struct device_node *node;
-	u32 __iomem *regs;
-	int i;
-
-	for_each_matching_node(node, cpc_matches) {
-		i = 0;
-
-		for (;;) {
-			regs = of_iomap(node, i++);
-			if (!regs)
-				break;
-
-			/*
-			 * Set undocumented bit to disable CPC sole data
-			 * mode, making it safe to use the LRAT with KVM
-			 * guests, which could otherwise hang the host (under
-			 * certain usage patterns) by accessing memory with
-			 * the M bit unset.  The guest still needs to set the
-			 * M bit to operate properly, but this removes a DoS
-			 * vector.
-			 */
-			setbits32(regs + 0xf00 / 4, 0x4000);
-			iounmap(regs);
-		}
-	}
-
-	return 0;
-}
-arch_initcall(cpc_disable_sole_data);
 #endif

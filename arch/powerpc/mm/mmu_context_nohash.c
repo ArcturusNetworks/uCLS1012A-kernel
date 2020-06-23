@@ -226,7 +226,8 @@ static void context_check_map(void)
 static void context_check_map(void) { }
 #endif
 
-void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next)
+void switch_mmu_context(struct mm_struct *prev, struct mm_struct *next,
+			struct task_struct *tsk)
 {
 	unsigned int i, id, cpu = smp_processor_id();
 	unsigned long *map;
@@ -330,14 +331,22 @@ int init_new_context(struct task_struct *t, struct mm_struct *mm)
 {
 	pr_hard("initing context for mm @%p\n", mm);
 
-	mm->context.id = MMU_NO_CONTEXT;
-	mm->context.active = 0;
+#ifdef	CONFIG_PPC_MM_SLICES
+	if (!mm->context.addr_limit)
+		mm->context.addr_limit = DEFAULT_MAP_WINDOW;
 
-#ifdef CONFIG_PPC_MM_SLICES
-	if (slice_mm_new_context(mm))
+	/*
+	 * We have MMU_NO_CONTEXT set to be ~0. Hence check
+	 * explicitly against context.id == 0. This ensures that we properly
+	 * initialize context slice details for newly allocated mm's (which will
+	 * have id == 0) and don't alter context slice inherited via fork (which
+	 * will have id != 0).
+	 */
+	if (mm->context.id == 0)
 		slice_set_user_psize(mm, mmu_virtual_psize);
 #endif
-
+	mm->context.id = MMU_NO_CONTEXT;
+	mm->context.active = 0;
 	return 0;
 }
 
@@ -369,44 +378,34 @@ void destroy_context(struct mm_struct *mm)
 }
 
 #ifdef CONFIG_SMP
-
-static int mmu_context_cpu_notify(struct notifier_block *self,
-				  unsigned long action, void *hcpu)
+static int mmu_ctx_cpu_prepare(unsigned int cpu)
 {
-	unsigned int cpu = (unsigned int)(long)hcpu;
-
 	/* We don't touch CPU 0 map, it's allocated at aboot and kept
 	 * around forever
 	 */
 	if (cpu == boot_cpuid)
-		return NOTIFY_OK;
+		return 0;
 
-	switch (action) {
-	case CPU_UP_PREPARE:
-	case CPU_UP_PREPARE_FROZEN:
-		pr_devel("MMU: Allocating stale context map for CPU %d\n", cpu);
-		stale_map[cpu] = kzalloc(CTX_MAP_SIZE, GFP_KERNEL);
-		break;
-#ifdef CONFIG_HOTPLUG_CPU
-	case CPU_UP_CANCELED:
-	case CPU_UP_CANCELED_FROZEN:
-	case CPU_DEAD:
-	case CPU_DEAD_FROZEN:
-		pr_devel("MMU: Freeing stale context map for CPU %d\n", cpu);
-		kfree(stale_map[cpu]);
-		stale_map[cpu] = NULL;
-
-		/* We also clear the cpu_vm_mask bits of CPUs going away */
-		clear_tasks_mm_cpumask(cpu);
-	break;
-#endif /* CONFIG_HOTPLUG_CPU */
-	}
-	return NOTIFY_OK;
+	pr_devel("MMU: Allocating stale context map for CPU %d\n", cpu);
+	stale_map[cpu] = kzalloc(CTX_MAP_SIZE, GFP_KERNEL);
+	return 0;
 }
 
-static struct notifier_block mmu_context_cpu_nb = {
-	.notifier_call	= mmu_context_cpu_notify,
-};
+static int mmu_ctx_cpu_dead(unsigned int cpu)
+{
+#ifdef CONFIG_HOTPLUG_CPU
+	if (cpu == boot_cpuid)
+		return 0;
+
+	pr_devel("MMU: Freeing stale context map for CPU %d\n", cpu);
+	kfree(stale_map[cpu]);
+	stale_map[cpu] = NULL;
+
+	/* We also clear the cpu_vm_mask bits of CPUs going away */
+	clear_tasks_mm_cpumask(cpu);
+#endif
+	return 0;
+}
 
 #endif /* CONFIG_SMP */
 
@@ -443,8 +442,8 @@ void __init mmu_context_init(void)
 	 *      -- BenH
 	 */
 	if (mmu_has_feature(MMU_FTR_TYPE_8xx)) {
-		first_context = 0;
-		last_context = 15;
+		first_context = 1;
+		last_context = 16;
 		no_selective_tlbil = true;
 	} else if (mmu_has_feature(MMU_FTR_TYPE_47x)) {
 		first_context = 1;
@@ -469,7 +468,9 @@ void __init mmu_context_init(void)
 #else
 	stale_map[boot_cpuid] = memblock_virt_alloc(CTX_MAP_SIZE, 0);
 
-	register_cpu_notifier(&mmu_context_cpu_nb);
+	cpuhp_setup_state_nocalls(CPUHP_POWERPC_MMU_CTX_PREPARE,
+				  "powerpc/mmu/ctx:prepare",
+				  mmu_ctx_cpu_prepare, mmu_ctx_cpu_dead);
 #endif
 
 	printk(KERN_INFO

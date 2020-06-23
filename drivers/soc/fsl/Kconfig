@@ -1,10 +1,44 @@
 #
 # Freescale SOC drivers
 #
-config FSL_GUTS
-       bool "Freescale QorIQ GUTS driver"
-       select SOC_BUS
 
-if ARM || ARM64
-source "drivers/soc/fsl/Kconfig.arm"
-endif
+source "drivers/soc/fsl/qbman/Kconfig"
+source "drivers/soc/fsl/qe/Kconfig"
+
+config FSL_GUTS
+	bool
+	select SOC_BUS
+	help
+	  The global utilities block controls power management, I/O device
+	  enabling, power-onreset(POR) configuration monitoring, alternate
+	  function selection for multiplexed signals,and clock control.
+	  This driver is to manage and access global utilities block.
+	  Initially only reading SVR and registering soc device are supported.
+	  Other guts accesses, such as reading RCW, should eventually be moved
+	  into this driver as well.
+
+config FSL_RCPM
+	bool "Freescale RCPM support"
+	depends on PM_SLEEP
+	help
+	  The NXP QorIQ Processors based on ARM Core have RCPM module
+	  (Run Control and Power Management), which performs all device-level
+	  tasks associated with power management, such as wakeup source control.
+
+config FSL_QIXIS
+	tristate "QIXIS system controller driver"
+	depends on OF
+	select REGMAP_I2C
+	select REGMAP_MMIO
+	select MFD_CORE
+	default n
+	help
+	  Say y here to enable QIXIS system controller api. The qixis driver
+	  provides FPGA functions to control system.
+
+config FSL_SLEEP_FSM
+	bool
+	help
+	  This driver configures a hardware FSM (Finite State Machine) for deep sleep.
+	  The FSM is used to finish clean-ups at the last stage of system entering deep
+	  sleep, and also wakes up system when a wake up event happens.

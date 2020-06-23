@@ -23,11 +23,13 @@
 #include <linux/jiffies.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
-#include <linux/sched.h>
+#include <linux/sched/signal.h>
+#include <linux/sched/debug.h>
 #include <linux/signal.h>
 #include <linux/ratelimit.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <asm/hardirq.h>
+#include <asm/traps.h>
 
 /* #define DEBUG_UNALIGNED 1 */
 
@@ -129,8 +131,6 @@
 #define ERR_PAGEFAULT	-2
 
 int unaligned_enabled __read_mostly = 1;
-
-void die_if_kernel (char *str, struct pt_regs *regs, long err);
 
 static int emulate_ldh(struct pt_regs *regs, int toreg)
 {

@@ -23,7 +23,7 @@
  */
 
 #include <linux/init.h>
-#include <linux/module.h>
+#include <linux/extable.h>
 #include <linux/types.h>
 #include <linux/dma-mapping.h>
 #include <linux/interrupt.h>
@@ -37,8 +37,6 @@
 #include <linux/io.h>
 #include <linux/uaccess.h>
 #include <asm/machdep.h>
-#include <linux/fsl/svr.h>
-#include <sysdev/fsl_soc.h>
 
 #include "fsl_rio.h"
 
@@ -73,6 +71,8 @@
 #define RIWAR_WRTYP_ALLOC	0x00006000
 #define RIWAR_SIZE_MASK		0x0000003F
 
+static DEFINE_SPINLOCK(fsl_rio_config_lock);
+
 #define __fsl_read_rio_config(x, addr, err, op)		\
 	__asm__ __volatile__(				\
 		"1:	"op" %1,0(%2)\n"		\
@@ -82,10 +82,8 @@
 		"3:	li %1,-1\n"			\
 		"	li %0,%3\n"			\
 		"	b 2b\n"				\
-		".section __ex_table,\"a\"\n"		\
-			PPC_LONG_ALIGN "\n"		\
-			PPC_LONG "1b,3b\n"		\
-		".text"					\
+		".previous\n"				\
+		EX_TABLE(1b, 3b)			\
 		: "=r" (err), "=r" (x)			\
 		: "b" (addr), "i" (-EFAULT), "0" (err))
 
@@ -115,7 +113,7 @@ int fsl_rio_mcheck_exception(struct pt_regs *regs)
 			out_be32((u32 *)(rio_regs_win + RIO_LTLEDCSR),
 				 0);
 			regs->msr |= MSR_RI;
-			regs->nip = entry->fixup;
+			regs->nip = extable_fixup(entry);
 			return 1;
 		}
 	}
@@ -188,6 +186,7 @@ fsl_rio_config_read(struct rio_mport *mport, int index, u16 destid,
 			u8 hopcount, u32 offset, int len, u32 *val)
 {
 	struct rio_priv *priv = mport->priv;
+	unsigned long flags;
 	u8 *data;
 	u32 rval, err = 0;
 
@@ -200,6 +199,8 @@ fsl_rio_config_read(struct rio_mport *mport, int index, u16 destid,
 	/* allow only aligned access to maintenance registers */
 	if (offset > (0x1000000 - len) || !IS_ALIGNED(offset, len))
 		return -EINVAL;
+
+	spin_lock_irqsave(&fsl_rio_config_lock, flags);
 
 	out_be32(&priv->maint_atmu_regs->rowtar,
 		 (destid << 22) | (hopcount << 12) | (offset >> 12));
@@ -217,6 +218,7 @@ fsl_rio_config_read(struct rio_mport *mport, int index, u16 destid,
 		__fsl_read_rio_config(rval, data, err, "lwz");
 		break;
 	default:
+		spin_unlock_irqrestore(&fsl_rio_config_lock, flags);
 		return -EINVAL;
 	}
 
@@ -225,6 +227,7 @@ fsl_rio_config_read(struct rio_mport *mport, int index, u16 destid,
 			 err, destid, hopcount, offset);
 	}
 
+	spin_unlock_irqrestore(&fsl_rio_config_lock, flags);
 	*val = rval;
 
 	return err;
@@ -248,7 +251,10 @@ fsl_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 			u8 hopcount, u32 offset, int len, u32 val)
 {
 	struct rio_priv *priv = mport->priv;
+	unsigned long flags;
 	u8 *data;
+	int ret = 0;
+
 	pr_debug
 		("fsl_rio_config_write:"
 		" index %d destid %d hopcount %d offset %8.8x len %d val %8.8x\n",
@@ -258,6 +264,8 @@ fsl_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 	/* allow only aligned access to maintenance registers */
 	if (offset > (0x1000000 - len) || !IS_ALIGNED(offset, len))
 		return -EINVAL;
+
+	spin_lock_irqsave(&fsl_rio_config_lock, flags);
 
 	out_be32(&priv->maint_atmu_regs->rowtar,
 		 (destid << 22) | (hopcount << 12) | (offset >> 12));
@@ -275,10 +283,11 @@ fsl_rio_config_write(struct rio_mport *mport, int index, u16 destid,
 		out_be32((u32 *) data, val);
 		break;
 	default:
-		return -EINVAL;
+		ret = -EINVAL;
 	}
+	spin_unlock_irqrestore(&fsl_rio_config_lock, flags);
 
-	return 0;
+	return ret;
 }
 
 static void fsl_rio_inbound_mem_init(struct rio_priv *priv)
@@ -291,7 +300,7 @@ static void fsl_rio_inbound_mem_init(struct rio_priv *priv)
 }
 
 int fsl_map_inb_mem(struct rio_mport *mport, dma_addr_t lstart,
-	u64 rstart, u32 size, u32 flags)
+	u64 rstart, u64 size, u32 flags)
 {
 	struct rio_priv *priv = mport->priv;
 	u32 base_size;
@@ -300,7 +309,7 @@ int fsl_map_inb_mem(struct rio_mport *mport, dma_addr_t lstart,
 	u32 riwar;
 	int i;
 
-	if ((size & (size - 1)) != 0)
+	if ((size & (size - 1)) != 0 || size > 0x400000000ULL)
 		return -EINVAL;
 
 	base_size_log = ilog2(size);
@@ -421,37 +430,6 @@ static inline void fsl_rio_info(struct device *dev, u32 ccsr)
 	}
 }
 
-#define CCSR_ECM_EEBPCR_OFF 0x10
-/*
- * fixup_erratum_srio135 - Fix Serial RapidIO atomic operation erratum
- */
-static int fixup_erratum_srio135(struct device *dev)
-{
-	struct device_node *np;
-	void __iomem *ecm;
-
-	np = of_find_compatible_node(NULL, NULL, "fsl,mpc8548-ecm");
-	if (!np) {
-		dev_err(dev, "no ECM node found.\n");
-		return -ENODEV;
-	}
-
-	ecm = of_iomap(np, 0);
-	of_node_put(np);
-	if (!ecm) {
-		dev_err(dev, "failed to map ECM register base.\n");
-		return -ENODEV;
-	}
-	/*
-	 * Set bits 13 and 29 of the EEBPCR register in the ECM
-	 * during initialization and leave them set indefinitely.
-	 */
-	setbits32(ecm + CCSR_ECM_EEBPCR_OFF, 0x00040004);
-	iounmap(ecm);
-
-	return 0;
-}
-
 /**
  * fsl_rio_setup - Setup Freescale PowerPC RapidIO interface
  * @dev: platform_device pointer
@@ -477,7 +455,6 @@ int fsl_rio_setup(struct platform_device *dev)
 	u32 i;
 	static int tmp;
 	struct device_node *rmu_np[MAX_MSG_UNIT_NUM] = {NULL};
-	u32 svr = mfspr(SPRN_SVR);
 
 	if (!dev->dev.of_node) {
 		dev_err(&dev->dev, "Device OF-Node is NULL");
@@ -486,23 +463,12 @@ int fsl_rio_setup(struct platform_device *dev)
 
 	rc = of_address_to_resource(dev->dev.of_node, 0, &regs);
 	if (rc) {
-		dev_err(&dev->dev, "Can't get %s property 'reg'\n",
-				dev->dev.of_node->full_name);
+		dev_err(&dev->dev, "Can't get %pOF property 'reg'\n",
+				dev->dev.of_node);
 		return -EFAULT;
 	}
-
-	/* Fix erratum NMG_SRIO135 */
-	if (SVR_SOC_VER(svr) == SVR_8548) {
-		rc = fixup_erratum_srio135(&dev->dev);
-		if (rc) {
-			dev_err(&dev->dev,
-				"failed to fix the erratum NMG_SRIO135.");
-			return rc;
-		}
-	}
-
-	dev_info(&dev->dev, "Of-device full name %s\n",
-			dev->dev.of_node->full_name);
+	dev_info(&dev->dev, "Of-device full name %pOF\n",
+			dev->dev.of_node);
 	dev_info(&dev->dev, "Regs: %pR\n", &regs);
 
 	rio_regs_win = ioremap(regs.start, resource_size(&regs));
@@ -536,12 +502,13 @@ int fsl_rio_setup(struct platform_device *dev)
 	rmu_node = of_parse_phandle(dev->dev.of_node, "fsl,srio-rmu-handle", 0);
 	if (!rmu_node) {
 		dev_err(&dev->dev, "No valid fsl,srio-rmu-handle property\n");
+		rc = -ENOENT;
 		goto err_rmu;
 	}
 	rc = of_address_to_resource(rmu_node, 0, &rmu_regs);
 	if (rc) {
-		dev_err(&dev->dev, "Can't get %s property 'reg'\n",
-				rmu_node->full_name);
+		dev_err(&dev->dev, "Can't get %pOF property 'reg'\n",
+				rmu_node);
 		goto err_rmu;
 	}
 	rmu_regs_win = ioremap(rmu_regs.start, resource_size(&rmu_regs));
@@ -575,8 +542,8 @@ int fsl_rio_setup(struct platform_device *dev)
 	aw = of_n_addr_cells(np);
 	dt_range = of_get_property(np, "reg", &rlen);
 	if (!dt_range) {
-		pr_err("%s: unable to find 'reg' property\n",
-			np->full_name);
+		pr_err("%pOF: unable to find 'reg' property\n",
+			np);
 		rc = -ENOMEM;
 		goto err_pw;
 	}
@@ -603,8 +570,8 @@ int fsl_rio_setup(struct platform_device *dev)
 	aw = of_n_addr_cells(np);
 	dt_range = of_get_property(np, "reg", &rlen);
 	if (!dt_range) {
-		pr_err("%s: unable to find 'reg' property\n",
-			np->full_name);
+		pr_err("%pOF: unable to find 'reg' property\n",
+			np);
 		rc = -ENOMEM;
 		goto err;
 	}
@@ -615,15 +582,15 @@ int fsl_rio_setup(struct platform_device *dev)
 	for_each_child_of_node(dev->dev.of_node, np) {
 		port_index = of_get_property(np, "cell-index", NULL);
 		if (!port_index) {
-			dev_err(&dev->dev, "Can't get %s property 'cell-index'\n",
-					np->full_name);
+			dev_err(&dev->dev, "Can't get %pOF property 'cell-index'\n",
+					np);
 			continue;
 		}
 
 		dt_range = of_get_property(np, "ranges", &rlen);
 		if (!dt_range) {
-			dev_err(&dev->dev, "Can't get %s property 'ranges'\n",
-					np->full_name);
+			dev_err(&dev->dev, "Can't get %pOF property 'ranges'\n",
+					np);
 			continue;
 		}
 
@@ -644,12 +611,18 @@ int fsl_rio_setup(struct platform_device *dev)
 		range_start = of_read_number(dt_range + aw, paw);
 		range_size = of_read_number(dt_range + aw + paw, sw);
 
-		dev_info(&dev->dev, "%s: LAW start 0x%016llx, size 0x%016llx.\n",
-				np->full_name, range_start, range_size);
+		dev_info(&dev->dev, "%pOF: LAW start 0x%016llx, size 0x%016llx.\n",
+				np, range_start, range_size);
 
 		port = kzalloc(sizeof(struct rio_mport), GFP_KERNEL);
 		if (!port)
 			continue;
+
+		rc = rio_mport_initialize(port);
+		if (rc) {
+			kfree(port);
+			continue;
+		}
 
 		i = *port_index - 1;
 		port->index = (unsigned char)i;
@@ -682,19 +655,11 @@ int fsl_rio_setup(struct platform_device *dev)
 		port->ops = ops;
 		port->priv = priv;
 		port->phys_efptr = 0x100;
+		port->phys_rmap = 1;
 		priv->regs_win = rio_regs_win;
 
-		/* Probe the master port phy type */
 		ccsr = in_be32(priv->regs_win + RIO_CCSR + i*0x20);
-		port->phy_type = (ccsr & 1) ? RIO_PHY_SERIAL : RIO_PHY_PARALLEL;
-		if (port->phy_type == RIO_PHY_PARALLEL) {
-			dev_err(&dev->dev, "RIO: Parallel PHY type, unsupported port type!\n");
-			release_resource(&port->iores);
-			kfree(priv);
-			kfree(port);
-			continue;
-		}
-		dev_info(&dev->dev, "RapidIO PHY type: Serial\n");
+
 		/* Checking the port training status */
 		if (in_be32((priv->regs_win + RIO_ESCSR + i*0x20)) & 1) {
 			dev_err(&dev->dev, "Port %d is not ready. "
@@ -727,12 +692,6 @@ int fsl_rio_setup(struct platform_device *dev)
 		dev_info(&dev->dev, "RapidIO Common Transport System size: %d\n",
 				port->sys_size ? 65536 : 256);
 
-		if (rio_register_mport(port)) {
-			release_resource(&port->iores);
-			kfree(priv);
-			kfree(port);
-			continue;
-		}
 		if (port->host_deviceid >= 0)
 			out_be32(priv->regs_win + RIO_GCCSR, RIO_PORT_GEN_HOST |
 				RIO_PORT_GEN_MASTER | RIO_PORT_GEN_DISCOVERED);
@@ -750,11 +709,9 @@ int fsl_rio_setup(struct platform_device *dev)
 			((i == 0) ? RIO_INB_ATMU_REGS_PORT1_OFFSET :
 			RIO_INB_ATMU_REGS_PORT2_OFFSET));
 
-
-		/* Set to receive any dist ID for serial RapidIO controller. */
-		if (port->phy_type == RIO_PHY_SERIAL)
-			out_be32((priv->regs_win
-				+ RIO_ISR_AACR + i*0x80), RIO_ISR_AACR_AA);
+		/* Set to receive packets with any dest ID */
+		out_be32((priv->regs_win + RIO_ISR_AACR + i*0x80),
+			 RIO_ISR_AACR_AA);
 
 		/* Configure maintenance transaction window */
 		out_be32(&priv->maint_atmu_regs->rowbar,
@@ -771,7 +728,14 @@ int fsl_rio_setup(struct platform_device *dev)
 		fsl_rio_inbound_mem_init(priv);
 
 		dbell->mport[i] = port;
+		pw->mport[i] = port;
 
+		if (rio_register_mport(port)) {
+			release_resource(&port->iores);
+			kfree(priv);
+			kfree(port);
+			continue;
+		}
 		active_ports++;
 	}
 
@@ -806,8 +770,8 @@ err_rio_regs:
  */
 static int fsl_of_rio_rpn_probe(struct platform_device *dev)
 {
-	printk(KERN_INFO "Setting up RapidIO peer-to-peer network %s\n",
-			dev->dev.of_node->full_name);
+	printk(KERN_INFO "Setting up RapidIO peer-to-peer network %pOF\n",
+			dev->dev.of_node);
 
 	return fsl_rio_setup(dev);
 };

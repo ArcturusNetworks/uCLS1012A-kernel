@@ -125,7 +125,7 @@ static int send_midi_async(struct usb_line6 *line6, unsigned char *data,
 	}
 
 	usb_fill_int_urb(urb, line6->usbdev,
-			 usb_sndbulkpipe(line6->usbdev,
+			 usb_sndintpipe(line6->usbdev,
 					 line6->properties->ep_ctrl_w),
 			 transfer_buffer, length, midi_sent, line6,
 			 line6->interval);
@@ -200,14 +200,14 @@ static void line6_midi_input_trigger(struct snd_rawmidi_substream *substream,
 		line6->line6midi->substream_receive = NULL;
 }
 
-static struct snd_rawmidi_ops line6_midi_output_ops = {
+static const struct snd_rawmidi_ops line6_midi_output_ops = {
 	.open = line6_midi_output_open,
 	.close = line6_midi_output_close,
 	.trigger = line6_midi_output_trigger,
 	.drain = line6_midi_output_drain,
 };
 
-static struct snd_rawmidi_ops line6_midi_input_ops = {
+static const struct snd_rawmidi_ops line6_midi_input_ops = {
 	.open = line6_midi_input_open,
 	.close = line6_midi_input_close,
 	.trigger = line6_midi_input_trigger,
@@ -258,7 +258,7 @@ int line6_init_midi(struct usb_line6 *line6)
 	struct snd_rawmidi *rmidi;
 	struct snd_line6_midi *line6midi;
 
-	if (!(line6->properties->capabilities & LINE6_CAP_CONTROL)) {
+	if (!(line6->properties->capabilities & LINE6_CAP_CONTROL_MIDI)) {
 		/* skip MIDI initialization and report success */
 		return 0;
 	}

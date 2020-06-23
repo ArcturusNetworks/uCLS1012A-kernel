@@ -112,9 +112,11 @@ $low_water_mark is expressed in blocks of size $data_block_size.  If
 free space on the data device drops below this level then a dm event
 will be triggered which a userspace daemon should catch allowing it to
 extend the pool device.  Only one such event will be sent.
-Resuming a device with a new table itself triggers an event so the
-userspace daemon can use this to detect a situation where a new table
-already exceeds the threshold.
+
+No special event is triggered if a just resumed device's free space is below
+the low water mark. However, resuming a device always triggers an
+event; a userspace daemon should verify that free space exceeds the low
+water mark when handling this event.
 
 A low water mark for the metadata device is maintained in the kernel and
 will trigger a dm event if free space on the metadata device drops below
@@ -296,7 +298,7 @@ ii) Status
 	underlying device.  When this is enabled when loading the table,
 	it can get disabled if the underlying device doesn't support it.
 
-    ro|rw
+    ro|rw|out_of_data_space
 	If the pool encounters certain types of device failures it will
 	drop into a read-only metadata mode in which no changes to
 	the pool metadata (like allocating new blocks) are permitted.
@@ -313,6 +315,13 @@ ii) Status
 	'no_space_timeout' expires.  The 'no_space_timeout' dm-thin-pool
 	module parameter can be used to change this timeout -- it
 	defaults to 60 seconds but may be disabled using a value of 0.
+
+    needs_check
+	A metadata operation has failed, resulting in the needs_check
+	flag being set in the metadata's superblock.  The metadata
+	device must be deactivated and checked/repaired before the
+	thin-pool can be made fully operational again.  '-' indicates
+	needs_check is not set.
 
 iii) Messages
 

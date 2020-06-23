@@ -1,7 +1,7 @@
 /*
  * P4080/P4040 Silicon/SoC Device Tree Source (post include)
  *
- * Copyright 2011 - 2014 Freescale Semiconductor Inc.
+ * Copyright 2011 - 2015 Freescale Semiconductor Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -441,119 +441,52 @@ crypto: crypto@300000 {
 		fsl,iommu-parent = <&pamu1>;
 	};
 
-/include/ "qoriq-pme-0.dtsi"
 /include/ "qoriq-qman1.dtsi"
 /include/ "qoriq-bman1.dtsi"
+
 /include/ "qoriq-fman-0.dtsi"
 /include/ "qoriq-fman-0-1g-0.dtsi"
 /include/ "qoriq-fman-0-1g-1.dtsi"
 /include/ "qoriq-fman-0-1g-2.dtsi"
 /include/ "qoriq-fman-0-1g-3.dtsi"
 /include/ "qoriq-fman-0-10g-0.dtsi"
-	fman0: fman@400000 {
-		/* tx - 1g - 0 */
-		port@a8000 {
-			fsl,qman-channel-id = <0x41>;
+	fman@400000 {
+		enet0: ethernet@e0000 {
 		};
-		/* tx - 1g - 1 */
-		port@a9000 {
-			fsl,qman-channel-id = <0x42>;
+
+		enet1: ethernet@e2000 {
 		};
-		/* tx - 1g - 2 */
-		port@aa000 {
-			fsl,qman-channel-id = <0x43>;
+
+		enet2: ethernet@e4000 {
 		};
-		/* tx - 1g - 3 */
-		port@ab000 {
-			fsl,qman-channel-id = <0x44>;
+
+		enet3: ethernet@e6000 {
 		};
-		/* tx - 10g - 0 */
-		port@b0000 {
-			fsl,qman-channel-id = <0x40>;
-		};
-		/* offline 0 */
-		port@81000 {
-			fsl,qman-channel-id = <0x45>;
-		};
-		/* offline 1 */
-		port@82000 {
-			fsl,qman-channel-id = <0x46>;
-		};
-		/* offline 2 */
-		port@83000 {
-			fsl,qman-channel-id = <0x47>;
-		};
-		/* offline 3 */
-		port@84000 {
-			fsl,qman-channel-id = <0x48>;
-		};
-		/* offline 4 */
-		port@85000 {
-			fsl,qman-channel-id = <0x49>;
-		};
-		/* offline 5 */
-		port@86000 {
-			fsl,qman-channel-id = <0x4a>;
-		};
-		/* offline 6 */
-		port@87000 {
-			fsl,qman-channel-id = <0x4b>;
+
+		enet4: ethernet@f0000 {
 		};
 	};
+
 /include/ "qoriq-fman-1.dtsi"
 /include/ "qoriq-fman-1-1g-0.dtsi"
 /include/ "qoriq-fman-1-1g-1.dtsi"
 /include/ "qoriq-fman-1-1g-2.dtsi"
 /include/ "qoriq-fman-1-1g-3.dtsi"
 /include/ "qoriq-fman-1-10g-0.dtsi"
-	fman1: fman@500000 {
-		/* tx - 1g - 0 */
-		port@a8000 {
-			fsl,qman-channel-id = <0x61>;
+	fman@500000 {
+		enet5: ethernet@e0000 {
 		};
-		/* tx - 1g - 1 */
-		port@a9000 {
-			fsl,qman-channel-id = <0x62>;
+
+		enet6: ethernet@e2000 {
 		};
-		/* tx - 1g - 2 */
-		port@aa000 {
-			fsl,qman-channel-id = <0x63>;
+
+		enet7: ethernet@e4000 {
 		};
-		/* tx - 1g - 3 */
-		port@ab000 {
-			fsl,qman-channel-id = <0x64>;
+
+		enet8: ethernet@e6000 {
 		};
-		/* tx - 10g - 0 */
-		port@b0000 {
-			fsl,qman-channel-id = <0x60>;
-		};
-		/* offline 0 */
-		port@81000 {
-			fsl,qman-channel-id = <0x65>;
-		};
-		/* offline 1 */
-		port@82000 {
-			fsl,qman-channel-id = <0x66>;
-		};
-		/* offline 2 */
-		port@83000 {
-			fsl,qman-channel-id = <0x67>;
-		};
-		/* offline 3 */
-		port@84000 {
-			fsl,qman-channel-id = <0x68>;
-		};
-		/* offline 4 */
-		port@85000 {
-			fsl,qman-channel-id = <0x69>;
-		};
-		/* offline 5 */
-		port@86000 {
-			fsl,qman-channel-id = <0x6a>;
-		};
-		/* offline 6 */
-		port@87000 {
-			fsl,qman-channel-id = <0x6b>;
+
+		enet9: ethernet@f0000 {
 		};
 	};
 };

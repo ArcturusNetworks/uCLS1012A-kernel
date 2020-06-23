@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Copyright (2004) Linus Torvalds
  *
@@ -124,11 +125,8 @@ void __lockfunc __raw_##op##_lock_bh(locktype##_t *lock)		\
  *         __[spin|read|write]_lock_bh()
  */
 BUILD_LOCK_OPS(spin, raw_spinlock);
-
-#ifndef CONFIG_PREEMPT_RT_FULL
 BUILD_LOCK_OPS(read, rwlock);
 BUILD_LOCK_OPS(write, rwlock);
-#endif
 
 #endif
 
@@ -211,8 +209,6 @@ void __lockfunc _raw_spin_unlock_bh(raw_spinlock_t *lock)
 }
 EXPORT_SYMBOL(_raw_spin_unlock_bh);
 #endif
-
-#ifndef CONFIG_PREEMPT_RT_FULL
 
 #ifndef CONFIG_INLINE_READ_TRYLOCK
 int __lockfunc _raw_read_trylock(rwlock_t *lock)
@@ -358,8 +354,6 @@ void __lockfunc _raw_write_unlock_bh(rwlock_t *lock)
 EXPORT_SYMBOL(_raw_write_unlock_bh);
 #endif
 
-#endif /* !PREEMPT_RT_FULL */
-
 #ifdef CONFIG_DEBUG_LOCK_ALLOC
 
 void __lockfunc _raw_spin_lock_nested(raw_spinlock_t *lock, int subclass)
@@ -369,14 +363,6 @@ void __lockfunc _raw_spin_lock_nested(raw_spinlock_t *lock, int subclass)
 	LOCK_CONTENDED(lock, do_raw_spin_trylock, do_raw_spin_lock);
 }
 EXPORT_SYMBOL(_raw_spin_lock_nested);
-
-void __lockfunc _raw_spin_lock_bh_nested(raw_spinlock_t *lock, int subclass)
-{
-	__local_bh_disable_ip(_RET_IP_, SOFTIRQ_LOCK_OFFSET);
-	spin_acquire(&lock->dep_map, subclass, 0, _RET_IP_);
-	LOCK_CONTENDED(lock, do_raw_spin_trylock, do_raw_spin_lock);
-}
-EXPORT_SYMBOL(_raw_spin_lock_bh_nested);
 
 unsigned long __lockfunc _raw_spin_lock_irqsave_nested(raw_spinlock_t *lock,
 						   int subclass)

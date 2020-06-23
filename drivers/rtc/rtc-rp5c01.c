@@ -170,7 +170,7 @@ static ssize_t rp5c01_nvram_read(struct file *filp, struct kobject *kobj,
 
 	spin_lock_irq(&priv->lock);
 
-	for (count = 0; size > 0 && pos < RP5C01_MODE; count++, size--) {
+	for (count = 0; count < size; count++) {
 		u8 data;
 
 		rp5c01_write(priv,
@@ -200,7 +200,7 @@ static ssize_t rp5c01_nvram_write(struct file *filp, struct kobject *kobj,
 
 	spin_lock_irq(&priv->lock);
 
-	for (count = 0; size > 0 && pos < RP5C01_MODE; count++, size--) {
+	for (count = 0; count < size; count++) {
 		u8 data = *buf++;
 
 		rp5c01_write(priv,
@@ -249,15 +249,23 @@ static int __init rp5c01_rtc_probe(struct platform_device *dev)
 
 	platform_set_drvdata(dev, priv);
 
-	rtc = devm_rtc_device_register(&dev->dev, "rtc-rp5c01", &rp5c01_rtc_ops,
-				  THIS_MODULE);
+	rtc = devm_rtc_allocate_device(&dev->dev);
 	if (IS_ERR(rtc))
 		return PTR_ERR(rtc);
+
+	rtc->ops = &rp5c01_rtc_ops;
+
 	priv->rtc = rtc;
 
 	error = sysfs_create_bin_file(&dev->dev.kobj, &priv->nvram_attr);
 	if (error)
 		return error;
+
+	error = rtc_register_device(rtc);
+	if (error) {
+		sysfs_remove_bin_file(&dev->dev.kobj, &priv->nvram_attr);
+		return error;
+	}
 
 	return 0;
 }

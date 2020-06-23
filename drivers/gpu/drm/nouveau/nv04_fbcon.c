@@ -22,7 +22,7 @@
  * DEALINGS IN THE SOFTWARE.
  */
 
-#include "nouveau_drm.h"
+#include "nouveau_drv.h"
 #include "nouveau_dma.h"
 #include "nouveau_fbcon.h"
 
@@ -30,7 +30,7 @@ int
 nv04_fbcon_copyarea(struct fb_info *info, const struct fb_copyarea *region)
 {
 	struct nouveau_fbdev *nfbdev = info->par;
-	struct nouveau_drm *drm = nouveau_drm(nfbdev->dev);
+	struct nouveau_drm *drm = nouveau_drm(nfbdev->helper.dev);
 	struct nouveau_channel *chan = drm->channel;
 	int ret;
 
@@ -50,7 +50,7 @@ int
 nv04_fbcon_fillrect(struct fb_info *info, const struct fb_fillrect *rect)
 {
 	struct nouveau_fbdev *nfbdev = info->par;
-	struct nouveau_drm *drm = nouveau_drm(nfbdev->dev);
+	struct nouveau_drm *drm = nouveau_drm(nfbdev->helper.dev);
 	struct nouveau_channel *chan = drm->channel;
 	int ret;
 
@@ -77,7 +77,7 @@ int
 nv04_fbcon_imageblit(struct fb_info *info, const struct fb_image *image)
 {
 	struct nouveau_fbdev *nfbdev = info->par;
-	struct nouveau_drm *drm = nouveau_drm(nfbdev->dev);
+	struct nouveau_drm *drm = nouveau_drm(nfbdev->helper.dev);
 	struct nouveau_channel *chan = drm->channel;
 	uint32_t fg;
 	uint32_t bg;
@@ -133,10 +133,10 @@ int
 nv04_fbcon_accel_init(struct fb_info *info)
 {
 	struct nouveau_fbdev *nfbdev = info->par;
-	struct drm_device *dev = nfbdev->dev;
+	struct drm_device *dev = nfbdev->helper.dev;
 	struct nouveau_drm *drm = nouveau_drm(dev);
 	struct nouveau_channel *chan = drm->channel;
-	struct nvif_device *device = &drm->device;
+	struct nvif_device *device = &drm->client.device;
 	int surface_fmt, pattern_fmt, rect_fmt;
 	int ret;
 
@@ -168,33 +168,33 @@ nv04_fbcon_accel_init(struct fb_info *info)
 		return -EINVAL;
 	}
 
-	ret = nvif_object_init(chan->object, NULL, 0x0062,
+	ret = nvif_object_init(&chan->user, 0x0062,
 			       device->info.family >= NV_DEVICE_INFO_V0_CELSIUS ?
 			       0x0062 : 0x0042, NULL, 0, &nfbdev->surf2d);
 	if (ret)
 		return ret;
 
-	ret = nvif_object_init(chan->object, NULL, 0x0019, 0x0019, NULL, 0,
+	ret = nvif_object_init(&chan->user, 0x0019, 0x0019, NULL, 0,
 			       &nfbdev->clip);
 	if (ret)
 		return ret;
 
-	ret = nvif_object_init(chan->object, NULL, 0x0043, 0x0043, NULL, 0,
+	ret = nvif_object_init(&chan->user, 0x0043, 0x0043, NULL, 0,
 			       &nfbdev->rop);
 	if (ret)
 		return ret;
 
-	ret = nvif_object_init(chan->object, NULL, 0x0044, 0x0044, NULL, 0,
+	ret = nvif_object_init(&chan->user, 0x0044, 0x0044, NULL, 0,
 			       &nfbdev->patt);
 	if (ret)
 		return ret;
 
-	ret = nvif_object_init(chan->object, NULL, 0x004a, 0x004a, NULL, 0,
+	ret = nvif_object_init(&chan->user, 0x004a, 0x004a, NULL, 0,
 			       &nfbdev->gdi);
 	if (ret)
 		return ret;
 
-	ret = nvif_object_init(chan->object, NULL, 0x005f,
+	ret = nvif_object_init(&chan->user, 0x005f,
 			       device->info.chipset >= 0x11 ? 0x009f : 0x005f,
 			       NULL, 0, &nfbdev->blit);
 	if (ret)

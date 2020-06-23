@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * kernel/workqueue_internal.h
  *
@@ -9,6 +10,7 @@
 
 #include <linux/workqueue.h>
 #include <linux/kthread.h>
+#include <linux/preempt.h>
 
 struct worker_pool;
 
@@ -43,7 +45,6 @@ struct worker {
 	unsigned long		last_active;	/* L: last active timestamp */
 	unsigned int		flags;		/* X: flags */
 	int			id;		/* I: worker id */
-	int			sleeping;	/* None */
 
 	/*
 	 * Opaque string set with work_set_desc().  Printed out with task
@@ -60,7 +61,7 @@ struct worker {
  */
 static inline struct worker *current_wq_worker(void)
 {
-	if (current->flags & PF_WQ_WORKER)
+	if (in_task() && (current->flags & PF_WQ_WORKER))
 		return kthread_data(current);
 	return NULL;
 }
@@ -69,7 +70,7 @@ static inline struct worker *current_wq_worker(void)
  * Scheduler hooks for concurrency managed workqueue.  Only to be used from
  * sched/core.c and workqueue.c.
  */
-void wq_worker_running(struct task_struct *task);
-void wq_worker_sleeping(struct task_struct *task);
+void wq_worker_waking_up(struct task_struct *task, int cpu);
+struct task_struct *wq_worker_sleeping(struct task_struct *task);
 
 #endif /* _KERNEL_WORKQUEUE_INTERNAL_H */

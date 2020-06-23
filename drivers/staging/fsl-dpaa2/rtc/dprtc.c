@@ -1,509 +1,293 @@
-/* Copyright 2013-2015 Freescale Semiconductor Inc.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- * * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- * * Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the distribution.
- * * Neither the name of the above-listed copyright holders nor the
- * names of any contributors may be used to endorse or promote products
- * derived from this software without specific prior written permission.
- *
- *
- * ALTERNATIVELY, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") as published by the Free Software
- * Foundation, either version 2 of that License or (at your option) any
- * later version.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
+// SPDX-License-Identifier: GPL-2.0
+/*
+ * Copyright 2013-2016 Freescale Semiconductor Inc.
+ * Copyright 2016-2018 NXP
  */
-#include "../../fsl-mc/include/mc-sys.h"
-#include "../../fsl-mc/include/mc-cmd.h"
+
+#include <linux/fsl/mc.h>
+
 #include "dprtc.h"
 #include "dprtc-cmd.h"
 
+/**
+ * dprtc_open() - Open a control session for the specified object.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @dprtc_id:	DPRTC unique ID
+ * @token:	Returned token; use in subsequent API calls
+ *
+ * This function can be used to open a control session for an
+ * already created object; an object may have been declared in
+ * the DPL or by calling the dprtc_create function.
+ * This function returns a unique authentication token,
+ * associated with the specific object ID and the specific MC
+ * portal; this token must be used in all subsequent commands for
+ * this specific object
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_open(struct fsl_mc_io *mc_io,
-	       uint32_t cmd_flags,
-	      int dprtc_id,
-	      uint16_t *token)
+	       u32 cmd_flags,
+	       int dprtc_id,
+	       u16 *token)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_cmd_open *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
 	int err;
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_OPEN,
 					  cmd_flags,
 					  0);
-	DPRTC_CMD_OPEN(cmd, dprtc_id);
+	cmd_params = (struct dprtc_cmd_open *)cmd.params;
+	cmd_params->dprtc_id = cpu_to_le32(dprtc_id);
 
-	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
 	if (err)
 		return err;
 
-	/* retrieve response parameters */
-	*token = MC_CMD_HDR_READ_TOKEN(cmd.header);
+	*token = mc_cmd_hdr_read_token(&cmd);
 
-	return err;
+	return 0;
 }
 
+/**
+ * dprtc_close() - Close the control session of the object
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ *
+ * After this function is called, no further operations are
+ * allowed on the object without opening a new control session.
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_close(struct fsl_mc_io *mc_io,
-		uint32_t cmd_flags,
-	       uint16_t token)
+		u32 cmd_flags,
+		u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_CLOSE, cmd_flags,
 					  token);
 
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }
 
-int dprtc_create(struct fsl_mc_io *mc_io,
-		 uint32_t cmd_flags,
-		const struct dprtc_cfg *cfg,
-		uint16_t *token)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	(void)(cfg); /* unused */
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_CREATE,
-					  cmd_flags,
-					  0);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	*token = MC_CMD_HDR_READ_TOKEN(cmd.header);
-
-	return 0;
-}
-
-int dprtc_destroy(struct fsl_mc_io *mc_io,
-		  uint32_t cmd_flags,
-		 uint16_t token)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_DESTROY,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_enable(struct fsl_mc_io *mc_io,
-		 uint32_t cmd_flags,
-		uint16_t token)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_ENABLE, cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_disable(struct fsl_mc_io *mc_io,
-		  uint32_t cmd_flags,
-		 uint16_t token)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_DISABLE,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_is_enabled(struct fsl_mc_io *mc_io,
-		     uint32_t cmd_flags,
-		    uint16_t token,
-		    int *en)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_IS_ENABLED, cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPRTC_RSP_IS_ENABLED(cmd, *en);
-
-	return 0;
-}
-
-int dprtc_reset(struct fsl_mc_io *mc_io,
-		uint32_t cmd_flags,
-	       uint16_t token)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_RESET,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_set_irq(struct fsl_mc_io	*mc_io,
-		  uint32_t		cmd_flags,
-		 uint16_t		token,
-		 uint8_t		irq_index,
-		 struct dprtc_irq_cfg	*irq_cfg)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_IRQ,
-					  cmd_flags,
-					  token);
-
-	DPRTC_CMD_SET_IRQ(cmd, irq_index, irq_cfg);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_get_irq(struct fsl_mc_io	*mc_io,
-		  uint32_t		cmd_flags,
-		 uint16_t		token,
-		 uint8_t		irq_index,
-		 int			*type,
-		 struct dprtc_irq_cfg	*irq_cfg)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_IRQ,
-					  cmd_flags,
-					  token);
-
-	DPRTC_CMD_GET_IRQ(cmd, irq_index);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_IRQ(cmd, *type, irq_cfg);
-
-	return 0;
-}
-
+/**
+ * dprtc_set_irq_enable() - Set overall interrupt state.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ * @irq_index:	The interrupt index to configure
+ * @en:		Interrupt state - enable = 1, disable = 0
+ *
+ * Allows GPP software to control when interrupts are generated.
+ * Each interrupt can have up to 32 causes.  The enable/disable control's the
+ * overall interrupt state. if the interrupt is disabled no causes will cause
+ * an interrupt.
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_set_irq_enable(struct fsl_mc_io *mc_io,
-			 uint32_t cmd_flags,
-			uint16_t token,
-			uint8_t irq_index,
-			uint8_t en)
+			 u32 cmd_flags,
+			 u16 token,
+			 u8 irq_index,
+			 u8 en)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_cmd_set_irq_enable *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_IRQ_ENABLE,
 					  cmd_flags,
 					  token);
+	cmd_params = (struct dprtc_cmd_set_irq_enable *)cmd.params;
+	cmd_params->irq_index = irq_index;
+	cmd_params->en = en;
 
-	DPRTC_CMD_SET_IRQ_ENABLE(cmd, irq_index, en);
-
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }
 
+/**
+ * dprtc_get_irq_enable() - Get overall interrupt state
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ * @irq_index:	The interrupt index to configure
+ * @en:		Returned interrupt state - enable = 1, disable = 0
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_get_irq_enable(struct fsl_mc_io *mc_io,
-			 uint32_t cmd_flags,
-			uint16_t token,
-			uint8_t irq_index,
-			uint8_t *en)
+			 u32 cmd_flags,
+			 u16 token,
+			 u8 irq_index,
+			 u8 *en)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_rsp_get_irq_enable *rsp_params;
+	struct dprtc_cmd_get_irq *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
 	int err;
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_IRQ_ENABLE,
 					  cmd_flags,
 					  token);
+	cmd_params = (struct dprtc_cmd_get_irq *)cmd.params;
+	cmd_params->irq_index = irq_index;
 
-	DPRTC_CMD_GET_IRQ_ENABLE(cmd, irq_index);
-
-	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
 	if (err)
 		return err;
 
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_IRQ_ENABLE(cmd, *en);
+	rsp_params = (struct dprtc_rsp_get_irq_enable *)cmd.params;
+	*en = rsp_params->en;
 
 	return 0;
 }
 
+/**
+ * dprtc_set_irq_mask() - Set interrupt mask.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ * @irq_index:	The interrupt index to configure
+ * @mask:	Event mask to trigger interrupt;
+ *		each bit:
+ *			0 = ignore event
+ *			1 = consider event for asserting IRQ
+ *
+ * Every interrupt can have up to 32 causes and the interrupt model supports
+ * masking/unmasking each cause independently
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_set_irq_mask(struct fsl_mc_io *mc_io,
-		       uint32_t cmd_flags,
-		      uint16_t token,
-		      uint8_t irq_index,
-		      uint32_t mask)
+		       u32 cmd_flags,
+		       u16 token,
+		       u8 irq_index,
+		       u32 mask)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_cmd_set_irq_mask *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_IRQ_MASK,
 					  cmd_flags,
 					  token);
+	cmd_params = (struct dprtc_cmd_set_irq_mask *)cmd.params;
+	cmd_params->mask = cpu_to_le32(mask);
+	cmd_params->irq_index = irq_index;
 
-	DPRTC_CMD_SET_IRQ_MASK(cmd, irq_index, mask);
-
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }
 
+/**
+ * dprtc_get_irq_mask() - Get interrupt mask.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ * @irq_index:	The interrupt index to configure
+ * @mask:	Returned event mask to trigger interrupt
+ *
+ * Every interrupt can have up to 32 causes and the interrupt model supports
+ * masking/unmasking each cause independently
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_get_irq_mask(struct fsl_mc_io *mc_io,
-		       uint32_t cmd_flags,
-		      uint16_t token,
-		      uint8_t irq_index,
-		      uint32_t *mask)
+		       u32 cmd_flags,
+		       u16 token,
+		       u8 irq_index,
+		       u32 *mask)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_rsp_get_irq_mask *rsp_params;
+	struct dprtc_cmd_get_irq *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
 	int err;
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_IRQ_MASK,
 					  cmd_flags,
 					  token);
+	cmd_params = (struct dprtc_cmd_get_irq *)cmd.params;
+	cmd_params->irq_index = irq_index;
 
-	DPRTC_CMD_GET_IRQ_MASK(cmd, irq_index);
-
-	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
 	if (err)
 		return err;
 
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_IRQ_MASK(cmd, *mask);
+	rsp_params = (struct dprtc_rsp_get_irq_mask *)cmd.params;
+	*mask = le32_to_cpu(rsp_params->mask);
 
 	return 0;
 }
 
+/**
+ * dprtc_get_irq_status() - Get the current status of any pending interrupts.
+ *
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ * @irq_index:	The interrupt index to configure
+ * @status:	Returned interrupts status - one bit per cause:
+ *			0 = no interrupt pending
+ *			1 = interrupt pending
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_get_irq_status(struct fsl_mc_io *mc_io,
-			 uint32_t cmd_flags,
-			uint16_t token,
-			uint8_t irq_index,
-			uint32_t *status)
+			 u32 cmd_flags,
+			 u16 token,
+			 u8 irq_index,
+			 u32 *status)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_cmd_get_irq_status *cmd_params;
+	struct dprtc_rsp_get_irq_status *rsp_params;
+	struct fsl_mc_command cmd = { 0 };
 	int err;
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_IRQ_STATUS,
 					  cmd_flags,
 					  token);
+	cmd_params = (struct dprtc_cmd_get_irq_status *)cmd.params;
+	cmd_params->status = cpu_to_le32(*status);
+	cmd_params->irq_index = irq_index;
 
-	DPRTC_CMD_GET_IRQ_STATUS(cmd, irq_index, *status);
-
-	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
 	if (err)
 		return err;
 
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_IRQ_STATUS(cmd, *status);
+	rsp_params = (struct dprtc_rsp_get_irq_status *)cmd.params;
+	*status = le32_to_cpu(rsp_params->status);
 
 	return 0;
 }
 
+/**
+ * dprtc_clear_irq_status() - Clear a pending interrupt's status
+ *
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPRTC object
+ * @irq_index:	The interrupt index to configure
+ * @status:	Bits to clear (W1C) - one bit per cause:
+ *			0 = don't change
+ *			1 = clear status bit
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dprtc_clear_irq_status(struct fsl_mc_io *mc_io,
-			   uint32_t cmd_flags,
-			  uint16_t token,
-			  uint8_t irq_index,
-			  uint32_t status)
+			   u32 cmd_flags,
+			   u16 token,
+			   u8 irq_index,
+			   u32 status)
 {
-	struct mc_command cmd = { 0 };
+	struct dprtc_cmd_clear_irq_status *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
 
-	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_CLEAR_IRQ_STATUS,
 					  cmd_flags,
 					  token);
+	cmd_params = (struct dprtc_cmd_clear_irq_status *)cmd.params;
+	cmd_params->irq_index = irq_index;
+	cmd_params->status = cpu_to_le32(status);
 
-	DPRTC_CMD_CLEAR_IRQ_STATUS(cmd, irq_index, status);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_get_attributes(struct fsl_mc_io *mc_io,
-			 uint32_t cmd_flags,
-			uint16_t token,
-			struct dprtc_attr *attr)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_ATTR,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_ATTRIBUTES(cmd, attr);
-
-	return 0;
-}
-
-int dprtc_set_clock_offset(struct fsl_mc_io *mc_io,
-			   uint32_t cmd_flags,
-		  uint16_t token,
-		  int64_t offset)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_CLOCK_OFFSET,
-					  cmd_flags,
-					  token);
-
-	DPRTC_CMD_SET_CLOCK_OFFSET(cmd, offset);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_set_freq_compensation(struct fsl_mc_io *mc_io,
-				uint32_t cmd_flags,
-		  uint16_t token,
-		  uint32_t freq_compensation)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_FREQ_COMPENSATION,
-					  cmd_flags,
-					  token);
-
-	DPRTC_CMD_SET_FREQ_COMPENSATION(cmd, freq_compensation);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_get_freq_compensation(struct fsl_mc_io *mc_io,
-				uint32_t cmd_flags,
-		  uint16_t token,
-		  uint32_t *freq_compensation)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_FREQ_COMPENSATION,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_FREQ_COMPENSATION(cmd, *freq_compensation);
-
-	return 0;
-}
-
-int dprtc_get_time(struct fsl_mc_io *mc_io,
-		   uint32_t cmd_flags,
-		  uint16_t token,
-		  uint64_t *timestamp)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_GET_TIME,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPRTC_RSP_GET_TIME(cmd, *timestamp);
-
-	return 0;
-}
-
-int dprtc_set_time(struct fsl_mc_io *mc_io,
-		   uint32_t cmd_flags,
-		  uint16_t token,
-		  uint64_t timestamp)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_TIME,
-					  cmd_flags,
-					  token);
-
-	DPRTC_CMD_SET_TIME(cmd, timestamp);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dprtc_set_alarm(struct fsl_mc_io *mc_io,
-		    uint32_t cmd_flags,
-		  uint16_t token, uint64_t time)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPRTC_CMDID_SET_ALARM,
-					  cmd_flags,
-					  token);
-
-	DPRTC_CMD_SET_ALARM(cmd, time);
-
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }

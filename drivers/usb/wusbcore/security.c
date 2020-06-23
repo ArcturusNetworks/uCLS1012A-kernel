@@ -230,7 +230,7 @@ int wusb_dev_sec_add(struct wusbhc *wusbhc,
 
 	result = usb_get_descriptor(usb_dev, USB_DT_SECURITY,
 				    0, secd, sizeof(*secd));
-	if (result < sizeof(*secd)) {
+	if (result < (int)sizeof(*secd)) {
 		dev_err(dev, "Can't read security descriptor or "
 			"not enough data: %d\n", result);
 		goto out;
@@ -240,6 +240,7 @@ int wusb_dev_sec_add(struct wusbhc *wusbhc,
 	if (new_secd == NULL) {
 		dev_err(dev,
 			"Can't allocate space for security descriptors\n");
+		result = -ENOMEM;
 		goto out;
 	}
 	secd = new_secd;
@@ -374,10 +375,8 @@ int wusb_dev_4way_handshake(struct wusbhc *wusbhc, struct wusb_dev *wusb_dev,
 	struct wusb_keydvt_out keydvt_out;
 
 	hs = kcalloc(3, sizeof(hs[0]), GFP_KERNEL);
-	if (hs == NULL) {
-		dev_err(dev, "can't allocate handshake data\n");
+	if (!hs)
 		goto error_kzalloc;
-	}
 
 	/* We need to turn encryption before beginning the 4way
 	 * hshake (WUSB1.0[.3.2.2]) */

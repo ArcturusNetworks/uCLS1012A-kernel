@@ -298,8 +298,11 @@ static void *qp_alloc_queue(u64 size, u32 flags)
 	size_t pas_size;
 	size_t vas_size;
 	size_t queue_size = sizeof(*queue) + sizeof(*queue->kernel_if);
-	const u64 num_pages = DIV_ROUND_UP(size, PAGE_SIZE) + 1;
+	u64 num_pages;
 
+	if (size > SIZE_MAX - PAGE_SIZE)
+		return NULL;
+	num_pages = DIV_ROUND_UP(size, PAGE_SIZE) + 1;
 	if (num_pages >
 		 (SIZE_MAX - queue_size) /
 		 (sizeof(*queue->kernel_if->u.g.pas) +
@@ -624,9 +627,12 @@ static struct vmci_queue *qp_host_alloc_queue(u64 size)
 {
 	struct vmci_queue *queue;
 	size_t queue_page_size;
-	const u64 num_pages = DIV_ROUND_UP(size, PAGE_SIZE) + 1;
+	u64 num_pages;
 	const size_t queue_size = sizeof(*queue) + sizeof(*(queue->kernel_if));
 
+	if (size > SIZE_MAX - PAGE_SIZE)
+		return NULL;
+	num_pages = DIV_ROUND_UP(size, PAGE_SIZE) + 1;
 	if (num_pages > (SIZE_MAX - queue_size) /
 		 sizeof(*queue->kernel_if->u.h.page))
 		return NULL;
@@ -728,7 +734,7 @@ static void qp_release_pages(struct page **pages,
 		if (dirty)
 			set_page_dirty(pages[i]);
 
-		page_cache_release(pages[i]);
+		put_page(pages[i]);
 		pages[i] = NULL;
 	}
 }
@@ -749,7 +755,7 @@ static int qp_host_get_user_memory(u64 produce_uva,
 	retval = get_user_pages_fast((uintptr_t) produce_uva,
 				     produce_q->kernel_if->num_pages, 1,
 				     produce_q->kernel_if->u.h.header_page);
-	if (retval < produce_q->kernel_if->num_pages) {
+	if (retval < (int)produce_q->kernel_if->num_pages) {
 		pr_debug("get_user_pages_fast(produce) failed (retval=%d)",
 			retval);
 		qp_release_pages(produce_q->kernel_if->u.h.header_page,
@@ -761,7 +767,7 @@ static int qp_host_get_user_memory(u64 produce_uva,
 	retval = get_user_pages_fast((uintptr_t) consume_uva,
 				     consume_q->kernel_if->num_pages, 1,
 				     consume_q->kernel_if->u.h.header_page);
-	if (retval < consume_q->kernel_if->num_pages) {
+	if (retval < (int)consume_q->kernel_if->num_pages) {
 		pr_debug("get_user_pages_fast(consume) failed (retval=%d)",
 			retval);
 		qp_release_pages(consume_q->kernel_if->u.h.header_page,
@@ -2229,14 +2235,8 @@ int vmci_qp_broker_detach(struct vmci_handle handle, struct vmci_ctx *context)
 					handle.context, handle.resource,
 					result);
 
-			if (entry->vmci_page_files)
-				qp_host_unregister_user_memory(entry->produce_q,
-							       entry->
-							       consume_q);
-			else
-				qp_host_unregister_user_memory(entry->produce_q,
-							       entry->
-							       consume_q);
+			qp_host_unregister_user_memory(entry->produce_q,
+						       entry->consume_q);
 
 		}
 
@@ -2928,7 +2928,7 @@ int vmci_qpair_get_produce_indexes(const struct vmci_qp *qpair,
 EXPORT_SYMBOL_GPL(vmci_qpair_get_produce_indexes);
 
 /*
- * vmci_qpair_get_consume_indexes() - Retrieves the indexes of the comsumer.
+ * vmci_qpair_get_consume_indexes() - Retrieves the indexes of the consumer.
  * @qpair:      Pointer to the queue pair struct.
  * @consumer_tail:      Reference used for storing consumer tail index.
  * @producer_head:      Reference used for storing the producer head index.

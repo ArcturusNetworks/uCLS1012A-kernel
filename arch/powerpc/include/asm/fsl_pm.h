@@ -10,7 +10,8 @@
  */
 #ifndef __PPC_FSL_PM_H
 #define __PPC_FSL_PM_H
-#ifdef __KERNEL__
+
+#ifndef __ASSEMBLY__
 #include <linux/suspend.h>
 
 #define E500_PM_PH10	1
@@ -22,10 +23,9 @@
 
 #define PLAT_PM_SLEEP	20
 #define PLAT_PM_LPM20	30
-#define PLAT_PM_LPM35	40
 
-#define FSL_PM_SLEEP		BIT(0)
-#define FSL_PM_DEEP_SLEEP	BIT(1)
+#define FSL_PM_SLEEP		(1 << 0)
+#define FSL_PM_DEEP_SLEEP	(1 << 1)
 
 struct fsl_pm_ops {
 	/* mask pending interrupts to the RCPM from MPIC */
@@ -37,7 +37,7 @@ struct fsl_pm_ops {
 	void (*cpu_exit_state)(int cpu, int state);
 	void (*cpu_up_prepare)(int cpu);
 	void (*cpu_die)(int cpu);
-	int (*plat_enter_sleep)(int state);
+	int (*plat_enter_sleep)(void);
 	void (*freeze_time_base)(bool freeze);
 
 	/* keep the power of IP blocks during sleep/deep sleep */
@@ -49,42 +49,34 @@ struct fsl_pm_ops {
 
 extern const struct fsl_pm_ops *qoriq_pm_ops;
 
-int __init fsl_rcpm_init(void);
-
-#ifdef CONFIG_FSL_QORIQ_PM
-int fsl_enter_deepsleep(void);
-int fsl_deepsleep_init(void);
-#else
-static inline int fsl_enter_deepsleep(void) { return -1; }
-static inline int fsl_deepsleep_init(void) { return -1; }
-#endif
-
-void fsl_dp_enter_low(void *priv);
-void fsl_booke_deep_sleep_resume(void);
-
-struct fsl_iomap {
-	void *ccsr_lcc_base;
-	void *ccsr_scfg_base;
-	void *ccsr_dcfg_base;
-	void *ccsr_rcpm_base;
-	void *ccsr_ddr_base;
-	void *ccsr_gpio1_base;
-	void *ccsr_cpc_base;
-	void *dcsr_epu_base;
-	void *dcsr_npc_base;
-	void *dcsr_rcpm_base;
-	void *cpld_base;
-	void *fpga_base;
+struct fsm_reg_vals {
+	u32 offset;
+	u32 value;
 };
 
-#ifdef CONFIG_FSL_QORIQ_PM
-suspend_state_t pm_suspend_state(void);
-#else
-static inline suspend_state_t pm_suspend_state(void)
-{
-	return PM_SUSPEND_STANDBY;
-}
-#endif
+void fsl_fsm_setup(void __iomem *base, struct fsm_reg_vals *val);
+void fsl_epu_setup_default(void __iomem *epu_base);
+void fsl_npc_setup_default(void __iomem *npc_base);
+void fsl_fsm_clean(void __iomem *base, struct fsm_reg_vals *val);
+void fsl_epu_clean_default(void __iomem *epu_base);
 
-#endif /* __KERNEL__ */
+extern int fsl_dp_iomap(void);
+extern void fsl_dp_iounmap(void);
+
+extern int fsl_enter_epu_deepsleep(void);
+extern void fsl_dp_enter_low(void __iomem *ccsr_base, void __iomem *dcsr_base,
+			     void __iomem *pld_base, int pld_flag);
+extern void fsl_booke_deep_sleep_resume(void);
+
+int __init fsl_rcpm_init(void);
+
+void set_pm_suspend_state(suspend_state_t state);
+suspend_state_t pm_suspend_state(void);
+
+void fsl_set_power_except(struct device *dev, int on);
+#endif	/* __ASSEMBLY__ */
+
+#define T1040QDS_TETRA_FLAG	1
+#define T104xRDB_CPLD_FLAG	2
+
 #endif /* __PPC_FSL_PM_H */

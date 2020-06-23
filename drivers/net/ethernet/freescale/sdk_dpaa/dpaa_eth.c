@@ -1,4 +1,5 @@
 /* Copyright 2008-2013 Freescale Semiconductor Inc.
+ * Copyright 2019 NXP
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -57,7 +58,9 @@
 #include <linux/percpu.h>
 #include <linux/dma-mapping.h>
 #include <linux/fsl_bman.h>
+#ifdef CONFIG_SOC_BUS
 #include <linux/sys_soc.h>      /* soc_device_match */
+#endif
 
 #include "fsl_fman.h"
 #include "fm_ext.h"
@@ -102,11 +105,6 @@ static const char rtx[][3] = {
 	[RX] = "RX",
 	[TX] = "TX"
 };
-
-#ifndef CONFIG_PPC
-bool dpaa_errata_a010022;
-EXPORT_SYMBOL(dpaa_errata_a010022);
-#endif
 
 /* BM */
 
@@ -676,10 +674,9 @@ static const struct net_device_ops dpa_private_ops = {
 	.ndo_get_stats64 = dpa_get_stats64,
 	.ndo_set_mac_address = dpa_set_mac_address,
 	.ndo_validate_addr = eth_validate_addr,
-#ifdef CONFIG_FSL_DPAA_ETH_USE_NDO_SELECT_QUEUE
+#ifdef CONFIG_FMAN_PFC
 	.ndo_select_queue = dpa_select_queue,
 #endif
-	.ndo_change_mtu = dpa_change_mtu,
 	.ndo_set_rx_mode = dpa_set_rx_mode,
 	.ndo_init = dpa_ndo_init,
 	.ndo_set_features = dpa_set_features,
@@ -756,6 +753,10 @@ static int dpa_private_netdev_init(struct net_device *net_dev)
 	net_dev->mem_start = priv->mac_dev->res->start;
 	net_dev->mem_end = priv->mac_dev->res->end;
 
+	/* Configure the maximum MTU according to the FMan's MAXFRM */
+	net_dev->min_mtu = ETH_MIN_MTU;
+	net_dev->max_mtu = dpa_get_max_mtu();
+
 	net_dev->hw_features |= (NETIF_F_IP_CSUM | NETIF_F_IPV6_CSUM |
 		NETIF_F_LLTX);
 
@@ -769,6 +770,9 @@ static int dpa_private_netdev_init(struct net_device *net_dev)
 
 	/* Advertise GRO support */
 	net_dev->features |= NETIF_F_GRO;
+
+	/* Advertise NETIF_F_HW_ACCEL_MQ to avoid Tx timeout warnings */
+	net_dev->features |= NETIF_F_HW_ACCEL_MQ;
 
 	return dpa_netdev_init(net_dev, mac_addr, tx_timeout);
 }
@@ -858,7 +862,7 @@ static int dpa_priv_bp_create(struct net_device *net_dev, struct dpa_bp *dpa_bp,
 
 	for (i = 0; i < count; i++) {
 		int err;
-		err = dpa_bp_alloc(&dpa_bp[i]);
+		err = dpa_bp_alloc(&dpa_bp[i], net_dev->dev.parent);
 		if (err < 0) {
 			dpa_bp_free(priv);
 			priv->dpa_bp = NULL;
@@ -897,7 +901,6 @@ dpaa_eth_priv_probe(struct platform_device *_of_dev)
 	struct fm_port_fqs port_fqs;
 	struct dpa_buffer_layout_s *buf_layout = NULL;
 	struct mac_device *mac_dev;
-	struct task_struct *kth;
 
 	dev = &_of_dev->dev;
 
@@ -966,9 +969,6 @@ dpaa_eth_priv_probe(struct platform_device *_of_dev)
 	/* We only want to use jumbo frame optimization if we actually have
 	 * L2 MAX FRM set for jumbo frames as well.
 	 */
-#ifndef CONFIG_PPC
-	if (likely(!dpaa_errata_a010022))
-#endif
 	if(fm_get_max_frm() < 9600)
 		dev_warn(dev,
 			"Invalid configuration: if jumbo frames support is on, FSL_FM_MAX_FRAME_SIZE should be set to 9600\n");
@@ -1003,17 +1003,7 @@ dpaa_eth_priv_probe(struct platform_device *_of_dev)
 	}
 
 	priv->channel = (uint16_t)channel;
-
-	/* Start a thread that will walk the cpus with affine portals
-	 * and add this pool channel to each's dequeue mask.
-	 */
-	kth = kthread_run(dpaa_eth_add_channel,
-			  (void *)(unsigned long)priv->channel,
-			  "dpaa_%p:%d", net_dev, priv->channel);
-	if (!kth) {
-		err = -ENOMEM;
-		goto add_channel_failed;
-	}
+	dpaa_eth_add_channel(priv->channel);
 
 	dpa_fq_setup(priv, &private_fq_cbs, priv->mac_dev->port_dev[TX]);
 
@@ -1105,7 +1095,6 @@ rx_cgr_init_failed:
 	qman_delete_cgr_safe(&priv->cgr_data.cgr);
 	qman_release_cgrid(priv->cgr_data.cgr.cgrid);
 tx_cgr_init_failed:
-add_channel_failed:
 get_channel_failed:
 	dpa_bp_free(priv);
 bp_create_failed:
@@ -1140,22 +1129,6 @@ static struct platform_driver dpa_driver = {
 	.remove		= dpa_remove
 };
 
-#ifndef CONFIG_PPC
-static bool __init __cold soc_has_errata_a010022(void)
-{
-	const struct soc_device_attribute soc_msi_matches[] = {
-		{ .family = "QorIQ LS1043A",
-		  .data = NULL },
-		{ },
-	};
-
-	if (soc_device_match(soc_msi_matches))
-		return true;
-
-	return false;
-}
-#endif
-
 static int __init __cold dpa_load(void)
 {
 	int	 _errno;
@@ -1170,11 +1143,6 @@ static int __init __cold dpa_load(void)
 	dpa_rx_extra_headroom = fm_get_rx_extra_headroom();
 	dpa_max_frm = fm_get_max_frm();
 	dpa_num_cpus = num_possible_cpus();
-
-#ifndef CONFIG_PPC
-	/* Detect if the current SoC requires the 4K alignment workaround */
-	dpaa_errata_a010022 = soc_has_errata_a010022();
-#endif
 
 #ifdef CONFIG_FSL_DPAA_DBG_LOOP
 	memset(dpa_loop_netdevs, 0, sizeof(dpa_loop_netdevs));

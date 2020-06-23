@@ -8,8 +8,6 @@
  * Common Clock Framework support for S3C2410 and following SoCs.
  */
 
-#include <linux/clk.h>
-#include <linux/clkdev.h>
 #include <linux/clk-provider.h>
 #include <linux/of.h>
 #include <linux/of_address.h>
@@ -78,7 +76,7 @@ static struct syscore_ops s3c2410_clk_syscore_ops = {
 	.resume = s3c2410_clk_resume,
 };
 
-static void s3c2410_clk_sleep_init(void)
+static void __init s3c2410_clk_sleep_init(void)
 {
 	s3c2410_save = samsung_clk_alloc_reg_dump(s3c2410_clk_regs,
 						ARRAY_SIZE(s3c2410_clk_regs));
@@ -92,7 +90,7 @@ static void s3c2410_clk_sleep_init(void)
 	return;
 }
 #else
-static void s3c2410_clk_sleep_init(void) {}
+static void __init s3c2410_clk_sleep_init(void) {}
 #endif
 
 PNAME(fclk_p) = { "mpll", "div_slow" };
@@ -170,7 +168,7 @@ static struct samsung_pll_rate_table pll_s3c2410_12mhz_tbl[] __initdata = {
 	PLL_35XX_RATE(226000000, 105, 1, 1),
 	PLL_35XX_RATE(210000000, 132, 2, 1),
 	/* 2410 common */
-	PLL_35XX_RATE(203000000, 161, 3, 1),
+	PLL_35XX_RATE(202800000, 161, 3, 1),
 	PLL_35XX_RATE(192000000, 88, 1, 1),
 	PLL_35XX_RATE(186000000, 85, 1, 1),
 	PLL_35XX_RATE(180000000, 82, 1, 1),
@@ -180,18 +178,18 @@ static struct samsung_pll_rate_table pll_s3c2410_12mhz_tbl[] __initdata = {
 	PLL_35XX_RATE(147000000, 90, 2, 1),
 	PLL_35XX_RATE(135000000, 82, 2, 1),
 	PLL_35XX_RATE(124000000, 116, 1, 2),
-	PLL_35XX_RATE(118000000, 150, 2, 2),
+	PLL_35XX_RATE(118500000, 150, 2, 2),
 	PLL_35XX_RATE(113000000, 105, 1, 2),
-	PLL_35XX_RATE(101000000, 127, 2, 2),
+	PLL_35XX_RATE(101250000, 127, 2, 2),
 	PLL_35XX_RATE(90000000, 112, 2, 2),
-	PLL_35XX_RATE(85000000, 105, 2, 2),
+	PLL_35XX_RATE(84750000, 105, 2, 2),
 	PLL_35XX_RATE(79000000, 71, 1, 2),
-	PLL_35XX_RATE(68000000, 82, 2, 2),
-	PLL_35XX_RATE(56000000, 142, 2, 3),
+	PLL_35XX_RATE(67500000, 82, 2, 2),
+	PLL_35XX_RATE(56250000, 142, 2, 3),
 	PLL_35XX_RATE(48000000, 120, 2, 3),
-	PLL_35XX_RATE(51000000, 161, 3, 3),
+	PLL_35XX_RATE(50700000, 161, 3, 3),
 	PLL_35XX_RATE(45000000, 82, 1, 3),
-	PLL_35XX_RATE(34000000, 82, 2, 3),
+	PLL_35XX_RATE(33750000, 82, 2, 3),
 	{ /* sentinel */ },
 };
 
@@ -346,7 +344,7 @@ struct samsung_mux_clock s3c2442_muxes[] __initdata = {
  */
 #define XTI	1
 struct samsung_fixed_rate_clock s3c2410_common_frate_clks[] __initdata = {
-	FRATE(XTI, "xti", NULL, CLK_IS_ROOT, 0),
+	FRATE(XTI, "xti", NULL, 0, 0),
 };
 
 static void __init s3c2410_common_clk_register_fixed_ext(
@@ -376,8 +374,6 @@ void __init s3c2410_common_clk_init(struct device_node *np, unsigned long xti_f,
 	}
 
 	ctx = samsung_clk_init(np, reg_base, NR_CLKS);
-	if (!ctx)
-		panic("%s: unable to allocate context.\n", __func__);
 
 	/* Register external clocks only in non-dt cases */
 	if (!np)

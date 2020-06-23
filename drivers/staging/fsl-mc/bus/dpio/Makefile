@@ -1,9 +1,8 @@
+# SPDX-License-Identifier: GPL-2.0
 #
-# Freescale DPIO driver
+# QorIQ DPAA2 DPIO driver
 #
 
-obj-$(CONFIG_FSL_MC_BUS) += fsl-dpio-drv.o
+obj-$(CONFIG_FSL_MC_DPIO) += fsl-mc-dpio.o
 
-fsl-dpio-drv-objs := dpio-drv.o dpio_service.o dpio.o qbman_portal.o
-
-obj-$(CONFIG_FSL_QBMAN_DEBUG) += qbman_debug.o
+fsl-mc-dpio-objs := dpio.o qbman-portal.o dpio-service.o dpio-driver.o

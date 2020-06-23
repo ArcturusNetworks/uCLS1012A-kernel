@@ -1,4 +1,4 @@
-/* Copyright 2013-2015 Freescale Semiconductor Inc.
+/* Copyright 2013-2016 Freescale Semiconductor Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -29,8 +29,7 @@
  * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  * POSSIBILITY OF SUCH DAMAGE.
  */
-#include "../../fsl-mc/include/mc-sys.h"
-#include "../../fsl-mc/include/mc-cmd.h"
+#include <linux/fsl/mc.h>
 #include "dpdmux.h"
 #include "dpdmux-cmd.h"
 
@@ -56,7 +55,7 @@ int dpdmux_open(struct fsl_mc_io *mc_io,
 		int dpdmux_id,
 		u16 *token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_open *cmd_params;
 	int err;
 
@@ -73,7 +72,7 @@ int dpdmux_open(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*token = get_mc_cmd_hdr_token(cmd.header);
+	*token = mc_cmd_hdr_read_token(&cmd);
 
 	return 0;
 }
@@ -93,7 +92,7 @@ int dpdmux_close(struct fsl_mc_io *mc_io,
 		 u32 cmd_flags,
 		 u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_CLOSE,
@@ -132,7 +131,7 @@ int dpdmux_create(struct fsl_mc_io *mc_io,
 		  const struct dpdmux_cfg *cfg,
 		  u32 *obj_id)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_create *cmd_params;
 	int err;
 
@@ -144,7 +143,8 @@ int dpdmux_create(struct fsl_mc_io *mc_io,
 	cmd_params->method = cfg->method;
 	cmd_params->manip = cfg->manip;
 	cmd_params->num_ifs = cpu_to_le16(cfg->num_ifs);
-	cmd_params->adv_max_dmat_entries = cpu_to_le16(cfg->adv.max_dmat_entries);
+	cmd_params->adv_max_dmat_entries =
+			cpu_to_le16(cfg->adv.max_dmat_entries);
 	cmd_params->adv_max_mc_groups = cpu_to_le16(cfg->adv.max_mc_groups);
 	cmd_params->adv_max_vlan_ids = cpu_to_le16(cfg->adv.max_vlan_ids);
 	cmd_params->options = cpu_to_le64(cfg->adv.options);
@@ -155,7 +155,7 @@ int dpdmux_create(struct fsl_mc_io *mc_io,
 		return err;
 
 	/* retrieve response parameters */
-	*obj_id = get_mc_cmd_create_object_id(&cmd);
+	*obj_id = mc_cmd_hdr_read_token(&cmd);
 
 	return 0;
 }
@@ -180,7 +180,7 @@ int dpdmux_destroy(struct fsl_mc_io *mc_io,
 		   u32 cmd_flags,
 		   u32 object_id)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_destroy *cmd_params;
 
 	/* prepare command */
@@ -206,7 +206,7 @@ int dpdmux_enable(struct fsl_mc_io *mc_io,
 		  u32 cmd_flags,
 		  u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_ENABLE,
@@ -229,7 +229,7 @@ int dpdmux_disable(struct fsl_mc_io *mc_io,
 		   u32 cmd_flags,
 		   u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_DISABLE,
@@ -254,7 +254,7 @@ int dpdmux_is_enabled(struct fsl_mc_io *mc_io,
 		      u16 token,
 		      int *en)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_rsp_is_enabled *rsp_params;
 	int err;
 
@@ -287,7 +287,7 @@ int dpdmux_reset(struct fsl_mc_io *mc_io,
 		 u32 cmd_flags,
 		 u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_RESET,
@@ -296,85 +296,6 @@ int dpdmux_reset(struct fsl_mc_io *mc_io,
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
-}
-
-/**
- * dpdmux_set_irq() - Set IRQ information for the DPDMUX to trigger an interrupt
- * @mc_io:	Pointer to MC portal's I/O object
- * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
- * @token:	Token of DPDMUX object
- * @irq_index:	Identifies the interrupt index to configure
- * @irq_cfg:	IRQ configuration
- *
- * Return:	'0' on Success; Error code otherwise.
- */
-int dpdmux_set_irq(struct fsl_mc_io *mc_io,
-		   u32 cmd_flags,
-		   u16 token,
-		   u8 irq_index,
-		   struct dpdmux_irq_cfg *irq_cfg)
-{
-	struct mc_command cmd = { 0 };
-	struct dpdmux_cmd_set_irq *cmd_params;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_SET_IRQ,
-					  cmd_flags,
-					  token);
-	cmd_params = (struct dpdmux_cmd_set_irq *)cmd.params;
-	cmd_params->irq_index = irq_index;
-	cmd_params->irq_val = cpu_to_le32(irq_cfg->val);
-	cmd_params->irq_addr = cpu_to_le64(irq_cfg->addr);
-	cmd_params->irq_num = cpu_to_le32(irq_cfg->irq_num);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-/**
- * dpdmux_get_irq() - Get IRQ information from the DPDMUX.
- * @mc_io:	Pointer to MC portal's I/O object
- * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
- * @token:	Token of DPDMUX object
- * @irq_index:	The interrupt index to configure
- * @type:	Interrupt type: 0 represents message interrupt
- *		type (both irq_addr and irq_val are valid)
- * @irq_cfg:	IRQ attributes
- *
- * Return:	'0' on Success; Error code otherwise.
- */
-int dpdmux_get_irq(struct fsl_mc_io *mc_io,
-		   u32 cmd_flags,
-		   u16 token,
-		   u8 irq_index,
-		   int *type,
-		   struct dpdmux_irq_cfg *irq_cfg)
-{
-	struct mc_command cmd = { 0 };
-	struct dpdmux_cmd_get_irq *cmd_params;
-	struct dpdmux_rsp_get_irq *rsp_params;
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_GET_IRQ,
-					  cmd_flags,
-					  token);
-	cmd_params = (struct dpdmux_cmd_get_irq *)cmd.params;
-	cmd_params->irq_index = irq_index;
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	rsp_params = (struct dpdmux_rsp_get_irq *)cmd.params;
-	irq_cfg->addr = le64_to_cpu(rsp_params->irq_addr);
-	irq_cfg->val = le32_to_cpu(rsp_params->irq_val);
-	irq_cfg->irq_num = le32_to_cpu(rsp_params->irq_num);
-	*type = le32_to_cpu(rsp_params->type);
-
-	return 0;
 }
 
 /**
@@ -398,7 +319,7 @@ int dpdmux_set_irq_enable(struct fsl_mc_io *mc_io,
 			  u8 irq_index,
 			  u8 en)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_set_irq_enable *cmd_params;
 
 	/* prepare command */
@@ -429,7 +350,7 @@ int dpdmux_get_irq_enable(struct fsl_mc_io *mc_io,
 			  u8 irq_index,
 			  u8 *en)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_get_irq_enable *cmd_params;
 	struct dpdmux_rsp_get_irq_enable *rsp_params;
 	int err;
@@ -475,7 +396,7 @@ int dpdmux_set_irq_mask(struct fsl_mc_io *mc_io,
 			u8 irq_index,
 			u32 mask)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_set_irq_mask *cmd_params;
 
 	/* prepare command */
@@ -509,7 +430,7 @@ int dpdmux_get_irq_mask(struct fsl_mc_io *mc_io,
 			u8 irq_index,
 			u32 *mask)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_get_irq_mask *cmd_params;
 	struct dpdmux_rsp_get_irq_mask *rsp_params;
 	int err;
@@ -551,7 +472,7 @@ int dpdmux_get_irq_status(struct fsl_mc_io *mc_io,
 			  u8 irq_index,
 			  u32 *status)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_get_irq_status *cmd_params;
 	struct dpdmux_rsp_get_irq_status *rsp_params;
 	int err;
@@ -594,7 +515,7 @@ int dpdmux_clear_irq_status(struct fsl_mc_io *mc_io,
 			    u8 irq_index,
 			    u32 status)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_clear_irq_status *cmd_params;
 
 	/* prepare command */
@@ -623,7 +544,7 @@ int dpdmux_get_attributes(struct fsl_mc_io *mc_io,
 			  u16 token,
 			  struct dpdmux_attr *attr)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_rsp_get_attr *rsp_params;
 	int err;
 
@@ -650,6 +571,62 @@ int dpdmux_get_attributes(struct fsl_mc_io *mc_io,
 }
 
 /**
+ * dpdmux_if_enable() - Enable Interface
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPDMUX object
+ * @if_id:	Interface Identifier
+ *
+ * Return:	Completion status. '0' on Success; Error code otherwise.
+ */
+int dpdmux_if_enable(struct fsl_mc_io *mc_io,
+		     u32 cmd_flags,
+		     u16 token,
+		     u16 if_id)
+{
+	struct dpdmux_cmd_if *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_IF_ENABLE,
+					  cmd_flags,
+					  token);
+	cmd_params = (struct dpdmux_cmd_if *)cmd.params;
+	cmd_params->if_id = cpu_to_le16(if_id);
+
+	/* send command to mc*/
+	return mc_send_command(mc_io, &cmd);
+}
+
+/**
+ * dpdmux_if_disable() - Disable Interface
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPDMUX object
+ * @if_id:	Interface Identifier
+ *
+ * Return:	Completion status. '0' on Success; Error code otherwise.
+ */
+int dpdmux_if_disable(struct fsl_mc_io *mc_io,
+		      u32 cmd_flags,
+		      u16 token,
+		      u16 if_id)
+{
+	struct dpdmux_cmd_if *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_IF_DISABLE,
+					  cmd_flags,
+					  token);
+	cmd_params = (struct dpdmux_cmd_if *)cmd.params;
+	cmd_params->if_id = cpu_to_le16(if_id);
+
+	/* send command to mc*/
+	return mc_send_command(mc_io, &cmd);
+}
+
+/**
  * dpdmux_set_max_frame_length() - Set the maximum frame length in DPDMUX
  * @mc_io:	Pointer to MC portal's I/O object
  * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
@@ -668,7 +645,7 @@ int dpdmux_set_max_frame_length(struct fsl_mc_io *mc_io,
 				u16 token,
 				u16 max_frame_length)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_set_max_frame_length *cmd_params;
 
 	/* prepare command */
@@ -683,18 +660,18 @@ int dpdmux_set_max_frame_length(struct fsl_mc_io *mc_io,
 }
 
 /**
-* dpdmux_ul_reset_counters() - Function resets the uplink counter
-* @mc_io:	Pointer to MC portal's I/O object
-* @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
-* @token:	Token of DPDMUX object
-*
-* Return:	'0' on Success; Error code otherwise.
-*/
+ * dpdmux_ul_reset_counters() - Function resets the uplink counter
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPDMUX object
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dpdmux_ul_reset_counters(struct fsl_mc_io *mc_io,
 			     u32 cmd_flags,
 			     u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_UL_RESET_COUNTERS,
@@ -728,7 +705,7 @@ int dpdmux_if_set_accepted_frames(struct fsl_mc_io *mc_io,
 				  u16 if_id,
 				  const struct dpdmux_accepted_frames *cfg)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_if_set_accepted_frames *cmd_params;
 
 	/* prepare command */
@@ -737,8 +714,10 @@ int dpdmux_if_set_accepted_frames(struct fsl_mc_io *mc_io,
 					  token);
 	cmd_params = (struct dpdmux_cmd_if_set_accepted_frames *)cmd.params;
 	cmd_params->if_id = cpu_to_le16(if_id);
-	dpdmux_set_field(cmd_params->frames_options, ACCEPTED_FRAMES_TYPE, cfg->type);
-	dpdmux_set_field(cmd_params->frames_options, UNACCEPTED_FRAMES_ACTION, cfg->unaccept_act);
+	dpdmux_set_field(cmd_params->frames_options, ACCEPTED_FRAMES_TYPE,
+			 cfg->type);
+	dpdmux_set_field(cmd_params->frames_options, UNACCEPTED_FRAMES_ACTION,
+			 cfg->unaccept_act);
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
@@ -760,8 +739,8 @@ int dpdmux_if_get_attributes(struct fsl_mc_io *mc_io,
 			     u16 if_id,
 			     struct dpdmux_if_attr *attr)
 {
-	struct mc_command cmd = { 0 };
-	struct dpdmux_cmd_if_get_attr *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
+	struct dpdmux_cmd_if *cmd_params;
 	struct dpdmux_rsp_if_get_attr *rsp_params;
 	int err;
 
@@ -769,7 +748,7 @@ int dpdmux_if_get_attributes(struct fsl_mc_io *mc_io,
 	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_IF_GET_ATTR,
 					  cmd_flags,
 					  token);
-	cmd_params = (struct dpdmux_cmd_if_get_attr *)cmd.params;
+	cmd_params = (struct dpdmux_cmd_if *)cmd.params;
 	cmd_params->if_id = cpu_to_le16(if_id);
 
 	/* send command to mc*/
@@ -781,7 +760,9 @@ int dpdmux_if_get_attributes(struct fsl_mc_io *mc_io,
 	rsp_params = (struct dpdmux_rsp_if_get_attr *)cmd.params;
 	attr->rate = le32_to_cpu(rsp_params->rate);
 	attr->enabled = dpdmux_get_field(rsp_params->enabled, ENABLE);
-	attr->accept_frame_type = dpdmux_get_field(rsp_params->accepted_frames_type, ACCEPTED_FRAMES_TYPE);
+	attr->accept_frame_type =
+			dpdmux_get_field(rsp_params->accepted_frames_type,
+					 ACCEPTED_FRAMES_TYPE);
 
 	return 0;
 }
@@ -805,7 +786,7 @@ int dpdmux_if_remove_l2_rule(struct fsl_mc_io *mc_io,
 			     u16 if_id,
 			     const struct dpdmux_l2_rule *rule)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_if_l2_rule *cmd_params;
 
 	/* prepare command */
@@ -845,7 +826,7 @@ int dpdmux_if_add_l2_rule(struct fsl_mc_io *mc_io,
 			  u16 if_id,
 			  const struct dpdmux_l2_rule *rule)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_if_l2_rule *cmd_params;
 
 	/* prepare command */
@@ -867,16 +848,16 @@ int dpdmux_if_add_l2_rule(struct fsl_mc_io *mc_io,
 }
 
 /**
-* dpdmux_if_get_counter() - Functions obtains specific counter of an interface
-* @mc_io: Pointer to MC portal's I/O object
-* @cmd_flags: Command flags; one or more of 'MC_CMD_FLAG_'
-* @token: Token of DPDMUX object
-* @if_id:  Interface Id
-* @counter_type: counter type
-* @counter: Returned specific counter information
-*
-* Return:	'0' on Success; Error code otherwise.
-*/
+ * dpdmux_if_get_counter() - Functions obtains specific counter of an interface
+ * @mc_io: Pointer to MC portal's I/O object
+ * @cmd_flags: Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token: Token of DPDMUX object
+ * @if_id:  Interface Id
+ * @counter_type: counter type
+ * @counter: Returned specific counter information
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dpdmux_if_get_counter(struct fsl_mc_io *mc_io,
 			  u32 cmd_flags,
 			  u16 token,
@@ -884,7 +865,7 @@ int dpdmux_if_get_counter(struct fsl_mc_io *mc_io,
 			  enum dpdmux_counter_type counter_type,
 			  u64 *counter)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_if_get_counter *cmd_params;
 	struct dpdmux_rsp_if_get_counter *rsp_params;
 	int err;
@@ -925,7 +906,7 @@ int dpdmux_if_set_link_cfg(struct fsl_mc_io *mc_io,
 			   u16 if_id,
 			   struct dpdmux_link_cfg *cfg)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_if_set_link_cfg *cmd_params;
 
 	/* prepare command */
@@ -957,7 +938,7 @@ int dpdmux_if_get_link_state(struct fsl_mc_io *mc_io,
 			     u16 if_id,
 			     struct dpdmux_link_state *state)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_cmd_if_get_link_state *cmd_params;
 	struct dpdmux_rsp_if_get_link_state *rsp_params;
 	int err;
@@ -984,6 +965,119 @@ int dpdmux_if_get_link_state(struct fsl_mc_io *mc_io,
 }
 
 /**
+ * dpdmux_set_custom_key - Set a custom classification key.
+ *
+ * This API is only available for DPDMUX instance created with
+ * DPDMUX_METHOD_CUSTOM.  This API must be called before populating the
+ * classification table using dpdmux_add_custom_cls_entry.
+ *
+ * Calls to dpdmux_set_custom_key remove all existing classification entries
+ * that may have been added previously using dpdmux_add_custom_cls_entry.
+ *
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token: Token of DPSW object
+ * @if_id: interface id
+ * @key_cfg_iova: DMA address of a configuration structure set up using
+ *		  dpkg_prepare_key_cfg. Maximum key size is 24 bytes.
+ *
+ * @returns	'0' on Success; Error code otherwise.
+ */
+int dpdmux_set_custom_key(struct fsl_mc_io *mc_io,
+			  u32 cmd_flags,
+			  u16 token,
+			  u64 key_cfg_iova)
+{
+	struct dpdmux_set_custom_key *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_SET_CUSTOM_KEY,
+					  cmd_flags,
+					  token);
+	cmd_params = (struct dpdmux_set_custom_key *)cmd.params;
+	cmd_params->key_cfg_iova = cpu_to_le64(key_cfg_iova);
+
+	/* send command to mc*/
+	return mc_send_command(mc_io, &cmd);
+}
+
+/**
+ * dpdmux_add_custom_cls_entry - Adds a custom classification entry.
+ *
+ * This API is only available for DPDMUX instances created with
+ * DPDMUX_METHOD_CUSTOM.  Before calling this function a classification key
+ * composition rule must be set up using dpdmux_set_custom_key.
+ *
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token: Token of DPSW object
+ * @rule: Classification rule to insert.  Rules cannot be duplicated, if a
+ *	matching rule already exists, the action will be replaced.
+ * @action: Action to perform for matching traffic.
+ *
+ * @returns	'0' on Success; Error code otherwise.
+ */
+int dpdmux_add_custom_cls_entry(struct fsl_mc_io *mc_io,
+				u32 cmd_flags,
+				u16 token,
+				struct dpdmux_rule_cfg *rule,
+				struct dpdmux_cls_action *action)
+{
+	struct dpdmux_cmd_add_custom_cls_entry *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_ADD_CUSTOM_CLS_ENTRY,
+					  cmd_flags,
+					  token);
+
+	cmd_params = (struct dpdmux_cmd_add_custom_cls_entry *)cmd.params;
+	cmd_params->key_size = rule->key_size;
+	cmd_params->dest_if = cpu_to_le16(action->dest_if);
+	cmd_params->key_iova = cpu_to_le64(rule->key_iova);
+	cmd_params->mask_iova = cpu_to_le64(rule->mask_iova);
+
+	/* send command to mc*/
+	return mc_send_command(mc_io, &cmd);
+}
+
+/**
+ * dpdmux_remove_custom_cls_entry - Removes a custom classification entry.
+ *
+ * This API is only available for DPDMUX instances created with
+ * DPDMUX_METHOD_CUSTOM.  The API can be used to remove classification
+ * entries previously inserted using dpdmux_add_custom_cls_entry.
+ *
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token: Token of DPSW object
+ * @rule: Classification rule to remove
+ *
+ * @returns	'0' on Success; Error code otherwise.
+ */
+int dpdmux_remove_custom_cls_entry(struct fsl_mc_io *mc_io,
+				   u32 cmd_flags,
+				   u16 token,
+				   struct dpdmux_rule_cfg *rule)
+{
+	struct dpdmux_cmd_remove_custom_cls_entry *cmd_params;
+	struct fsl_mc_command cmd = { 0 };
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPDMUX_CMDID_REMOVE_CUSTOM_CLS_ENTRY,
+					  cmd_flags,
+					  token);
+	cmd_params = (struct dpdmux_cmd_remove_custom_cls_entry *)cmd.params;
+	cmd_params->key_size = rule->key_size;
+	cmd_params->key_iova = cpu_to_le64(rule->key_iova);
+	cmd_params->mask_iova = cpu_to_le64(rule->mask_iova);
+
+	/* send command to mc*/
+	return mc_send_command(mc_io, &cmd);
+}
+
+/**
  * dpdmux_get_api_version() - Get Data Path Demux API version
  * @mc_io:  Pointer to MC portal's I/O object
  * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
@@ -997,7 +1091,7 @@ int dpdmux_get_api_version(struct fsl_mc_io *mc_io,
 			   u16 *major_ver,
 			   u16 *minor_ver)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 	struct dpdmux_rsp_get_api_version *rsp_params;
 	int err;
 

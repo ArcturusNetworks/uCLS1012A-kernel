@@ -49,7 +49,6 @@
 #include <sysdev/fsl_pci.h>
 #include <sysdev/simple_gpio.h>
 #include <soc/fsl/qe/qe.h>
-#include <soc/fsl/qe/qe_ic.h>
 #include <asm/mpic.h>
 #include <asm/swiotlb.h>
 #include "smp.h"
@@ -62,6 +61,8 @@
 #else
 #define DBG(fmt...)
 #endif
+
+#if IS_BUILTIN(CONFIG_PHYLIB)
 
 #define MV88E1111_SCR	0x10
 #define MV88E1111_SCR_125CLK	0x0010
@@ -151,6 +152,8 @@ static int mpc8568_mds_phy_fixups(struct phy_device *phydev)
 
 	return err;
 }
+
+#endif
 
 /* ************************************************************************
  *
@@ -279,20 +282,6 @@ static void __init mpc85xx_mds_qeic_init(void)
 		of_node_put(np);
 		return;
 	}
-
-	np = of_find_compatible_node(NULL, NULL, "fsl,qe-ic");
-	if (!np) {
-		np = of_find_node_by_type(NULL, "qeic");
-		if (!np)
-			return;
-	}
-
-	if (machine_is(p1021_mds))
-		qe_ic_init(np, 0, qe_ic_cascade_low_mpic,
-				qe_ic_cascade_high_mpic);
-	else
-		qe_ic_init(np, 0, qe_ic_cascade_muxed_mpic, NULL);
-	of_node_put(np);
 }
 #else
 static void __init mpc85xx_mds_qe_init(void) { }
@@ -313,6 +302,7 @@ static void __init mpc85xx_mds_setup_arch(void)
 	swiotlb_detect_4g();
 }
 
+#if IS_BUILTIN(CONFIG_PHYLIB)
 
 static int __init board_fixups(void)
 {
@@ -342,8 +332,11 @@ static int __init board_fixups(void)
 
 	return 0;
 }
+
 machine_arch_initcall(mpc8568_mds, board_fixups);
 machine_arch_initcall(mpc8569_mds, board_fixups);
+
+#endif
 
 static int __init mpc85xx_publish_devices(void)
 {
@@ -376,9 +369,7 @@ static void __init mpc85xx_mds_pic_init(void)
 
 static int __init mpc85xx_mds_probe(void)
 {
-        unsigned long root = of_get_flat_dt_root();
-
-        return of_flat_dt_is_compatible(root, "MPC85xxMDS");
+	return of_machine_is_compatible("MPC85xxMDS");
 }
 
 define_machine(mpc8568_mds) {
@@ -387,7 +378,6 @@ define_machine(mpc8568_mds) {
 	.setup_arch	= mpc85xx_mds_setup_arch,
 	.init_IRQ	= mpc85xx_mds_pic_init,
 	.get_irq	= mpic_get_irq,
-	.restart	= fsl_rstcr_restart,
 	.calibrate_decr	= generic_calibrate_decr,
 	.progress	= udbg_progress,
 #ifdef CONFIG_PCI
@@ -398,9 +388,7 @@ define_machine(mpc8568_mds) {
 
 static int __init mpc8569_mds_probe(void)
 {
-	unsigned long root = of_get_flat_dt_root();
-
-	return of_flat_dt_is_compatible(root, "fsl,MPC8569EMDS");
+	return of_machine_is_compatible("fsl,MPC8569EMDS");
 }
 
 define_machine(mpc8569_mds) {
@@ -409,7 +397,6 @@ define_machine(mpc8569_mds) {
 	.setup_arch	= mpc85xx_mds_setup_arch,
 	.init_IRQ	= mpc85xx_mds_pic_init,
 	.get_irq	= mpic_get_irq,
-	.restart	= fsl_rstcr_restart,
 	.calibrate_decr	= generic_calibrate_decr,
 	.progress	= udbg_progress,
 #ifdef CONFIG_PCI
@@ -420,9 +407,7 @@ define_machine(mpc8569_mds) {
 
 static int __init p1021_mds_probe(void)
 {
-	unsigned long root = of_get_flat_dt_root();
-
-	return of_flat_dt_is_compatible(root, "fsl,P1021MDS");
+	return of_machine_is_compatible("fsl,P1021MDS");
 
 }
 
@@ -432,7 +417,6 @@ define_machine(p1021_mds) {
 	.setup_arch	= mpc85xx_mds_setup_arch,
 	.init_IRQ	= mpc85xx_mds_pic_init,
 	.get_irq	= mpic_get_irq,
-	.restart	= fsl_rstcr_restart,
 	.calibrate_decr	= generic_calibrate_decr,
 	.progress	= udbg_progress,
 #ifdef CONFIG_PCI
@@ -440,4 +424,3 @@ define_machine(p1021_mds) {
 	.pcibios_fixup_phb      = fsl_pcibios_fixup_phb,
 #endif
 };
-

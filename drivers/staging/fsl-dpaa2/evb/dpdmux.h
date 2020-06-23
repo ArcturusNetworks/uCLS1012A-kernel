@@ -32,8 +32,6 @@
 #ifndef __FSL_DPDMUX_H
 #define __FSL_DPDMUX_H
 
-#include "../../fsl-mc/include/net.h"
-
 struct fsl_mc_io;
 
 /* Data Path Demux API
@@ -57,6 +55,11 @@ int dpdmux_close(struct fsl_mc_io *mc_io,
  * Enable bridging between internal interfaces
  */
 #define DPDMUX_OPT_BRIDGE_EN	0x0000000000000002ULL
+
+/**
+ * Mask support for classification
+ */
+#define DPDMUX_OPT_CLS_MASK_SUPPORT		0x0000000000000020ULL
 
 #define DPDMUX_IRQ_INDEX_IF	0x0000
 #define DPDMUX_IRQ_INDEX	0x0001
@@ -89,7 +92,8 @@ enum dpdmux_method {
 	DPDMUX_METHOD_C_VLAN_MAC = 0x1,
 	DPDMUX_METHOD_MAC = 0x2,
 	DPDMUX_METHOD_C_VLAN = 0x3,
-	DPDMUX_METHOD_S_VLAN = 0x4
+	DPDMUX_METHOD_S_VLAN = 0x4,
+	DPDMUX_METHOD_CUSTOM = 0x5
 };
 
 /**
@@ -150,31 +154,6 @@ int dpdmux_is_enabled(struct fsl_mc_io *mc_io,
 int dpdmux_reset(struct fsl_mc_io *mc_io,
 		 u32 cmd_flags,
 		 u16 token);
-
-/**
- * struct dpdmux_irq_cfg - IRQ configuration
- * @addr:	Address that must be written to signal a message-based interrupt
- * @val:	Value to write into irq_addr address
- * @irq_num: A user defined number associated with this IRQ
- */
-struct dpdmux_irq_cfg {
-	     u64 addr;
-	     u32 val;
-	     int irq_num;
-};
-
-int dpdmux_set_irq(struct fsl_mc_io *mc_io,
-		   u32 cmd_flags,
-		   u16 token,
-		   u8 irq_index,
-		   struct dpdmux_irq_cfg *irq_cfg);
-
-int dpdmux_get_irq(struct fsl_mc_io *mc_io,
-		   u32 cmd_flags,
-		   u16 token,
-		   u8 irq_index,
-		   int *type,
-		   struct dpdmux_irq_cfg *irq_cfg);
 
 int dpdmux_set_irq_enable(struct fsl_mc_io *mc_io,
 			  u32 cmd_flags,
@@ -329,6 +308,16 @@ int dpdmux_if_get_attributes(struct fsl_mc_io *mc_io,
 			     u16 if_id,
 			     struct dpdmux_if_attr *attr);
 
+int dpdmux_if_enable(struct fsl_mc_io *mc_io,
+		     u32 cmd_flags,
+		     u16 token,
+		     u16 if_id);
+
+int dpdmux_if_disable(struct fsl_mc_io *mc_io,
+		      u32 cmd_flags,
+		      u16 token,
+		      u16 if_id);
+
 /**
  * struct dpdmux_l2_rule - Structure representing L2 rule
  * @mac_addr: MAC address
@@ -411,6 +400,50 @@ int dpdmux_if_get_link_state(struct fsl_mc_io *mc_io,
 			     u16 token,
 			     u16 if_id,
 			     struct dpdmux_link_state *state);
+
+int dpdmux_set_custom_key(struct fsl_mc_io *mc_io,
+			  u32 cmd_flags,
+			  u16 token,
+			  u64 key_cfg_iova);
+
+/**
+ * struct dpdmux_rule_cfg - Custom classification rule.
+ *
+ * @key_iova: DMA address of buffer storing the look-up value
+ * @mask_iova: DMA address of the mask used for TCAM classification
+ * @key_size: size, in bytes, of the look-up value. This must match the size
+ *	of the look-up key defined using dpdmux_set_custom_key, otherwise the
+ *	entry will never be hit
+ */
+struct dpdmux_rule_cfg {
+	u64 key_iova;
+	u64 mask_iova;
+	u8 key_size;
+};
+
+/**
+ * struct dpdmux_cls_action - Action to execute for frames matching the
+ *	classification entry
+ *
+ * @dest_if: Interface to forward the frames to. Port numbering is similar to
+ *	the one used to connect interfaces:
+ *	- 0 is the uplink port,
+ *	- all others are downlink ports.
+ */
+struct dpdmux_cls_action {
+	u16 dest_if;
+};
+
+int dpdmux_add_custom_cls_entry(struct fsl_mc_io *mc_io,
+				u32 cmd_flags,
+				u16 token,
+				struct dpdmux_rule_cfg *rule,
+				struct dpdmux_cls_action *action);
+
+int dpdmux_remove_custom_cls_entry(struct fsl_mc_io *mc_io,
+				   u32 cmd_flags,
+				   u16 token,
+				   struct dpdmux_rule_cfg *rule);
 
 int dpdmux_get_api_version(struct fsl_mc_io *mc_io,
 			   u32 cmd_flags,

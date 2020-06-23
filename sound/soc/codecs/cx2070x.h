@@ -2,7 +2,7 @@
 * ALSA SoC CX2070X codec driver
 *
 * Copyright:   (C) 2009/2010 Conexant Systems
-* Copyright:   (C) 2017 Arcturus Networks Inc.
+* Copyright:   (C) 2017-2019 Arcturus Networks Inc.
 *                  by Oleksandr Zhadan
 *
 * This program is free software; you can redistribute it and/or modify
@@ -10,6 +10,7 @@
 * published by the Free Software Foundation.
 *
 *************************************************************************
+*  2019.03: fsl,imx-audio-cx2070x support added
 *  2017.08: Linux 4.x kernel support added
 *  Based on:
 *    Modified Date:  12/02/13
@@ -22,17 +23,27 @@
 #define CONFIG_SND_SOC_CX2070X_SYSFS 1
 #define CX2070X_SPI_WRITE_FLAG 0x80
 
+// #define SINGLE_DAI_SUPPORT
+
+#ifdef  SINGLE_DAI_SUPPORT
+#define NUM_OF_DAI			1
+#define DAI_DP1_NAME			"cx2070x"
+#define CAPTURE_STREAM_NAME_1		"Capture"
+#define PLAYBACK_STREAM_NAME_1		"Playback"
+#else
 #define NUM_OF_DAI			2
-#define DAI_DP1_NAME			"cx2070x-dp1"
+#define DAI_DP1_NAME			"cx2070x"
 #define DAI_DP2_NAME			"cx2070x-dp2"
-#define CAPTURE_STREAM_NAME_1		"DP1 Capture"
-#define PLAYBACK_STREAM_NAME_1		"DP1 Playback"
-#define CAPTURE_STREAM_NAME_2		"DP2 Capture"
-#define  PLAYBACK_STREAM_NAME_2		"DP2 Playback"
+#define CAPTURE_STREAM_NAME_1		"Capture"
+#define PLAYBACK_STREAM_NAME_1		"Playback"
+#define CAPTURE_STREAM_NAME_2		"Capture-dp2"
+#define  PLAYBACK_STREAM_NAME_2		"Playback-dp2"
+#endif
+
 #define CX2070X_I2C_DRIVER_NAME		"cx2070x"
 #define CX2070X_SPI_DRIVER_NAME		"cx2070x"
 #define CX2070X_FIRMWARE_FILENAME	"cnxt/cx2070x.fw"
-#define CX2070X_REG_MAX			0x1200
+#define CX2070X_REG_MAX			0x1600
 #define AUDDRV_VERSION(major0, major1, minor, build) \
        ((major0) << 24 |(major1) << 16 | (minor) << 8 | (build))
 
@@ -119,6 +130,9 @@
 #define CXREG_I2S2OUTIN_SOURCE	0X118e
 #define CXREG_DMIC_CONTROL	0x1247
 #define CXREG_I2S_OPTION	0x1249
+#define CXREG_PATCH_HI          0x1584
+#define CXREG_PATCH_MED         0x1585
+#define CXREG_PATCH_LO          0x1586
 
 /* codec private data*/
 struct cx2070x_priv {
@@ -133,6 +147,8 @@ struct cx2070x_priv {
 	struct mutex update_lock;
 	struct snd_soc_codec *codec;
 	struct i2c_client *cx_i2c;
+	int version;
+	struct clk *mclk;
 #ifdef CONFIG_SND_SOC_CX2070X_SYSFS
 	int reg;
 	int val;

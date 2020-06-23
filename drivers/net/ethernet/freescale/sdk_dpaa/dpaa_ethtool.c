@@ -39,6 +39,9 @@
 #endif
 
 #include <linux/string.h>
+#include <linux/of_platform.h>
+#include <linux/net_tstamp.h>
+#include <linux/fsl/ptp_qoriq.h>
 
 #include "dpaa_eth.h"
 #include "mac.h"                /* struct mac_device */
@@ -84,10 +87,9 @@ static char dpa_stats_global[][ETH_GSTRING_LEN] = {
 #define DPA_STATS_PERCPU_LEN ARRAY_SIZE(dpa_stats_percpu)
 #define DPA_STATS_GLOBAL_LEN ARRAY_SIZE(dpa_stats_global)
 
-static int __cold dpa_get_settings(struct net_device *net_dev,
-		struct ethtool_cmd *et_cmd)
+static int __cold dpa_get_ksettings(struct net_device *net_dev,
+		struct ethtool_link_ksettings *cmd)
 {
-	int			 _errno;
 	struct dpa_priv_s	*priv;
 
 	priv = netdev_priv(net_dev);
@@ -101,15 +103,13 @@ static int __cold dpa_get_settings(struct net_device *net_dev,
 		return 0;
 	}
 
-	_errno = phy_ethtool_gset(priv->mac_dev->phy_dev, et_cmd);
-	if (unlikely(_errno < 0))
-		netdev_err(net_dev, "phy_ethtool_gset() = %d\n", _errno);
+	phy_ethtool_ksettings_get(priv->mac_dev->phy_dev, cmd);
 
-	return _errno;
+	return 0;
 }
 
-static int __cold dpa_set_settings(struct net_device *net_dev,
-		struct ethtool_cmd *et_cmd)
+static int __cold dpa_set_ksettings(struct net_device *net_dev,
+		const struct ethtool_link_ksettings *cmd)
 {
 	int			 _errno;
 	struct dpa_priv_s	*priv;
@@ -125,9 +125,9 @@ static int __cold dpa_set_settings(struct net_device *net_dev,
 		return -ENODEV;
 	}
 
-	_errno = phy_ethtool_sset(priv->mac_dev->phy_dev, et_cmd);
+	_errno = phy_ethtool_ksettings_set(priv->mac_dev->phy_dev, cmd);
 	if (unlikely(_errno < 0))
-		netdev_err(net_dev, "phy_ethtool_sset() = %d\n", _errno);
+		netdev_err(net_dev, "phy_ethtool_ksettings_set() = %d\n", _errno);
 
 	return _errno;
 }
@@ -521,9 +521,50 @@ static void dpa_get_strings(struct net_device *net_dev, u32 stringset, u8 *data)
 	memcpy(strings, dpa_stats_global, size);
 }
 
+static int dpaa_get_ts_info(struct net_device *net_dev,
+			    struct ethtool_ts_info *info)
+{
+	struct dpa_priv_s *priv = netdev_priv(net_dev);
+	struct device *dev = priv->mac_dev->dev;
+	struct device_node *mac_node = dev->of_node;
+	struct device_node *fman_node = NULL, *ptp_node = NULL;
+	struct platform_device *ptp_dev = NULL;
+	struct ptp_qoriq *ptp = NULL;
+
+	info->phc_index = -1;
+
+	fman_node = of_get_parent(mac_node);
+	if (fman_node)
+		ptp_node = of_parse_phandle(fman_node, "ptimer-handle", 0);
+
+	if (ptp_node)
+		ptp_dev = of_find_device_by_node(ptp_node);
+
+	if (ptp_dev)
+		ptp = platform_get_drvdata(ptp_dev);
+
+	if (ptp)
+		info->phc_index = ptp->phc_index;
+
+#ifdef CONFIG_FSL_DPAA_TS
+	info->so_timestamping = SOF_TIMESTAMPING_TX_HARDWARE |
+				SOF_TIMESTAMPING_RX_HARDWARE |
+				SOF_TIMESTAMPING_RAW_HARDWARE;
+	info->tx_types = (1 << HWTSTAMP_TX_OFF) |
+			 (1 << HWTSTAMP_TX_ON);
+	info->rx_filters = (1 << HWTSTAMP_FILTER_NONE) |
+			   (1 << HWTSTAMP_FILTER_ALL);
+#else
+	info->so_timestamping = SOF_TIMESTAMPING_RX_SOFTWARE |
+				SOF_TIMESTAMPING_SOFTWARE;
+#endif
+
+	return 0;
+}
+
 const struct ethtool_ops dpa_ethtool_ops = {
-	.get_settings = dpa_get_settings,
-	.set_settings = dpa_set_settings,
+	.get_link_ksettings = dpa_get_ksettings,
+	.set_link_ksettings = dpa_set_ksettings,
 	.get_drvinfo = dpa_get_drvinfo,
 	.get_msglevel = dpa_get_msglevel,
 	.set_msglevel = dpa_set_msglevel,
@@ -541,4 +582,5 @@ const struct ethtool_ops dpa_ethtool_ops = {
 	.get_wol = dpa_get_wol,
 	.set_wol = dpa_set_wol,
 #endif
+	.get_ts_info = dpaa_get_ts_info,
 };

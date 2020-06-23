@@ -103,6 +103,8 @@
 #include <linux/delay.h>
 #include <linux/kthread.h>
 #include <linux/module.h>
+#include <linux/sched/task.h>
+
 #include <asm/sections.h>
 
 #define v1printk(a...) do { \
@@ -220,7 +222,7 @@ static unsigned long lookup_addr(char *arg)
 	else if (!strcmp(arg, "sys_open"))
 		addr = (unsigned long)do_sys_open;
 	else if (!strcmp(arg, "do_fork"))
-		addr = (unsigned long)do_fork;
+		addr = (unsigned long)_do_fork;
 	else if (!strcmp(arg, "hw_break_val"))
 		addr = (unsigned long)&hw_break_val;
 	addr = (unsigned long) dereference_function_descriptor((void *)addr);
@@ -1112,6 +1114,7 @@ static int __init init_kgdbts(void)
 
 	return configure_kgdbts();
 }
+device_initcall(init_kgdbts);
 
 static int kgdbts_get_char(void)
 {
@@ -1131,7 +1134,7 @@ static void kgdbts_put_char(u8 chr)
 
 static int param_set_kgdbts_var(const char *kmessage, struct kernel_param *kp)
 {
-	int len = strlen(kmessage);
+	size_t len = strlen(kmessage);
 
 	if (len >= MAX_CONFIG_LEN) {
 		printk(KERN_ERR "kgdbts: config string too long\n");
@@ -1151,7 +1154,7 @@ static int param_set_kgdbts_var(const char *kmessage, struct kernel_param *kp)
 
 	strcpy(config, kmessage);
 	/* Chop out \n char as a result of echo */
-	if (config[len - 1] == '\n')
+	if (len && config[len - 1] == '\n')
 		config[len - 1] = '\0';
 
 	/* Go and configure with the new params. */
@@ -1180,10 +1183,9 @@ static struct kgdb_io kgdbts_io_ops = {
 	.post_exception		= kgdbts_post_exp_handler,
 };
 
-module_init(init_kgdbts);
+/*
+ * not really modular, but the easiest way to keep compat with existing
+ * bootargs behaviour is to continue using module_param here.
+ */
 module_param_call(kgdbts, param_set_kgdbts_var, param_get_string, &kps, 0644);
 MODULE_PARM_DESC(kgdbts, "<A|V1|V2>[F#|S#][N#]");
-MODULE_DESCRIPTION("KGDB Test Suite");
-MODULE_LICENSE("GPL");
-MODULE_AUTHOR("Wind River Systems, Inc.");
-

@@ -27,6 +27,7 @@ along with this program.  If not, see <http://www.gnu.org/licenses/>.
 #include <linux/firmware.h>
 #include <linux/slab.h>
 #include <linux/module.h>
+#include <media/media-device.h>
 
 #include "sms-cards.h"
 #include "smsendian.h"
@@ -51,6 +52,9 @@ struct smsusb_urb_t {
 	struct smsusb_device_t *dev;
 
 	struct urb urb;
+
+	/* For the bottom half */
+	struct work_struct wq;
 };
 
 struct smsusb_device_t {
@@ -69,6 +73,18 @@ struct smsusb_device_t {
 
 static int smsusb_submit_urb(struct smsusb_device_t *dev,
 			     struct smsusb_urb_t *surb);
+
+/**
+ * Completing URB's callback handler - bottom half (proccess context)
+ * submits the URB prepared on smsusb_onresponse()
+ */
+static void do_submit_urb(struct work_struct *work)
+{
+	struct smsusb_urb_t *surb = container_of(work, struct smsusb_urb_t, wq);
+	struct smsusb_device_t *dev = surb->dev;
+
+	smsusb_submit_urb(dev, surb);
+}
 
 /**
  * Completing URB's callback handler - top half (interrupt context)
@@ -138,13 +154,15 @@ static void smsusb_onresponse(struct urb *urb)
 
 
 exit_and_resubmit:
-	smsusb_submit_urb(dev, surb);
+	INIT_WORK(&surb->wq, do_submit_urb);
+	schedule_work(&surb->wq);
 }
 
 static int smsusb_submit_urb(struct smsusb_device_t *dev,
 			     struct smsusb_urb_t *surb)
 {
 	if (!surb->cb) {
+		/* This function can sleep */
 		surb->cb = smscore_getbuffer(dev->coredev);
 		if (!surb->cb) {
 			pr_err("smscore_getbuffer(...) returned NULL\n");
@@ -200,22 +218,30 @@ static int smsusb_start_streaming(struct smsusb_device_t *dev)
 static int smsusb_sendrequest(void *context, void *buffer, size_t size)
 {
 	struct smsusb_device_t *dev = (struct smsusb_device_t *) context;
-	struct sms_msg_hdr *phdr = (struct sms_msg_hdr *) buffer;
-	int dummy;
+	struct sms_msg_hdr *phdr;
+	int dummy, ret;
 
 	if (dev->state != SMSUSB_ACTIVE) {
 		pr_debug("Device not active yet\n");
 		return -ENOENT;
 	}
 
+	phdr = kmalloc(size, GFP_KERNEL);
+	if (!phdr)
+		return -ENOMEM;
+	memcpy(phdr, buffer, size);
+
 	pr_debug("sending %s(%d) size: %d\n",
 		  smscore_translate_msg(phdr->msg_type), phdr->msg_type,
 		  phdr->msg_length);
 
 	smsendian_handle_tx_message((struct sms_msg_data *) phdr);
-	smsendian_handle_message_header((struct sms_msg_hdr *)buffer);
-	return usb_bulk_msg(dev->udev, usb_sndbulkpipe(dev->udev, 2),
-			    buffer, size, &dummy, 1000);
+	smsendian_handle_message_header((struct sms_msg_hdr *)phdr);
+	ret = usb_bulk_msg(dev->udev, usb_sndbulkpipe(dev->udev, 2),
+			    phdr, size, &dummy, 1000);
+
+	kfree(phdr);
+	return ret;
 }
 
 static char *smsusb1_fw_lkup[] = {
@@ -353,18 +379,11 @@ static void *siano_media_device_register(struct smsusb_device_t *dev,
 	if (!mdev)
 		return NULL;
 
-	mdev->dev = &udev->dev;
-	strlcpy(mdev->model, board->name, sizeof(mdev->model));
-	if (udev->serial)
-		strlcpy(mdev->serial, udev->serial, sizeof(mdev->serial));
-	strcpy(mdev->bus_info, udev->devpath);
-	mdev->hw_revision = le16_to_cpu(udev->descriptor.bcdDevice);
-	mdev->driver_version = LINUX_VERSION_CODE;
+	media_device_usb_init(mdev, udev, board->name);
 
 	ret = media_device_register(mdev);
 	if (ret) {
-		pr_err("Couldn't create a media device. Error: %d\n",
-			ret);
+		media_device_cleanup(mdev);
 		kfree(mdev);
 		return NULL;
 	}
@@ -383,6 +402,7 @@ static int smsusb_init_device(struct usb_interface *intf, int board_id)
 	struct smsusb_device_t *dev;
 	void *mdev;
 	int i, rc;
+	int align = 0;
 
 	/* create device object */
 	dev = kzalloc(sizeof(struct smsusb_device_t), GFP_KERNEL);
@@ -393,6 +413,24 @@ static int smsusb_init_device(struct usb_interface *intf, int board_id)
 	usb_set_intfdata(intf, dev);
 	dev->udev = interface_to_usbdev(intf);
 	dev->state = SMSUSB_DISCONNECTED;
+
+	for (i = 0; i < intf->cur_altsetting->desc.bNumEndpoints; i++) {
+		struct usb_endpoint_descriptor *desc =
+				&intf->cur_altsetting->endpoint[i].desc;
+
+		if (desc->bEndpointAddress & USB_DIR_IN) {
+			dev->in_ep = desc->bEndpointAddress;
+			align = usb_endpoint_maxp(desc) - sizeof(struct sms_msg_hdr);
+		} else {
+			dev->out_ep = desc->bEndpointAddress;
+		}
+	}
+
+	pr_debug("in_ep = %02x, out_ep = %02x\n", dev->in_ep, dev->out_ep);
+	if (!dev->in_ep || !dev->out_ep || align < 0) {  /* Missing endpoints? */
+		smsusb_term_device(intf);
+		return -ENODEV;
+	}
 
 	params.device_type = sms_get_board(board_id)->type;
 
@@ -408,23 +446,11 @@ static int smsusb_init_device(struct usb_interface *intf, int board_id)
 		/* fall-thru */
 	default:
 		dev->buffer_size = USB2_BUFFER_SIZE;
-		dev->response_alignment =
-		    le16_to_cpu(dev->udev->ep_in[1]->desc.wMaxPacketSize) -
-		    sizeof(struct sms_msg_hdr);
+		dev->response_alignment = align;
 
 		params.flags |= SMS_DEVICE_FAMILY2;
 		break;
 	}
-
-	for (i = 0; i < intf->cur_altsetting->desc.bNumEndpoints; i++) {
-		if (intf->cur_altsetting->endpoint[i].desc. bEndpointAddress & USB_DIR_IN)
-			dev->in_ep = intf->cur_altsetting->endpoint[i].desc.bEndpointAddress;
-		else
-			dev->out_ep = intf->cur_altsetting->endpoint[i].desc.bEndpointAddress;
-	}
-
-	pr_debug("in_ep = %02x, out_ep = %02x\n",
-		dev->in_ep, dev->out_ep);
 
 	params.device = &dev->udev->dev;
 	params.buffer_size = dev->buffer_size;
@@ -593,8 +619,8 @@ static int smsusb_resume(struct usb_interface *intf)
 				       intf->cur_altsetting->desc.
 				       bInterfaceNumber, 0);
 		if (rc < 0) {
-			printk(KERN_INFO "%s usb_set_interface failed, "
-			       "rc %d\n", __func__, rc);
+			printk(KERN_INFO "%s usb_set_interface failed, rc %d\n",
+			       __func__, rc);
 			return rc;
 		}
 	}

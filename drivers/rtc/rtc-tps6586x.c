@@ -276,17 +276,18 @@ static int tps6586x_rtc_probe(struct platform_device *pdev)
 	device_init_wakeup(&pdev->dev, 1);
 
 	platform_set_drvdata(pdev, rtc);
-	rtc->rtc = devm_rtc_device_register(&pdev->dev, dev_name(&pdev->dev),
-				       &tps6586x_rtc_ops, THIS_MODULE);
+	rtc->rtc = devm_rtc_allocate_device(&pdev->dev);
 	if (IS_ERR(rtc->rtc)) {
 		ret = PTR_ERR(rtc->rtc);
-		dev_err(&pdev->dev, "RTC device register: ret %d\n", ret);
+		dev_err(&pdev->dev, "RTC allocate device: ret %d\n", ret);
 		goto fail_rtc_register;
 	}
 
+	rtc->rtc->ops = &tps6586x_rtc_ops;
+
 	ret = devm_request_threaded_irq(&pdev->dev, rtc->irq, NULL,
 				tps6586x_rtc_irq,
-				IRQF_ONESHOT | IRQF_EARLY_RESUME,
+				IRQF_ONESHOT,
 				dev_name(&pdev->dev), rtc);
 	if (ret < 0) {
 		dev_err(&pdev->dev, "request IRQ(%d) failed with ret %d\n",
@@ -294,6 +295,13 @@ static int tps6586x_rtc_probe(struct platform_device *pdev)
 		goto fail_rtc_register;
 	}
 	disable_irq(rtc->irq);
+
+	ret = rtc_register_device(rtc->rtc);
+	if (ret) {
+		dev_err(&pdev->dev, "RTC device register: ret %d\n", ret);
+		goto fail_rtc_register;
+	}
+
 	return 0;
 
 fail_rtc_register:
@@ -344,7 +352,7 @@ static struct platform_driver tps6586x_rtc_driver = {
 };
 module_platform_driver(tps6586x_rtc_driver);
 
-MODULE_ALIAS("platform:rtc-tps6586x");
+MODULE_ALIAS("platform:tps6586x-rtc");
 MODULE_DESCRIPTION("TI TPS6586x RTC driver");
 MODULE_AUTHOR("Laxman dewangan <ldewangan@nvidia.com>");
 MODULE_LICENSE("GPL v2");

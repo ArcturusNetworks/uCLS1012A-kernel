@@ -40,28 +40,11 @@
 
 #include <asm/io.h>
 #include <asm/irq.h>
-#include <asm/uaccess.h>
+#include <linux/uaccess.h>
 #include <linux/module.h>
 #include <linux/crc32.h>
 #include <linux/workqueue.h>
 #include <linux/ethtool.h>
-#if defined(CONFIG_AS_FASTPATH) && defined(CONFIG_ARM)
-#define AS_FP_PROCEED  1
-#define AS_FP_STOLEN   2
-typedef        int (*devfp_hook_t)(struct sk_buff *skb, struct net_device *dev);
-extern devfp_hook_t   devfp_rx_hook;
-extern devfp_hook_t   devfp_tx_hook;
-static inline int devfp_register_rx_hook(devfp_hook_t hook)
-{
-	devfp_rx_hook = hook;
-	return 0;
-}
-static inline int devfp_register_tx_hook(devfp_hook_t hook)
-{
-	devfp_tx_hook = hook;
-	return 0;
-}
-#endif
 
 struct ethtool_flow_spec_container {
 	struct ethtool_rx_flow_spec fs;
@@ -117,7 +100,8 @@ extern const char gfar_driver_version[];
 #define DEFAULT_RX_LFC_THR  16
 #define DEFAULT_LFC_PTVVAL  4
 
-#define GFAR_RXB_SIZE 1536
+/* prevent fragmenation by HW in DSA environments */
+#define GFAR_RXB_SIZE roundup(1536 + 8, 64)
 #define GFAR_SKBFRAG_SIZE (RXBUF_ALIGNMENT + GFAR_RXB_SIZE \
 			  + SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
 #define GFAR_RXB_TRUESIZE 2048
@@ -1170,7 +1154,6 @@ struct gfar_private {
 	phy_interface_t interface;
 	struct device_node *phy_node;
 	struct device_node *tbi_node;
-	struct phy_device *phydev;
 	struct mii_bus *mii_bus;
 	int oldspeed;
 	int oldduplex;
@@ -1388,8 +1371,5 @@ struct filer_table {
 	u32 index;
 	struct gfar_filer_entry fe[MAX_FILER_CACHE_IDX + 20];
 };
-
-/* The gianfar_ptp module will set this variable */
-extern int gfar_phc_index;
 
 #endif /* __GIANFAR_H */

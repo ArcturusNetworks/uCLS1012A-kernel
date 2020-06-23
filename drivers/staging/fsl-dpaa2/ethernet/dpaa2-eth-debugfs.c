@@ -47,14 +47,14 @@ static int dpaa2_dbg_cpu_show(struct seq_file *file, void *offset)
 	int i;
 
 	seq_printf(file, "Per-CPU stats for %s\n", priv->net_dev->name);
-	seq_printf(file, "%s%16s%16s%16s%16s%16s%16s%16s%16s\n",
+	seq_printf(file, "%s%16s%16s%16s%16s%16s%16s%16s%16s%16s\n",
 		   "CPU", "Rx", "Rx Err", "Rx SG", "Tx", "Tx Err", "Tx conf",
-		   "Tx SG", "Enq busy");
+		   "Tx SG", "Tx realloc", "Enq busy");
 
 	for_each_online_cpu(i) {
 		stats = per_cpu_ptr(priv->percpu_stats, i);
 		extras = per_cpu_ptr(priv->percpu_extras, i);
-		seq_printf(file, "%3d%16llu%16llu%16llu%16llu%16llu%16llu%16llu%16llu\n",
+		seq_printf(file, "%3d%16llu%16llu%16llu%16llu%16llu%16llu%16llu%16llu%16llu\n",
 			   i,
 			   stats->rx_packets,
 			   stats->rx_errors,
@@ -63,6 +63,7 @@ static int dpaa2_dbg_cpu_show(struct seq_file *file, void *offset)
 			   stats->tx_errors,
 			   extras->tx_conf_frames,
 			   extras->tx_sg_frames,
+			   extras->tx_reallocs,
 			   extras->tx_portal_busy);
 	}
 
@@ -109,10 +110,10 @@ static int dpaa2_dbg_fqs_show(struct seq_file *file, void *offset)
 	u32 fcnt, bcnt;
 	int i, err;
 
-	seq_printf(file, "FQ stats for %s:\n", priv->net_dev->name);
+	seq_printf(file, "non-zero FQ stats for %s:\n", priv->net_dev->name);
 	seq_printf(file, "%s%16s%16s%16s%16s%16s\n",
-		   "VFQID", "CPU", "Type", "Frames", "Pending frames",
-		   "Congestion");
+		   "VFQID", "CPU", "Traffic Class", "Type", "Frames",
+		   "Pending frames");
 
 	for (i = 0; i <  priv->num_fqs; i++) {
 		fq = &priv->fq[i];
@@ -120,13 +121,17 @@ static int dpaa2_dbg_fqs_show(struct seq_file *file, void *offset)
 		if (err)
 			fcnt = 0;
 
-		seq_printf(file, "%5d%16d%16s%16llu%16u%16llu\n",
+		/* A lot of queues, no use displaying zero traffic ones */
+		if (!fq->stats.frames && !fcnt)
+			continue;
+
+		seq_printf(file, "%5d%16d%16d%16s%16llu%16u\n",
 			   fq->fqid,
 			   fq->target_cpu,
+			   fq->tc,
 			   fq_type_to_str(fq),
 			   fq->stats.frames,
-			   fcnt,
-			   fq->stats.congestion_entry);
+			   fcnt);
 	}
 
 	return 0;
@@ -158,19 +163,20 @@ static int dpaa2_dbg_ch_show(struct seq_file *file, void *offset)
 	int i;
 
 	seq_printf(file, "Channel stats for %s:\n", priv->net_dev->name);
-	seq_printf(file, "%s%16s%16s%16s%16s%16s\n",
+	seq_printf(file, "%s%16s%16s%16s%16s%16s%16s\n",
 		   "CHID", "CPU", "Deq busy", "Frames", "CDANs",
-		   "Avg frm/CDAN");
+		   "Avg frm/CDAN", "Buf count");
 
 	for (i = 0; i < priv->num_channels; i++) {
 		ch = priv->channel[i];
-		seq_printf(file, "%4d%16d%16llu%16llu%16llu%16llu\n",
+		seq_printf(file, "%4d%16d%16llu%16llu%16llu%16llu%16d\n",
 			   ch->ch_id,
 			   ch->nctx.desired_cpu,
 			   ch->stats.dequeue_portal_busy,
 			   ch->stats.frames,
 			   ch->stats.cdan,
-			   ch->stats.frames / ch->stats.cdan);
+			   ch->stats.frames / ch->stats.cdan,
+			   ch->buf_count);
 	}
 
 	return 0;
@@ -232,15 +238,16 @@ static const struct file_operations dpaa2_dbg_reset_ops = {
 };
 
 static ssize_t dpaa2_dbg_reset_mc_write(struct file *file,
-		const char __user *buf, size_t count, loff_t *offset)
+					const char __user *buf,
+					size_t count, loff_t *offset)
 {
 	struct dpaa2_eth_priv *priv = file->private_data;
 	int err;
 
 	err = dpni_reset_statistics(priv->mc_io, 0, priv->mc_token);
 	if (err)
-		netdev_err(priv->net_dev, "dpni_reset_statistics() failed %d\n",
-				err);
+		netdev_err(priv->net_dev,
+			   "dpni_reset_statistics() failed %d\n", err);
 
 	return count;
 }
@@ -249,7 +256,6 @@ static const struct file_operations dpaa2_dbg_reset_mc_ops = {
 	.open = simple_open,
 	.write = dpaa2_dbg_reset_mc_write,
 };
-
 
 void dpaa2_dbg_add(struct dpaa2_eth_priv *priv)
 {
@@ -265,7 +271,7 @@ void dpaa2_dbg_add(struct dpaa2_eth_priv *priv)
 	}
 
 	/* per-cpu stats file */
-	priv->dbg.cpu_stats = debugfs_create_file("cpu_stats", S_IRUGO,
+	priv->dbg.cpu_stats = debugfs_create_file("cpu_stats", 0444,
 						  priv->dbg.dir, priv,
 						  &dpaa2_dbg_cpu_ops);
 	if (!priv->dbg.cpu_stats) {
@@ -274,7 +280,7 @@ void dpaa2_dbg_add(struct dpaa2_eth_priv *priv)
 	}
 
 	/* per-fq stats file */
-	priv->dbg.fq_stats = debugfs_create_file("fq_stats", S_IRUGO,
+	priv->dbg.fq_stats = debugfs_create_file("fq_stats", 0444,
 						 priv->dbg.dir, priv,
 						 &dpaa2_dbg_fq_ops);
 	if (!priv->dbg.fq_stats) {
@@ -283,7 +289,7 @@ void dpaa2_dbg_add(struct dpaa2_eth_priv *priv)
 	}
 
 	/* per-fq stats file */
-	priv->dbg.ch_stats = debugfs_create_file("ch_stats", S_IRUGO,
+	priv->dbg.ch_stats = debugfs_create_file("ch_stats", 0444,
 						 priv->dbg.dir, priv,
 						 &dpaa2_dbg_ch_ops);
 	if (!priv->dbg.fq_stats) {
@@ -292,7 +298,7 @@ void dpaa2_dbg_add(struct dpaa2_eth_priv *priv)
 	}
 
 	/* reset stats */
-	priv->dbg.reset_stats = debugfs_create_file("reset_stats", S_IWUSR,
+	priv->dbg.reset_stats = debugfs_create_file("reset_stats", 0200,
 						    priv->dbg.dir, priv,
 						    &dpaa2_dbg_reset_ops);
 	if (!priv->dbg.reset_stats) {
@@ -302,7 +308,7 @@ void dpaa2_dbg_add(struct dpaa2_eth_priv *priv)
 
 	/* reset MC stats */
 	priv->dbg.reset_mc_stats = debugfs_create_file("reset_mc_stats",
-						S_IWUSR, priv->dbg.dir, priv,
+						0222, priv->dbg.dir, priv,
 						&dpaa2_dbg_reset_mc_ops);
 	if (!priv->dbg.reset_mc_stats) {
 		netdev_err(priv->net_dev, "debugfs_create_file() failed\n");
@@ -348,4 +354,3 @@ void __exit dpaa2_eth_dbg_exit(void)
 {
 	debugfs_remove(dpaa2_dbg_root);
 }
-

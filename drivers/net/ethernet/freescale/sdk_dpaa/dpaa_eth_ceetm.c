@@ -33,6 +33,8 @@
 #include "dpaa_eth_ceetm.h"
 
 #define DPA_CEETM_DESCRIPTION "FSL DPAA CEETM qdisc"
+MODULE_LICENSE("Dual BSD/GPL");
+MODULE_DESCRIPTION(DPA_CEETM_DESCRIPTION);
 
 const struct nla_policy ceetm_policy[TCA_CEETM_MAX + 1] = {
 	[TCA_CEETM_COPT] = { .len = sizeof(struct tc_ceetm_copt) },
@@ -45,10 +47,10 @@ struct Qdisc_ops ceetm_qdisc_ops;
 static void get_dcp_and_sp(struct net_device *dev, enum qm_dc_portal *dcp_id,
 			   unsigned int *sp_id)
 {
-	uint32_t channel;
-	t_LnxWrpFmPortDev *port_dev;
 	struct dpa_priv_s *dpa_priv = netdev_priv(dev);
 	struct mac_device *mac_dev = dpa_priv->mac_dev;
+	t_LnxWrpFmPortDev *port_dev;
+	uint32_t channel;
 
 	port_dev = (t_LnxWrpFmPortDev *)mac_dev->port_dev[TX];
 	channel = port_dev->txCh;
@@ -65,28 +67,101 @@ static void get_dcp_and_sp(struct net_device *dev, enum qm_dc_portal *dcp_id,
 	}
 }
 
+/* Wait for the DPAA Eth driver WQ TX FQs to empty */
+static void dpaa_drain_fqs(struct net_device *dev)
+{
+	const struct dpa_priv_s *priv = netdev_priv(dev);
+	struct qm_mcr_queryfq_np np;
+	struct qman_fq *fq;
+	int ret, i;
+
+	for (i = 0; i < DPAA_ETH_TX_QUEUES; i++) {
+		fq = priv->egress_fqs[i];
+		while (true) {
+			ret = qman_query_fq_np(fq, &np);
+			if (unlikely(ret)) {
+				pr_err(KBUILD_BASENAME
+				       " : %s : unable to query FQ %x: %d\n",
+				       __func__, fq->fqid, ret);
+				break;
+			}
+
+			if (np.frm_cnt == 0)
+				break;
+		}
+	}
+}
+
+/* Wait for the DPAA CEETM TX CQs to empty */
+static void ceetm_drain_class(struct ceetm_class *cl)
+{
+	struct qm_mcr_ceetm_cq_query cq_query;
+	struct qm_ceetm_cq *cq = NULL;
+	unsigned int idx;
+	int ret;
+
+	if (!cl)
+		return;
+
+	switch (cl->type) {
+	case CEETM_ROOT:
+		/* The ROOT classes aren't directly linked to CEETM CQs */
+		return;
+	case CEETM_PRIO:
+		cq = (struct qm_ceetm_cq *)cl->prio.cq;
+		break;
+	case CEETM_WBFS:
+		cq = (struct qm_ceetm_cq *)cl->wbfs.cq;
+		break;
+	}
+
+	if (!cq || !cl->ch)
+		return;
+
+	/* Build the query CQID by merging the channel and the CQ IDs */
+	idx = (cq->parent->idx << 4) | cq->idx;
+
+	while (true) {
+		ret = qman_ceetm_query_cq(idx,
+					  cl->ch->dcp_idx,
+					  &cq_query);
+		if (unlikely(ret)) {
+			pr_err(KBUILD_BASENAME
+			       " : %s : unable to query CQ %x: %d\n",
+			       __func__, idx, ret);
+			break;
+		}
+
+		if (cq_query.frm_cnt == 0)
+			break;
+	}
+}
+
 /* Enqueue Rejection Notification callback */
 static void ceetm_ern(struct qman_portal *portal, struct qman_fq *fq,
 		      const struct qm_mr_entry *msg)
 {
-	struct net_device *net_dev;
-	struct ceetm_class *cls;
+	struct dpa_percpu_priv_s *dpa_percpu_priv;
 	struct ceetm_class_stats *cstats = NULL;
 	const struct dpa_priv_s *dpa_priv;
-	struct dpa_percpu_priv_s *dpa_percpu_priv;
-	struct sk_buff *skb;
 	struct qm_fd fd = msg->ern.fd;
+	struct net_device *net_dev;
+	struct ceetm_fq *ceetm_fq;
+	struct ceetm_class *cls;
+	struct sk_buff *skb;
 
-	net_dev = ((struct ceetm_fq *)fq)->net_dev;
+	ceetm_fq = container_of(fq, struct ceetm_fq, fq);
+	net_dev = ceetm_fq->net_dev;
 	dpa_priv = netdev_priv(net_dev);
 	dpa_percpu_priv = raw_cpu_ptr(dpa_priv->percpu_priv);
 
 	/* Increment DPA counters */
 	dpa_percpu_priv->stats.tx_dropped++;
 	dpa_percpu_priv->stats.tx_fifo_errors++;
+	count_ern(dpa_percpu_priv, msg);
 
 	/* Increment CEETM counters */
-	cls = ((struct ceetm_fq *)fq)->ceetm_cls;
+	cls = ceetm_fq->ceetm_cls;
 	switch (cls->type) {
 	case CEETM_PRIO:
 		cstats = this_cpu_ptr(cls->prio.cstats);
@@ -99,11 +174,15 @@ static void ceetm_ern(struct qman_portal *portal, struct qman_fq *fq,
 	if (cstats)
 		cstats->ern_drop_count++;
 
+	/* Release the buffers that were supposed to be recycled. */
 	if (fd.bpid != 0xff) {
 		dpa_fd_release(net_dev, &fd);
 		return;
 	}
 
+	/* Release the frames that were supposed to return on the
+	 * confirmation path.
+	 */
 	skb = _dpa_cleanup_tx_fd(dpa_priv, &fd);
 	dev_kfree_skb_any(skb);
 }
@@ -111,10 +190,14 @@ static void ceetm_ern(struct qman_portal *portal, struct qman_fq *fq,
 /* Congestion State Change Notification callback */
 static void ceetm_cscn(struct qm_ceetm_ccg *ccg, void *cb_ctx, int congested)
 {
-	struct ceetm_fq *ceetm_fq = (struct ceetm_fq *)cb_ctx;
-	struct dpa_priv_s *dpa_priv = netdev_priv(ceetm_fq->net_dev);
-	struct ceetm_class *cls = ceetm_fq->ceetm_cls;
 	struct ceetm_class_stats *cstats = NULL;
+	struct dpa_priv_s *dpa_priv;
+	struct ceetm_fq *ceetm_fq;
+	struct ceetm_class *cls;
+
+	ceetm_fq = (struct ceetm_fq *)cb_ctx;
+	dpa_priv = netdev_priv(ceetm_fq->net_dev);
+	cls = ceetm_fq->ceetm_cls;
 
 	switch (cls->type) {
 	case CEETM_PRIO:
@@ -125,16 +208,16 @@ static void ceetm_cscn(struct qm_ceetm_ccg *ccg, void *cb_ctx, int congested)
 		break;
 	}
 
+	ceetm_fq->congested = congested;
+
 	if (congested) {
 		dpa_priv->cgr_data.congestion_start_jiffies = jiffies;
-		netif_tx_stop_all_queues(dpa_priv->net_dev);
 		dpa_priv->cgr_data.cgr_congested_count++;
 		if (cstats)
 			cstats->congested_count++;
 	} else {
 		dpa_priv->cgr_data.congested_jiffies +=
 			(jiffies - dpa_priv->cgr_data.congestion_start_jiffies);
-		netif_tx_wake_all_queues(dpa_priv->net_dev);
 	}
 }
 
@@ -148,6 +231,7 @@ static int ceetm_alloc_fq(struct ceetm_fq **fq, struct net_device *dev,
 
 	(*fq)->net_dev = dev;
 	(*fq)->ceetm_cls = cls;
+	(*fq)->congested = 0;
 	return 0;
 }
 
@@ -156,10 +240,10 @@ static int ceetm_config_ccg(struct qm_ceetm_ccg **ccg,
 			    struct qm_ceetm_channel *channel, unsigned int id,
 			    struct ceetm_fq *fq, struct dpa_priv_s *dpa_priv)
 {
-	int err;
-	u32 cs_th;
-	u16 ccg_mask;
 	struct qm_ceetm_ccg_params ccg_params;
+	u16 ccg_mask;
+	u32 cs_th;
+	int err;
 
 	err = qman_ceetm_ccg_claim(ccg, channel, id, ceetm_cscn, fq);
 	if (err)
@@ -185,9 +269,9 @@ static int ceetm_config_ccg(struct qm_ceetm_ccg **ccg,
 
 	/* Set the congestion state thresholds according to the link speed */
 	if (dpa_priv->mac_dev->if_support & SUPPORTED_10000baseT_Full)
-		cs_th = CONFIG_FSL_DPAA_CS_THRESHOLD_10G;
+		cs_th = CONFIG_FSL_DPAA_CEETM_CCS_THRESHOLD_10G;
 	else
-		cs_th = CONFIG_FSL_DPAA_CS_THRESHOLD_1G;
+		cs_th = CONFIG_FSL_DPAA_CEETM_CCS_THRESHOLD_1G;
 
 	qm_cgr_cs_thres_set64(&ccg_params.cs_thres_in, cs_th, 1);
 	qm_cgr_cs_thres_set64(&ccg_params.cs_thres_out,
@@ -204,9 +288,9 @@ static int ceetm_config_ccg(struct qm_ceetm_ccg **ccg,
 static int ceetm_config_lfq(struct qm_ceetm_cq *cq, struct ceetm_fq *fq,
 			    struct qm_ceetm_lfq **lfq)
 {
-	int err;
 	u64 context_a;
 	u32 context_b;
+	int err;
 
 	err = qman_ceetm_lfq_claim(lfq, cq);
 	if (err)
@@ -234,33 +318,32 @@ static int ceetm_config_lfq(struct qm_ceetm_cq *cq, struct ceetm_fq *fq,
 /* Configure a prio ceetm class */
 static int ceetm_config_prio_cls(struct ceetm_class *cls,
 				 struct net_device *dev,
-				 struct qm_ceetm_channel *channel,
 				 unsigned int id)
 {
-	int err;
 	struct dpa_priv_s *dpa_priv = netdev_priv(dev);
+	int err;
 
 	err = ceetm_alloc_fq(&cls->prio.fq, dev, cls);
 	if (err)
 		return err;
 
 	/* Claim and configure the CCG */
-	err = ceetm_config_ccg(&cls->prio.ccg, channel, id, cls->prio.fq,
+	err = ceetm_config_ccg(&cls->prio.ccg, cls->ch, id, cls->prio.fq,
 			       dpa_priv);
 	if (err)
 		return err;
 
 	/* Claim and configure the CQ */
-	err = qman_ceetm_cq_claim(&cls->prio.cq, channel, id, cls->prio.ccg);
+	err = qman_ceetm_cq_claim(&cls->prio.cq, cls->ch, id, cls->prio.ccg);
 	if (err)
 		return err;
 
 	if (cls->shaped) {
-		err = qman_ceetm_channel_set_cq_cr_eligibility(channel, id, 1);
+		err = qman_ceetm_channel_set_cq_cr_eligibility(cls->ch, id, 1);
 		if (err)
 			return err;
 
-		err = qman_ceetm_channel_set_cq_er_eligibility(channel, id, 1);
+		err = qman_ceetm_channel_set_cq_er_eligibility(cls->ch, id, 1);
 		if (err)
 			return err;
 	}
@@ -276,28 +359,27 @@ static int ceetm_config_prio_cls(struct ceetm_class *cls,
 /* Configure a wbfs ceetm class */
 static int ceetm_config_wbfs_cls(struct ceetm_class *cls,
 				 struct net_device *dev,
-				 struct qm_ceetm_channel *channel,
 				 unsigned int id, int type)
 {
-	int err;
 	struct dpa_priv_s *dpa_priv = netdev_priv(dev);
+	int err;
 
 	err = ceetm_alloc_fq(&cls->wbfs.fq, dev, cls);
 	if (err)
 		return err;
 
 	/* Claim and configure the CCG */
-	err = ceetm_config_ccg(&cls->wbfs.ccg, channel, id, cls->wbfs.fq,
+	err = ceetm_config_ccg(&cls->wbfs.ccg, cls->ch, id, cls->wbfs.fq,
 			       dpa_priv);
 	if (err)
 		return err;
 
 	/* Claim and configure the CQ */
 	if (type == WBFS_GRP_B)
-		err = qman_ceetm_cq_claim_B(&cls->wbfs.cq, channel, id,
+		err = qman_ceetm_cq_claim_B(&cls->wbfs.cq, cls->ch, id,
 					    cls->wbfs.ccg);
 	else
-		err = qman_ceetm_cq_claim_A(&cls->wbfs.cq, channel, id,
+		err = qman_ceetm_cq_claim_A(&cls->wbfs.cq, cls->ch, id,
 					    cls->wbfs.ccg);
 	if (err)
 		return err;
@@ -345,6 +427,8 @@ static void ceetm_link_class(struct Qdisc *sch,
 /* Destroy a ceetm class */
 static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 {
+	struct net_device *dev = qdisc_dev(sch);
+
 	if (!cl)
 		return;
 
@@ -358,10 +442,10 @@ static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 			cl->root.child = NULL;
 		}
 
-		if (cl->root.ch && qman_ceetm_channel_release(cl->root.ch))
+		if (cl->ch && qman_ceetm_channel_release(cl->ch))
 			pr_err(KBUILD_BASENAME
 			       " : %s : error releasing the channel %d\n",
-			       __func__, cl->root.ch->idx);
+			       __func__, cl->ch->idx);
 
 		break;
 
@@ -370,6 +454,12 @@ static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 			qdisc_destroy(cl->prio.child);
 			cl->prio.child = NULL;
 		}
+
+		/* We must make sure the CQ is empty before releasing it.
+		 * Pause all transmissions while we wait for it to drain.
+		 */
+		netif_tx_stop_all_queues(dev);
+		ceetm_drain_class(cl);
 
 		if (cl->prio.lfq && qman_ceetm_lfq_release(cl->prio.lfq))
 			pr_err(KBUILD_BASENAME
@@ -391,9 +481,16 @@ static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 		if (cl->prio.cstats)
 			free_percpu(cl->prio.cstats);
 
+		netif_tx_wake_all_queues(dev);
 		break;
 
 	case CEETM_WBFS:
+		/* We must make sure the CQ is empty before releasing it.
+		 * Pause all transmissions while we wait for it to drain.
+		 */
+		netif_tx_stop_all_queues(dev);
+		ceetm_drain_class(cl);
+
 		if (cl->wbfs.lfq && qman_ceetm_lfq_release(cl->wbfs.lfq))
 			pr_err(KBUILD_BASENAME
 			       " : %s : error releasing the LFQ %d\n",
@@ -413,30 +510,34 @@ static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 
 		if (cl->wbfs.cstats)
 			free_percpu(cl->wbfs.cstats);
+
+		netif_tx_wake_all_queues(dev);
 	}
 
-	tcf_destroy_chain(&cl->filter_list);
+	tcf_block_put(cl->block);
 	kfree(cl);
 }
 
 /* Destroy a ceetm qdisc */
 static void ceetm_destroy(struct Qdisc *sch)
 {
-	unsigned int ntx, i;
-	struct hlist_node *next;
-	struct ceetm_class *cl;
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct net_device *dev = qdisc_dev(sch);
+	struct hlist_node *next;
+	struct ceetm_class *cl;
+	unsigned int ntx, i;
 
 	pr_debug(KBUILD_BASENAME " : %s : destroy qdisc %X\n",
 		 __func__, sch->handle);
 
 	/* All filters need to be removed before destroying the classes */
-	tcf_destroy_chain(&priv->filter_list);
+	tcf_block_put(priv->block);
 
 	for (i = 0; i < priv->clhash.hashsize; i++) {
-		hlist_for_each_entry(cl, &priv->clhash.hash[i], common.hnode)
-			tcf_destroy_chain(&cl->filter_list);
+		hlist_for_each_entry(cl, &priv->clhash.hash[i], common.hnode) {
+			tcf_block_put(cl->block);
+			cl->block = NULL;
+		}
 	}
 
 	for (i = 0; i < priv->clhash.hashsize; i++) {
@@ -467,7 +568,9 @@ static void ceetm_destroy(struct Qdisc *sch)
 		if (!priv->root.qdiscs)
 			break;
 
-		/* Remove the pfifo qdiscs */
+		/* Destroy the pfifo qdiscs in case they haven't been attached
+		 * to the netdev queues yet.
+		 */
 		for (ntx = 0; ntx < dev->num_tx_queues; ntx++)
 			if (priv->root.qdiscs[ntx])
 				qdisc_destroy(priv->root.qdiscs[ntx]);
@@ -481,6 +584,10 @@ static void ceetm_destroy(struct Qdisc *sch)
 		break;
 
 	case CEETM_WBFS:
+		/* Reset the WBFS groups and priorities */
+		if (priv->wbfs.ch)
+			qman_ceetm_channel_set_group(priv->wbfs.ch, 1, 0, 0);
+
 		if (priv->wbfs.parent)
 			priv->wbfs.parent->prio.child = NULL;
 		break;
@@ -489,13 +596,13 @@ static void ceetm_destroy(struct Qdisc *sch)
 
 static int ceetm_dump(struct Qdisc *sch, struct sk_buff *skb)
 {
+	struct ceetm_qdisc *priv = qdisc_priv(sch);
+	struct net_device *dev = qdisc_dev(sch);
+	struct ceetm_qdisc_stats *qstats;
+	struct tc_ceetm_qopt qopt;
 	struct Qdisc *qdisc;
 	unsigned int ntx, i;
 	struct nlattr *nest;
-	struct tc_ceetm_qopt qopt;
-	struct ceetm_qdisc_stats *qstats;
-	struct net_device *dev = qdisc_dev(sch);
-	struct ceetm_qdisc *priv = qdisc_priv(sch);
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
@@ -569,42 +676,49 @@ nla_put_failure:
 static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 			   struct tc_ceetm_qopt *qopt)
 {
-	struct netdev_queue *dev_queue;
-	struct Qdisc *qdisc;
-	enum qm_dc_portal dcp_id;
+	struct net_device *dev = qdisc_dev(sch);
 	unsigned int i, sp_id, parent_id;
+	struct netdev_queue *dev_queue;
+	struct dpa_priv_s *dpa_priv;
+	struct mac_device *mac_dev;
+	enum qm_dc_portal dcp_id;
+	struct qm_ceetm_lni *lni;
+	struct qm_ceetm_sp *sp;
+	struct Qdisc *qdisc;
 	int err;
 	u64 bps;
-	struct qm_ceetm_sp *sp;
-	struct qm_ceetm_lni *lni;
-	struct net_device *dev = qdisc_dev(sch);
-	struct dpa_priv_s *dpa_priv = netdev_priv(dev);
-	struct mac_device *mac_dev = dpa_priv->mac_dev;
+
+	dpa_priv = netdev_priv(dev);
+	mac_dev = dpa_priv->mac_dev;
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
 	/* Validate inputs */
 	if (sch->parent != TC_H_ROOT) {
-		pr_err("CEETM: a root ceetm qdisc can not be attached to a class\n");
-		tcf_destroy_chain(&priv->filter_list);
-		qdisc_class_hash_destroy(&priv->clhash);
+		pr_err("CEETM: a root ceetm qdisc must be root\n");
 		return -EINVAL;
 	}
 
 	if (!mac_dev) {
 		pr_err("CEETM: the interface is lacking a mac\n");
-		err = -EINVAL;
-		goto err_init_root;
+		return -EINVAL;
 	}
 
-	/* pre-allocate underlying pfifo qdiscs */
+	/* Pre-allocate underlying pfifo qdiscs.
+	 *
+	 * We want to offload shaping and scheduling decisions to the hardware.
+	 * The pfifo qdiscs will be attached to the netdev queues and will
+	 * guide the traffic from the IP stack down to the driver with minimum
+	 * interference.
+	 *
+	 * The CEETM qdiscs and classes will be crossed when the traffic
+	 * reaches the driver.
+	 */
 	priv->root.qdiscs = kcalloc(dev->num_tx_queues,
 				    sizeof(priv->root.qdiscs[0]),
 				    GFP_KERNEL);
-	if (!priv->root.qdiscs) {
-		err = -ENOMEM;
-		goto err_init_root;
-	}
+	if (!priv->root.qdiscs)
+		return -ENOMEM;
 
 	for (i = 0; i < dev->num_tx_queues; i++) {
 		dev_queue = netdev_get_tx_queue(dev, i);
@@ -613,10 +727,8 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 
 		qdisc = qdisc_create_dflt(dev_queue, &pfifo_qdisc_ops,
 					  parent_id);
-		if (!qdisc) {
-			err = -ENOMEM;
-			goto err_init_root;
-		}
+		if (!qdisc)
+			return -ENOMEM;
 
 		priv->root.qdiscs[i] = qdisc;
 		qdisc->flags |= TCQ_F_ONETXQUEUE;
@@ -628,8 +740,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	if (!priv->root.qstats) {
 		pr_err(KBUILD_BASENAME " : %s : alloc_percpu() failed\n",
 		       __func__);
-		err = -ENOMEM;
-		goto err_init_root;
+		return -ENOMEM;
 	}
 
 	priv->shaped = qopt->shaped;
@@ -643,7 +754,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	if (err) {
 		pr_err(KBUILD_BASENAME " : %s : failed to claim the SP\n",
 		       __func__);
-		goto err_init_root;
+		return err;
 	}
 
 	priv->root.sp = sp;
@@ -655,7 +766,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	if (err) {
 		pr_err(KBUILD_BASENAME " : %s : failed to claim the LNI\n",
 		       __func__);
-		goto err_init_root;
+		return err;
 	}
 
 	priv->root.lni = lni;
@@ -664,7 +775,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	if (err) {
 		pr_err(KBUILD_BASENAME " : %s : failed to link the SP and LNI\n",
 		       __func__);
-		goto err_init_root;
+		return err;
 	}
 
 	lni->sp = sp;
@@ -675,7 +786,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to configure the LNI shaper\n",
 			       __func__);
-			goto err_init_root;
+			return err;
 		}
 
 		bps = priv->root.rate << 3; /* Bps -> bps */
@@ -683,7 +794,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to configure the LNI shaper\n",
 			       __func__);
-			goto err_init_root;
+			return err;
 		}
 
 		bps = priv->root.ceil << 3; /* Bps -> bps */
@@ -691,7 +802,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to configure the LNI shaper\n",
 			       __func__);
-			goto err_init_root;
+			return err;
 		}
 	}
 
@@ -699,44 +810,41 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 
 	dpa_enable_ceetm(dev);
 	return 0;
-
-err_init_root:
-	ceetm_destroy(sch);
-	return err;
 }
 
 /* Configure a prio ceetm qdisc */
 static int ceetm_init_prio(struct Qdisc *sch, struct ceetm_qdisc *priv,
 			   struct tc_ceetm_qopt *qopt)
 {
-	int err;
-	unsigned int i;
 	struct ceetm_class *parent_cl, *child_cl;
-	struct Qdisc *parent_qdisc;
 	struct net_device *dev = qdisc_dev(sch);
+	struct Qdisc *root_qdisc = dev->qdisc;
+	unsigned int i;
+	int err;
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
 	if (sch->parent == TC_H_ROOT) {
 		pr_err("CEETM: a prio ceetm qdisc can not be root\n");
-		err = -EINVAL;
-		goto err_init_prio;
+		return -EINVAL;
 	}
 
-	parent_qdisc = qdisc_lookup(dev, TC_H_MAJ(sch->parent));
-	if (strcmp(parent_qdisc->ops->id, ceetm_qdisc_ops.id)) {
+	if (TC_H_MAJ(sch->parent) != TC_H_MAJ(root_qdisc->handle)) {
+		pr_err("CEETM: a prio ceetm qdiscs can be added only under a root ceetm class\n");
+		return -EINVAL;
+	}
+
+	if (strcmp(root_qdisc->ops->id, ceetm_qdisc_ops.id)) {
 		pr_err("CEETM: a ceetm qdisc can not be attached to other qdisc/class types\n");
-		err = -EINVAL;
-		goto err_init_prio;
+		return -EINVAL;
 	}
 
 	/* Obtain the parent root ceetm_class */
-	parent_cl = ceetm_find(sch->parent, parent_qdisc);
+	parent_cl = ceetm_find(sch->parent, root_qdisc);
 
 	if (!parent_cl || parent_cl->type != CEETM_ROOT) {
 		pr_err("CEETM: a prio ceetm qdiscs can be added only under a root ceetm class\n");
-		err = -EINVAL;
-		goto err_init_prio;
+		return -EINVAL;
 	}
 
 	priv->prio.parent = parent_cl;
@@ -744,16 +852,13 @@ static int ceetm_init_prio(struct Qdisc *sch, struct ceetm_qdisc *priv,
 
 	priv->shaped = parent_cl->shaped;
 	priv->prio.qcount = qopt->qcount;
+	priv->prio.ch = parent_cl->ch;
 
 	/* Create and configure qcount child classes */
 	for (i = 0; i < priv->prio.qcount; i++) {
 		child_cl = kzalloc(sizeof(*child_cl), GFP_KERNEL);
-		if (!child_cl) {
-			pr_err(KBUILD_BASENAME " : %s : kzalloc() failed\n",
-			       __func__);
-			err = -ENOMEM;
-			goto err_init_prio;
-		}
+		if (!child_cl)
+			return -ENOMEM;
 
 		child_cl->prio.cstats = alloc_percpu(struct ceetm_class_stats);
 		if (!child_cl->prio.cstats) {
@@ -764,11 +869,11 @@ static int ceetm_init_prio(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		}
 
 		child_cl->common.classid = TC_H_MAKE(sch->handle, (i + 1));
-		child_cl->refcnt = 1;
 		child_cl->parent = sch;
 		child_cl->type = CEETM_PRIO;
 		child_cl->shaped = priv->shaped;
 		child_cl->prio.child = NULL;
+		child_cl->ch = priv->prio.ch;
 
 		/* All shaped CQs have CR and ER enabled by default */
 		child_cl->prio.cr = child_cl->shaped;
@@ -777,8 +882,7 @@ static int ceetm_init_prio(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		child_cl->prio.cq = NULL;
 
 		/* Configure the corresponding hardware CQ */
-		err = ceetm_config_prio_cls(child_cl, dev,
-					    parent_cl->root.ch, i);
+		err = ceetm_config_prio_cls(child_cl, dev, i);
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to configure the ceetm prio class %X\n",
 			       __func__, child_cl->common.classid);
@@ -796,8 +900,7 @@ static int ceetm_init_prio(struct Qdisc *sch, struct ceetm_qdisc *priv,
 
 err_init_prio_cls:
 	ceetm_cls_destroy(sch, child_cl);
-err_init_prio:
-	ceetm_destroy(sch);
+	/* Note: ceetm_destroy() will be called by our caller */
 	return err;
 }
 
@@ -805,76 +908,86 @@ err_init_prio:
 static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 			   struct tc_ceetm_qopt *qopt)
 {
-	int err, group_b, small_group;
-	unsigned int i, id, prio_a, prio_b;
-	struct ceetm_class *parent_cl, *child_cl, *root_cl;
-	struct Qdisc *parent_qdisc;
-	struct ceetm_qdisc *parent_priv;
-	struct qm_ceetm_channel *channel;
+	struct ceetm_class *parent_cl, *child_cl, *tmp_cl, *root_cl = NULL;
+	struct Qdisc *root_qdisc, *parent_qdisc = NULL;
 	struct net_device *dev = qdisc_dev(sch);
+	unsigned int i, id, prio_a, prio_b;
+	int err, group_b, small_group;
+	struct ceetm_qdisc *root_priv;
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
 	/* Validate inputs */
 	if (sch->parent == TC_H_ROOT) {
 		pr_err("CEETM: a wbfs ceetm qdiscs can not be root\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
-	/* Obtain the parent prio ceetm qdisc */
-	parent_qdisc = qdisc_lookup(dev, TC_H_MAJ(sch->parent));
-	if (strcmp(parent_qdisc->ops->id, ceetm_qdisc_ops.id)) {
+	root_qdisc = dev->qdisc;
+
+	if (strcmp(root_qdisc->ops->id, ceetm_qdisc_ops.id)) {
 		pr_err("CEETM: a ceetm qdisc can not be attached to other qdisc/class types\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
+	}
+
+	root_priv = qdisc_priv(root_qdisc);
+
+	/* Obtain the root ceetm class and the parent prio ceetm qdisc */
+	for (i = 0; i < root_priv->clhash.hashsize; i++) {
+		hlist_for_each_entry(tmp_cl, &root_priv->clhash.hash[i],
+				     common.hnode) {
+			if (tmp_cl->root.child &&
+			    (TC_H_MAJ(tmp_cl->root.child->handle) ==
+			    TC_H_MAJ(sch->parent))) {
+				parent_qdisc = tmp_cl->root.child;
+				root_cl = tmp_cl;
+				break;
+			}
+		}
+	}
+
+	if (!parent_qdisc ||
+	    strcmp(parent_qdisc->ops->id, ceetm_qdisc_ops.id)) {
+		pr_err("CEETM: a wbfs ceetm qdiscs can be added only under a prio ceetm class\n");
+		return -EINVAL;
 	}
 
 	/* Obtain the parent prio ceetm class */
 	parent_cl = ceetm_find(sch->parent, parent_qdisc);
-	parent_priv = qdisc_priv(parent_qdisc);
 
 	if (!parent_cl || parent_cl->type != CEETM_PRIO) {
 		pr_err("CEETM: a wbfs ceetm qdiscs can be added only under a prio ceetm class\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
 	if (!qopt->qcount || !qopt->qweight[0]) {
 		pr_err("CEETM: qcount and qweight are mandatory for a wbfs ceetm qdisc\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
 	priv->shaped = parent_cl->shaped;
 
 	if (!priv->shaped && (qopt->cr || qopt->er)) {
 		pr_err("CEETM: CR/ER can be enabled only for shaped wbfs ceetm qdiscs\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
 	if (priv->shaped && !(qopt->cr || qopt->er)) {
 		pr_err("CEETM: either CR or ER must be enabled for shaped wbfs ceetm qdiscs\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
-	/* Obtain the parent root ceetm class */
-	root_cl = parent_priv->prio.parent;
 	if ((root_cl->root.wbfs_grp_a && root_cl->root.wbfs_grp_b) ||
 	    root_cl->root.wbfs_grp_large) {
 		pr_err("CEETM: no more wbfs classes are available\n");
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
 	if ((root_cl->root.wbfs_grp_a || root_cl->root.wbfs_grp_b) &&
 	    qopt->qcount == CEETM_MAX_WBFS_QCOUNT) {
 		pr_err("CEETM: only %d wbfs classes are available\n",
 		       CEETM_MIN_WBFS_QCOUNT);
-		err = -EINVAL;
-		goto err_init_wbfs;
+		return -EINVAL;
 	}
 
 	priv->wbfs.parent = parent_cl;
@@ -883,8 +996,7 @@ static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	priv->wbfs.qcount = qopt->qcount;
 	priv->wbfs.cr = qopt->cr;
 	priv->wbfs.er = qopt->er;
-
-	channel = root_cl->root.ch;
+	priv->wbfs.ch = parent_cl->ch;
 
 	/* Configure the hardware wbfs channel groups */
 	if (priv->wbfs.qcount == CEETM_MAX_WBFS_QCOUNT) {
@@ -899,12 +1011,12 @@ static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		/* Configure the group B */
 		priv->wbfs.group_type = WBFS_GRP_B;
 
-		err = qman_ceetm_channel_get_group(channel, &small_group,
+		err = qman_ceetm_channel_get_group(priv->wbfs.ch, &small_group,
 						   &prio_a, &prio_b);
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to get group details\n",
 			       __func__);
-			goto err_init_wbfs;
+			return err;
 		}
 
 		small_group = true;
@@ -917,12 +1029,12 @@ static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		/* Configure the small group A */
 		priv->wbfs.group_type = WBFS_GRP_A;
 
-		err = qman_ceetm_channel_get_group(channel, &small_group,
+		err = qman_ceetm_channel_get_group(priv->wbfs.ch, &small_group,
 						   &prio_a, &prio_b);
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to get group details\n",
 			       __func__);
-			goto err_init_wbfs;
+			return err;
 		}
 
 		small_group = true;
@@ -932,40 +1044,36 @@ static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		prio_b = prio_b ? : prio_a;
 	}
 
-	err = qman_ceetm_channel_set_group(channel, small_group, prio_a,
+	err = qman_ceetm_channel_set_group(priv->wbfs.ch, small_group, prio_a,
 					   prio_b);
 	if (err)
-		goto err_init_wbfs;
+		return err;
 
 	if (priv->shaped) {
-		err = qman_ceetm_channel_set_group_cr_eligibility(channel,
+		err = qman_ceetm_channel_set_group_cr_eligibility(priv->wbfs.ch,
 								  group_b,
 								priv->wbfs.cr);
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to set group CR eligibility\n",
 			       __func__);
-			goto err_init_wbfs;
+			return err;
 		}
 
-		err = qman_ceetm_channel_set_group_er_eligibility(channel,
+		err = qman_ceetm_channel_set_group_er_eligibility(priv->wbfs.ch,
 								  group_b,
 								priv->wbfs.er);
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to set group ER eligibility\n",
 			       __func__);
-			goto err_init_wbfs;
+			return err;
 		}
 	}
 
 	/* Create qcount child classes */
 	for (i = 0; i < priv->wbfs.qcount; i++) {
 		child_cl = kzalloc(sizeof(*child_cl), GFP_KERNEL);
-		if (!child_cl) {
-			pr_err(KBUILD_BASENAME " : %s : kzalloc() failed\n",
-			       __func__);
-			err = -ENOMEM;
-			goto err_init_wbfs;
-		}
+		if (!child_cl)
+			return -ENOMEM;
 
 		child_cl->wbfs.cstats = alloc_percpu(struct ceetm_class_stats);
 		if (!child_cl->wbfs.cstats) {
@@ -976,20 +1084,20 @@ static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 		}
 
 		child_cl->common.classid = TC_H_MAKE(sch->handle, (i + 1));
-		child_cl->refcnt = 1;
 		child_cl->parent = sch;
 		child_cl->type = CEETM_WBFS;
 		child_cl->shaped = priv->shaped;
 		child_cl->wbfs.fq = NULL;
 		child_cl->wbfs.cq = NULL;
 		child_cl->wbfs.weight = qopt->qweight[i];
+		child_cl->ch = priv->wbfs.ch;
 
 		if (priv->wbfs.group_type == WBFS_GRP_B)
 			id = WBFS_GRP_B_OFFSET + i;
 		else
 			id = WBFS_GRP_A_OFFSET + i;
 
-		err = ceetm_config_wbfs_cls(child_cl, dev, channel, id,
+		err = ceetm_config_wbfs_cls(child_cl, dev, id,
 					    priv->wbfs.group_type);
 		if (err) {
 			pr_err(KBUILD_BASENAME " : %s : failed to configure the ceetm wbfs class %X\n",
@@ -1021,19 +1129,18 @@ static int ceetm_init_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 
 err_init_wbfs_cls:
 	ceetm_cls_destroy(sch, child_cl);
-err_init_wbfs:
-	ceetm_destroy(sch);
+	/* Note: ceetm_destroy() will be called by our caller */
 	return err;
 }
 
 /* Configure a generic ceetm qdisc */
 static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
 {
-	struct tc_ceetm_qopt *qopt;
-	struct nlattr *tb[TCA_CEETM_QOPS + 1];
-	int ret;
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct net_device *dev = qdisc_dev(sch);
+	struct nlattr *tb[TCA_CEETM_QOPS + 1];
+	struct tc_ceetm_qopt *qopt;
+	int ret;
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
@@ -1045,7 +1152,11 @@ static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
 		return -EINVAL;
 	}
 
-	ret = nla_parse_nested(tb, TCA_CEETM_QOPS, opt, ceetm_policy);
+	ret = tcf_block_get(&priv->block, &priv->filter_list);
+	if (ret)
+		return ret;
+
+	ret = nla_parse_nested(tb, TCA_CEETM_QOPS, opt, ceetm_policy, NULL);
 	if (ret < 0) {
 		pr_err(KBUILD_BASENAME " : %s : tc error\n", __func__);
 		return ret;
@@ -1075,7 +1186,10 @@ static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
 
 	switch (priv->type) {
 	case CEETM_ROOT:
+		netif_tx_stop_all_queues(dev);
+		dpaa_drain_fqs(dev);
 		ret = ceetm_init_root(sch, priv, qopt);
+		netif_tx_wake_all_queues(dev);
 		break;
 	case CEETM_PRIO:
 		ret = ceetm_init_prio(sch, priv, qopt);
@@ -1085,7 +1199,7 @@ static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
 		break;
 	default:
 		pr_err(KBUILD_BASENAME " : %s : invalid qdisc\n", __func__);
-		ceetm_destroy(sch);
+		/* Note: ceetm_destroy() will be called by our caller */
 		ret = -EINVAL;
 	}
 
@@ -1149,11 +1263,8 @@ change_err:
 static int ceetm_change_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 			     struct tc_ceetm_qopt *qopt)
 {
-	int err;
 	bool group_b;
-	struct qm_ceetm_channel *channel;
-	struct ceetm_class *prio_class, *root_class;
-	struct ceetm_qdisc *prio_qdisc;
+	int err;
 
 	if (qopt->qcount) {
 		pr_err("CEETM: the qcount can not be modified\n");
@@ -1179,14 +1290,10 @@ static int ceetm_change_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	if (!priv->shaped)
 		return 0;
 
-	prio_class = priv->wbfs.parent;
-	prio_qdisc = qdisc_priv(prio_class->parent);
-	root_class = prio_qdisc->prio.parent;
-	channel = root_class->root.ch;
 	group_b = priv->wbfs.group_type == WBFS_GRP_B;
 
 	if (qopt->cr != priv->wbfs.cr) {
-		err = qman_ceetm_channel_set_group_cr_eligibility(channel,
+		err = qman_ceetm_channel_set_group_cr_eligibility(priv->wbfs.ch,
 								  group_b,
 								  qopt->cr);
 		if (err)
@@ -1195,7 +1302,7 @@ static int ceetm_change_wbfs(struct Qdisc *sch, struct ceetm_qdisc *priv,
 	}
 
 	if (qopt->er != priv->wbfs.er) {
-		err = qman_ceetm_channel_set_group_er_eligibility(channel,
+		err = qman_ceetm_channel_set_group_er_eligibility(priv->wbfs.ch,
 								  group_b,
 								  qopt->er);
 		if (err)
@@ -1214,15 +1321,15 @@ change_err:
 /* Edit a ceetm qdisc */
 static int ceetm_change(struct Qdisc *sch, struct nlattr *opt)
 {
-	struct tc_ceetm_qopt *qopt;
-	struct nlattr *tb[TCA_CEETM_QOPS + 1];
-	int ret;
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct net_device *dev = qdisc_dev(sch);
+	struct nlattr *tb[TCA_CEETM_QOPS + 1];
+	struct tc_ceetm_qopt *qopt;
+	int ret;
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
-	ret = nla_parse_nested(tb, TCA_CEETM_QOPS, opt, ceetm_policy);
+	ret = nla_parse_nested(tb, TCA_CEETM_QOPS, opt, ceetm_policy, NULL);
 	if (ret < 0) {
 		pr_err(KBUILD_BASENAME " : %s : tc error\n", __func__);
 		return ret;
@@ -1265,11 +1372,14 @@ static int ceetm_change(struct Qdisc *sch, struct nlattr *opt)
 	return ret;
 }
 
-/* Attach the underlying pfifo qdiscs */
+/* Graft the underlying pfifo qdiscs to the netdev queues.
+ * It's safe to remove our references at this point, since the kernel will
+ * destroy the qdiscs on its own and no cleanup from our part is required.
+ */
 static void ceetm_attach(struct Qdisc *sch)
 {
-	struct net_device *dev = qdisc_dev(sch);
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
+	struct net_device *dev = qdisc_dev(sch);
 	struct Qdisc *qdisc, *old_qdisc;
 	unsigned int i;
 
@@ -1281,31 +1391,14 @@ static void ceetm_attach(struct Qdisc *sch)
 		if (old_qdisc)
 			qdisc_destroy(old_qdisc);
 	}
+
+	kfree(priv->root.qdiscs);
+	priv->root.qdiscs = NULL;
 }
 
-static unsigned long ceetm_cls_get(struct Qdisc *sch, u32 classid)
+static unsigned long ceetm_cls_search(struct Qdisc *sch, u32 handle)
 {
-	struct ceetm_class *cl;
-
-	pr_debug(KBUILD_BASENAME " : %s : classid %X from qdisc %X\n",
-		 __func__, classid, sch->handle);
-	cl = ceetm_find(classid, sch);
-
-	if (cl)
-		cl->refcnt++; /* Will decrement in put() */
-	return (unsigned long)cl;
-}
-
-static void ceetm_cls_put(struct Qdisc *sch, unsigned long arg)
-{
-	struct ceetm_class *cl = (struct ceetm_class *)arg;
-
-	pr_debug(KBUILD_BASENAME " : %s : classid %X from qdisc %X\n",
-		 __func__, cl->common.classid, sch->handle);
-	cl->refcnt--;
-
-	if (cl->refcnt == 0)
-		ceetm_cls_destroy(sch, cl);
+	return (unsigned long)ceetm_find(handle, sch);
 }
 
 static int ceetm_cls_change_root(struct ceetm_class *cl,
@@ -1323,7 +1416,7 @@ static int ceetm_cls_change_root(struct ceetm_class *cl,
 
 	if (cl->shaped && cl->root.rate != copt->rate) {
 		bps = copt->rate << 3; /* Bps -> bps */
-		err = qman_ceetm_channel_set_commit_rate_bps(cl->root.ch, bps,
+		err = qman_ceetm_channel_set_commit_rate_bps(cl->ch, bps,
 							     dev->mtu);
 		if (err)
 			goto change_cls_err;
@@ -1332,7 +1425,7 @@ static int ceetm_cls_change_root(struct ceetm_class *cl,
 
 	if (cl->shaped && cl->root.ceil != copt->ceil) {
 		bps = copt->ceil << 3; /* Bps -> bps */
-		err = qman_ceetm_channel_set_excess_rate_bps(cl->root.ch, bps,
+		err = qman_ceetm_channel_set_excess_rate_bps(cl->ch, bps,
 							     dev->mtu);
 		if (err)
 			goto change_cls_err;
@@ -1340,7 +1433,7 @@ static int ceetm_cls_change_root(struct ceetm_class *cl,
 	}
 
 	if (!cl->shaped && cl->root.tbl != copt->tbl) {
-		err = qman_ceetm_channel_set_weight(cl->root.ch, copt->tbl);
+		err = qman_ceetm_channel_set_weight(cl->ch, copt->tbl);
 		if (err)
 			goto change_cls_err;
 		cl->root.tbl = copt->tbl;
@@ -1365,8 +1458,8 @@ static int ceetm_cls_change_prio(struct ceetm_class *cl,
 	}
 
 	if (cl->prio.cr != (bool)copt->cr) {
-		err = qman_ceetm_channel_set_cq_cr_eligibility(
-						cl->prio.cq->parent,
+		err = qman_ceetm_channel_set_cq_cr_eligibility
+						(cl->prio.cq->parent,
 						cl->prio.cq->idx,
 						copt->cr);
 		if (err)
@@ -1375,8 +1468,8 @@ static int ceetm_cls_change_prio(struct ceetm_class *cl,
 	}
 
 	if (cl->prio.er != (bool)copt->er) {
-		err = qman_ceetm_channel_set_cq_er_eligibility(
-						cl->prio.cq->parent,
+		err = qman_ceetm_channel_set_cq_er_eligibility
+						(cl->prio.cq->parent,
 						cl->prio.cq->idx,
 						copt->er);
 		if (err)
@@ -1420,15 +1513,15 @@ static int ceetm_cls_change_wbfs(struct ceetm_class *cl,
 static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 			    struct nlattr **tca, unsigned long *arg)
 {
-	int err;
-	u64 bps;
-	struct ceetm_qdisc *priv;
 	struct ceetm_class *cl = (struct ceetm_class *)*arg;
+	struct net_device *dev = qdisc_dev(sch);
 	struct nlattr *opt = tca[TCA_OPTIONS];
 	struct nlattr *tb[__TCA_CEETM_MAX];
-	struct tc_ceetm_copt *copt;
 	struct qm_ceetm_channel *channel;
-	struct net_device *dev = qdisc_dev(sch);
+	struct tc_ceetm_copt *copt;
+	struct ceetm_qdisc *priv;
+	int err;
+	u64 bps;
 
 	pr_debug(KBUILD_BASENAME " : %s : classid %X under qdisc %X\n",
 		 __func__, classid, sch->handle);
@@ -1451,11 +1544,11 @@ static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 	}
 
 	if (!cl && priv->type != CEETM_ROOT) {
-		pr_err("CEETM: only root ceetm classes can be attached to the root ceetm qdisc\n");
+		pr_err("CEETM: root ceetm classes can be attached to the root ceetm qdisc only\n");
 		return -EINVAL;
 	}
 
-	err = nla_parse_nested(tb, TCA_CEETM_COPT, opt, ceetm_policy);
+	err = nla_parse_nested(tb, TCA_CEETM_COPT, opt, ceetm_policy, NULL);
 	if (err < 0) {
 		pr_err(KBUILD_BASENAME " : %s : tc error\n", __func__);
 		return -EINVAL;
@@ -1513,6 +1606,12 @@ static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 	if (!cl)
 		return -ENOMEM;
 
+	err = tcf_block_get(&cl->block, &cl->filter_list);
+	if (err) {
+		kfree(cl);
+		return err;
+	}
+
 	cl->type = copt->type;
 	cl->shaped = copt->shaped;
 	cl->root.rate = copt->rate;
@@ -1520,7 +1619,6 @@ static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 	cl->root.tbl = copt->tbl;
 
 	cl->common.classid = classid;
-	cl->refcnt = 1;
 	cl->parent = sch;
 	cl->root.child = NULL;
 	cl->root.wbfs_grp_a = false;
@@ -1535,7 +1633,7 @@ static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 		goto claim_err;
 	}
 
-	cl->root.ch = channel;
+	cl->ch = channel;
 
 	if (cl->shaped) {
 		/* Configure the channel shaper */
@@ -1577,6 +1675,7 @@ channel_err:
 		pr_err(KBUILD_BASENAME " : %s : failed to release the channel %d\n",
 		       __func__, channel->idx);
 claim_err:
+	tcf_block_put(cl->block);
 	kfree(cl);
 	return err;
 }
@@ -1611,8 +1710,8 @@ static int ceetm_cls_dump(struct Qdisc *sch, unsigned long arg,
 			  struct sk_buff *skb, struct tcmsg *tcm)
 {
 	struct ceetm_class *cl = (struct ceetm_class *)arg;
-	struct nlattr *nest;
 	struct tc_ceetm_copt copt;
+	struct nlattr *nest;
 
 	pr_debug(KBUILD_BASENAME " : %s : class %X under qdisc %X\n",
 		 __func__, cl->common.classid, sch->handle);
@@ -1667,23 +1766,17 @@ nla_put_failure:
 
 static int ceetm_cls_delete(struct Qdisc *sch, unsigned long arg)
 {
-	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct ceetm_class *cl = (struct ceetm_class *)arg;
+	struct ceetm_qdisc *priv = qdisc_priv(sch);
 
 	pr_debug(KBUILD_BASENAME " : %s : class %X under qdisc %X\n",
 		 __func__, cl->common.classid, sch->handle);
 
 	sch_tree_lock(sch);
 	qdisc_class_hash_remove(&priv->clhash, &cl->common);
-	cl->refcnt--;
-
-	/* The refcnt should be at least 1 since we have incremented it in
-	 * get(). Will decrement again in put() where we will call destroy()
-	 * to actually free the memory if it reaches 0.
-	 */
-	WARN_ON(cl->refcnt == 0);
 
 	sch_tree_unlock(sch);
+	ceetm_cls_destroy(sch, cl);
 	return 0;
 }
 
@@ -1720,12 +1813,12 @@ static int ceetm_cls_graft(struct Qdisc *sch, unsigned long arg,
 static int ceetm_cls_dump_stats(struct Qdisc *sch, unsigned long arg,
 				struct gnet_dump *d)
 {
-	unsigned int i;
 	struct ceetm_class *cl = (struct ceetm_class *)arg;
 	struct gnet_stats_basic_packed tmp_bstats;
 	struct ceetm_class_stats *cstats = NULL;
 	struct qm_ceetm_cq *cq = NULL;
 	struct tc_ceetm_xstats xstats;
+	unsigned int i;
 
 	memset(&xstats, 0, sizeof(xstats));
 	memset(&tmp_bstats, 0, sizeof(tmp_bstats));
@@ -1759,7 +1852,8 @@ static int ceetm_cls_dump_stats(struct Qdisc *sch, unsigned long arg,
 		}
 	}
 
-	if (gnet_stats_copy_basic(d, NULL, &tmp_bstats) < 0)
+	if (gnet_stats_copy_basic(qdisc_root_sleeping_running(sch),
+				  d, NULL, &tmp_bstats) < 0)
 		return -1;
 
 	if (cq && qman_ceetm_cq_get_dequeue_statistics(cq, 0,
@@ -1770,15 +1864,17 @@ static int ceetm_cls_dump_stats(struct Qdisc *sch, unsigned long arg,
 	return gnet_stats_copy_app(d, &xstats, sizeof(xstats));
 }
 
-static struct tcf_proto **ceetm_tcf_chain(struct Qdisc *sch, unsigned long arg)
+static struct tcf_block *ceetm_tcf_block(struct Qdisc *sch, unsigned long arg)
 {
-	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct ceetm_class *cl = (struct ceetm_class *)arg;
-	struct tcf_proto **fl = cl ? &cl->filter_list : &priv->filter_list;
+	struct ceetm_qdisc *priv = qdisc_priv(sch);
+	struct tcf_block *block;
+
+	block = cl ? cl->block : priv->block;
 
 	pr_debug(KBUILD_BASENAME " : %s : class %X under qdisc %X\n", __func__,
 		 cl ? cl->common.classid : 0, sch->handle);
-	return fl;
+	return block;
 }
 
 static unsigned long ceetm_tcf_bind(struct Qdisc *sch, unsigned long parent,
@@ -1802,12 +1898,11 @@ static void ceetm_tcf_unbind(struct Qdisc *sch, unsigned long arg)
 const struct Qdisc_class_ops ceetm_cls_ops = {
 	.graft		=	ceetm_cls_graft,
 	.leaf		=	ceetm_cls_leaf,
-	.get		=	ceetm_cls_get,
-	.put		=	ceetm_cls_put,
+	.find		=	ceetm_cls_search,
 	.change		=	ceetm_cls_change,
 	.delete		=	ceetm_cls_delete,
 	.walk		=	ceetm_cls_walk,
-	.tcf_chain	=	ceetm_tcf_chain,
+	.tcf_block	=	ceetm_tcf_block,
 	.bind_tcf	=	ceetm_tcf_bind,
 	.unbind_tcf	=	ceetm_tcf_unbind,
 	.dump		=	ceetm_cls_dump,
@@ -1839,11 +1934,12 @@ static struct ceetm_class *ceetm_classify(struct sk_buff *skb,
 
 	*qerr = NET_XMIT_SUCCESS | __NET_XMIT_BYPASS;
 	tcf = priv->filter_list;
-	while (tcf && (result = tc_classify(skb, tcf, &res)) >= 0) {
+	while (tcf && (result = tcf_classify(skb, tcf, &res, false)) >= 0) {
 #ifdef CONFIG_NET_CLS_ACT
 		switch (result) {
 		case TC_ACT_QUEUED:
 		case TC_ACT_STOLEN:
+		case TC_ACT_TRAP:
 			*qerr = NET_XMIT_SUCCESS | __NET_XMIT_STOLEN;
 		case TC_ACT_SHOT:
 			/* No valid class found due to action */
@@ -1907,17 +2003,22 @@ static struct ceetm_class *ceetm_classify(struct sk_buff *skb,
 
 int __hot ceetm_tx(struct sk_buff *skb, struct net_device *net_dev)
 {
-	int ret;
-	bool act_drop = false;
+	int queue_mapping = dpa_get_queue_mapping(skb);
 	struct Qdisc *sch = net_dev->qdisc;
-	struct ceetm_class *cl;
-	struct dpa_priv_s *priv_dpa;
-	struct qman_fq *egress_fq, *conf_fq;
-	struct ceetm_qdisc *priv = qdisc_priv(sch);
-	struct ceetm_qdisc_stats *qstats = this_cpu_ptr(priv->root.qstats);
 	struct ceetm_class_stats *cstats;
-	const int queue_mapping = dpa_get_queue_mapping(skb);
-	spinlock_t *root_lock = qdisc_lock(sch);
+	struct ceetm_qdisc_stats *qstats;
+	struct dpa_priv_s *priv_dpa;
+	struct ceetm_fq *ceetm_fq;
+	struct ceetm_qdisc *priv;
+	struct qman_fq *conf_fq;
+	struct ceetm_class *cl;
+	spinlock_t *root_lock;
+	bool act_drop = false;
+	int ret;
+
+	root_lock = qdisc_lock(sch);
+	priv = qdisc_priv(sch);
+	qstats = this_cpu_ptr(priv->root.qstats);
 
 	spin_lock(root_lock);
 	cl = ceetm_classify(skb, sch, &ret, &act_drop);
@@ -1936,6 +2037,9 @@ int __hot ceetm_tx(struct sk_buff *skb, struct net_device *net_dev)
 		goto drop;
 	}
 
+	if (unlikely(queue_mapping >= DPAA_ETH_TX_QUEUES))
+		queue_mapping = queue_mapping % DPAA_ETH_TX_QUEUES;
+
 	priv_dpa = netdev_priv(net_dev);
 	conf_fq = priv_dpa->conf_fqs[queue_mapping];
 
@@ -1944,11 +2048,11 @@ int __hot ceetm_tx(struct sk_buff *skb, struct net_device *net_dev)
 	 */
 	switch (cl->type) {
 	case CEETM_PRIO:
-		egress_fq = &cl->prio.fq->fq;
+		ceetm_fq = cl->prio.fq;
 		cstats = this_cpu_ptr(cl->prio.cstats);
 		break;
 	case CEETM_WBFS:
-		egress_fq = &cl->wbfs.fq->fq;
+		ceetm_fq = cl->wbfs.fq;
 		cstats = this_cpu_ptr(cl->wbfs.cstats);
 		break;
 	default:
@@ -1956,13 +2060,22 @@ int __hot ceetm_tx(struct sk_buff *skb, struct net_device *net_dev)
 		goto drop;
 	}
 
+	/* If the FQ is congested, avoid enqueuing the frame and dropping it
+	 * when it returns on the ERN path. Drop it here directly instead.
+	 */
+	if (unlikely(ceetm_fq->congested)) {
+		qstats->drops++;
+		goto drop;
+	}
+
 	bstats_update(&cstats->bstats, skb);
-	return dpa_tx_extended(skb, net_dev, egress_fq, conf_fq);
+	return dpa_tx_extended(skb, net_dev, &ceetm_fq->fq, conf_fq);
 
 drop:
 	dev_kfree_skb_any(skb);
 	return NET_XMIT_SUCCESS;
 }
+EXPORT_SYMBOL(ceetm_tx);
 
 static int __init ceetm_register(void)
 {

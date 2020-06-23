@@ -35,12 +35,13 @@ static int jffs2_mkdir (struct inode *,struct dentry *,umode_t);
 static int jffs2_rmdir (struct inode *,struct dentry *);
 static int jffs2_mknod (struct inode *,struct dentry *,umode_t,dev_t);
 static int jffs2_rename (struct inode *, struct dentry *,
-			 struct inode *, struct dentry *);
+			 struct inode *, struct dentry *,
+			 unsigned int);
 
 const struct file_operations jffs2_dir_operations =
 {
 	.read =		generic_read_dir,
-	.iterate =	jffs2_readdir,
+	.iterate_shared=jffs2_readdir,
 	.unlocked_ioctl=jffs2_ioctl,
 	.fsync =	jffs2_fsync,
 	.llseek =	generic_file_llseek,
@@ -61,10 +62,7 @@ const struct inode_operations jffs2_dir_inode_operations =
 	.get_acl =	jffs2_get_acl,
 	.set_acl =	jffs2_set_acl,
 	.setattr =	jffs2_setattr,
-	.setxattr =	jffs2_setxattr,
-	.getxattr =	jffs2_getxattr,
 	.listxattr =	jffs2_listxattr,
-	.removexattr =	jffs2_removexattr
 };
 
 /***********************************************************************/
@@ -81,6 +79,7 @@ static struct dentry *jffs2_lookup(struct inode *dir_i, struct dentry *target,
 	struct jffs2_full_dirent *fd = NULL, *fd_list;
 	uint32_t ino = 0;
 	struct inode *inode = NULL;
+	unsigned int nhash;
 
 	jffs2_dbg(1, "jffs2_lookup()\n");
 
@@ -89,11 +88,14 @@ static struct dentry *jffs2_lookup(struct inode *dir_i, struct dentry *target,
 
 	dir_f = JFFS2_INODE_INFO(dir_i);
 
+	/* The 'nhash' on the fd_list is not the same as the dentry hash */
+	nhash = full_name_hash(NULL, target->d_name.name, target->d_name.len);
+
 	mutex_lock(&dir_f->sem);
 
 	/* NB: The 2.2 backport will need to explicitly check for '.' and '..' here */
-	for (fd_list = dir_f->dents; fd_list && fd_list->nhash <= target->d_name.hash; fd_list = fd_list->next) {
-		if (fd_list->nhash == target->d_name.hash &&
+	for (fd_list = dir_f->dents; fd_list && fd_list->nhash <= nhash; fd_list = fd_list->next) {
+		if (fd_list->nhash == nhash &&
 		    (!fd || fd_list->version > fd->version) &&
 		    strlen(fd_list->name) == target->d_name.len &&
 		    !strncmp(fd_list->name, target->d_name.name, target->d_name.len)) {
@@ -207,8 +209,7 @@ static int jffs2_create(struct inode *dir_i, struct dentry *dentry,
 		  __func__, inode->i_ino, inode->i_mode, inode->i_nlink,
 		  f->inocache->pino_nlink, inode->i_mapping->nrpages);
 
-	unlock_new_inode(inode);
-	d_instantiate(dentry, inode);
+	d_instantiate_new(dentry, inode);
 	return 0;
 
  fail:
@@ -241,7 +242,7 @@ static int jffs2_unlink(struct inode *dir_i, struct dentry *dentry)
 
 static int jffs2_link (struct dentry *old_dentry, struct inode *dir_i, struct dentry *dentry)
 {
-	struct jffs2_sb_info *c = JFFS2_SB_INFO(d_inode(old_dentry)->i_sb);
+	struct jffs2_sb_info *c = JFFS2_SB_INFO(old_dentry->d_sb);
 	struct jffs2_inode_info *f = JFFS2_INODE_INFO(d_inode(old_dentry));
 	struct jffs2_inode_info *dir_f = JFFS2_INODE_INFO(dir_i);
 	int ret;
@@ -354,6 +355,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 		ret = -ENOMEM;
 		goto fail;
 	}
+	inode->i_link = f->target;
 
 	jffs2_dbg(1, "%s(): symlink's target '%s' cached\n",
 		  __func__, (char *)f->target);
@@ -427,8 +429,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 	mutex_unlock(&dir_f->sem);
 	jffs2_complete_reservation(c);
 
-	unlock_new_inode(inode);
-	d_instantiate(dentry, inode);
+	d_instantiate_new(dentry, inode);
 	return 0;
 
  fail:
@@ -572,8 +573,7 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, umode_t mode
 	mutex_unlock(&dir_f->sem);
 	jffs2_complete_reservation(c);
 
-	unlock_new_inode(inode);
-	d_instantiate(dentry, inode);
+	d_instantiate_new(dentry, inode);
 	return 0;
 
  fail:
@@ -619,9 +619,6 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, umode_t mode
 	int devlen = 0;
 	uint32_t alloclen;
 	int ret;
-
-	if (!new_valid_dev(rdev))
-		return -EINVAL;
 
 	ri = jffs2_alloc_raw_inode();
 	if (!ri)
@@ -747,8 +744,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, umode_t mode
 	mutex_unlock(&dir_f->sem);
 	jffs2_complete_reservation(c);
 
-	unlock_new_inode(inode);
-	d_instantiate(dentry, inode);
+	d_instantiate_new(dentry, inode);
 	return 0;
 
  fail:
@@ -757,13 +753,17 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, umode_t mode
 }
 
 static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
-			 struct inode *new_dir_i, struct dentry *new_dentry)
+			 struct inode *new_dir_i, struct dentry *new_dentry,
+			 unsigned int flags)
 {
 	int ret;
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(old_dir_i->i_sb);
 	struct jffs2_inode_info *victim_f = NULL;
 	uint8_t type;
 	uint32_t now;
+
+	if (flags & ~RENAME_NOREPLACE)
+		return -EINVAL;
 
 	/* The VFS will check for us and prevent trying to rename a
 	 * file over a directory and vice versa, but if it's a directory,

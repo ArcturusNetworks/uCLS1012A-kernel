@@ -49,6 +49,7 @@
 #include <linux/init.h>
 #include <linux/kgdb.h>
 #include <linux/kdb.h>
+#include <linux/nmi.h>
 #include <linux/pid.h>
 #include <linux/smp.h>
 #include <linux/mm.h>
@@ -232,9 +233,9 @@ static void kgdb_flush_swbreak_addr(unsigned long addr)
 		int i;
 
 		for (i = 0; i < VMACACHE_SIZE; i++) {
-			if (!current->vmacache[i])
+			if (!current->vmacache.vmas[i])
 				continue;
-			flush_cache_range(current->vmacache[i],
+			flush_cache_range(current->vmacache.vmas[i],
 					  addr, addr + BREAK_INSTR_SIZE);
 		}
 	}
@@ -534,6 +535,8 @@ return_normal:
 				arch_kgdb_ops.correct_hw_break();
 			if (trace_on)
 				tracing_on();
+			kgdb_info[cpu].debuggerinfo = NULL;
+			kgdb_info[cpu].task = NULL;
 			kgdb_info[cpu].exception_state &=
 				~(DCPU_WANT_MASTER | DCPU_IS_SLAVE);
 			kgdb_info[cpu].enter_kgdb--;
@@ -598,11 +601,11 @@ return_normal:
 	/*
 	 * Wait for the other CPUs to be notified and be waiting for us:
 	 */
-	time_left = loops_per_jiffy * HZ;
+	time_left = MSEC_PER_SEC;
 	while (kgdb_do_roundup && --time_left &&
 	       (atomic_read(&masters_in_kgdb) + atomic_read(&slaves_in_kgdb)) !=
 		   online_cpus)
-		cpu_relax();
+		udelay(1000);
 	if (!time_left)
 		pr_crit("Timed out waiting for secondary CPUs.\n");
 
@@ -666,6 +669,8 @@ kgdb_restore:
 	if (trace_on)
 		tracing_on();
 
+	kgdb_info[cpu].debuggerinfo = NULL;
+	kgdb_info[cpu].task = NULL;
 	kgdb_info[cpu].exception_state &=
 		~(DCPU_WANT_MASTER | DCPU_IS_SLAVE);
 	kgdb_info[cpu].enter_kgdb--;

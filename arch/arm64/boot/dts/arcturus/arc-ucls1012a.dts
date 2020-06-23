@@ -2,7 +2,7 @@
 /*
  * Device Tree Include file for Arcturus uCLS1012A-SOM.
  *
- * Copyright 2017,2018, Arcturus Networks Inc.
+ * Copyright 2017-2020, Arcturus Networks Inc.
  *
  */
 /dts-v1/;
@@ -107,50 +107,47 @@
 		m25p,fast-read;
 		spi-max-frequency = <20000000>;
 		reg = <0>;
-		spi-rx-bus-width = <2>;
-		spi-tx-bus-width = <2>;
 	};
 };
 
 &pfe {
 	status = "okay";
-	ethernet@0 {
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pfe_mac0: ethernet@0 {
 		compatible = "fsl,pfe-gemac-port";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0x0>;	/* GEM_ID */
 		fsl,gemac-bus-id = <0x0>;	/* BUS_ID */
-		fsl,gemac-phy-id = <0x4>;	/* PHY_ID */
 		fsl,mdio-mux-val = <0x0>;
-		local-mac-address = [ 00 1A 2B 3C 4D 5E ];
 		phy-mode = "sgmii";
-		fsl,pfe-gemac-if-name = "eth0";
-		fsl,pfe-phy-if-flags = <0x0>;
-		fsl,pfe-gemac-mode = <0x1B00>; /* GEMAC_SW_CONF | GEMAC_SW_FULL_DUPLEX | GEMAC_SW_SPEED_1G */
-
-		mdio@0 {
-			reg = <0x1>; /* enabled/disabled */
-			fsl,mdio-phy-mask = <0xFFFFFFCF>;
-		};
+		phy-handle = <&sgmii_phy1>;
 	};
 
-	ethernet@1 {
+	pfe_mac1: ethernet@1 {
 		compatible = "fsl,pfe-gemac-port";
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0x1>;	/* GEM_ID */
-		fsl,gemac-bus-id = <0x1>;	/* BUS_ID */
-		fsl,gemac-phy-id = <0x5>;	/* PHY_ID */
 		fsl,mdio-mux-val = <0x0>;
-		local-mac-address = [ 00 AA BB CC DD EE ];
 		phy-mode = "sgmii";
-		fsl,pfe-gemac-if-name = "eth1";
-		fsl,pfe-phy-if-flags = <0x0>;
-		fsl,pfe-gemac-mode = <0x1B00>; /* GEMAC_SW_CONF | GEMAC_SW_FULL_DUPLEX | GEMAC_SW_SPEED_1G */
+		phy-handle = <&sgmii_phy2>;
+	};
 
-		mdio@0 {
-			reg = <0x0>; /* enabled/disabled */
-			fsl,mdio-phy-mask = <0xFFFFFFCF>;
+	mdio@0 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sgmii_phy1: ethernet-phy@4 {
+			reg = <0x4>;
+			max-speed = <100>;
+		};
+
+		sgmii_phy2: ethernet-phy@5 {
+			reg = <0x5>;
+			max-speed = <100>;
 		};
 	};
 };
@@ -166,31 +163,103 @@
 &dspi {
 	bus-num = <0>;
 	status = "okay";
-/***
-	flash@0 {
+/*** Disabled until RCW will be changed
+	mmc-spi@1 {
 		#address-cells = <1>;
 		#size-cells = <1>;
-		compatible = "w25q32dw", "jedec,spi-nor";
-		reg = <0>;
-		spi-max-frequency = <10000000>;
+		compatible = "mmc-spi-slot";
+		reg = <1>;
+		spi-max-frequency = <5000000>;
+		voltage-ranges = <3200 3400>;
+		spi-rx-bus-width = <1>;
+		spi-tx-bus-width = <1>;
+		disable-wp;
+		disable-cd;
 	};
 ***/
-	spidev@0 {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		compatible = "spidev";
-		reg = <0>;
-		spi-max-frequency = <10000000>;
-		fsl,spi-cs-sck-delay = <100>;
-		fsl,spi-sck-cs-delay = <100>;
-	};
 };
 
 &esdhc0 {
+	non-removable;
 	status = "okay";
 };
 
-&ftm0 {
+&usb0 {
 	status = "okay";
 };
 
+&usb1 {
+	status = "disabled";
+};
+
+&gpio0 {
+	ngpios = <32>;
+	gpio-line-names =	"UART1_SOUT",
+				"UART1_SIN",
+				"IIC1_SCL",
+				"IIC1_SDA",
+				"QSPI_A_SCK",
+				"QSPI_A_CS0",
+				"UART2_SIN",
+				"UART2_RTS_B",
+				"UART2_SOUT",
+				"UART2_CTS_B",
+				"GPIO1_10",
+				"QSPI_A_DATA0",
+				"QSPI_A_DATA1",
+				"QSPI_A_DATA2",
+				"QSPI_A_DATA3",
+				"SHDC1_CMD",
+				"SHDC1_DAT0",
+				"SHDC1_DAT1",
+				"SHDC1_DAT2",
+				"SHDC1_DAT3",
+				"SHDC1_CLK",
+				"GPIO1_21", 	/* SDHC1_CD_B better not to use */
+				"GPIO1_22", 	/* SDHC1_WP better not to use */
+				"SDHC1_VSEL",
+				"SPI_MOSI",
+				"SPI_CS0_B",
+				"SPI_CS1_B",
+				"SPI_CS2_B",
+				"SPI_MISO",
+				"SPI_CLK",
+				"GPIO_EXP_RST",
+				"MODULE_RST";
+};
+
+&gpio1 {
+	ngpios = <32>;
+	gpio-line-names =	"USB1_DRVVBUS",
+				"USB1_PWR_FAULT",
+				"PHY_A_IRQ",
+				"CX_RST",
+				"SAI2_TX_DATA",
+				"SAI2_RX_DATA",
+				"SAI2_TX_SYNC",
+				"SAI2_TX_BCLK",
+				"reserved",
+				"SAI2_RX_SYNC",
+				"SAI2_RX_BCLK",
+				"KWZ_48",
+				"GPIO_EXP_IRQ0",
+				"PHY_B_IRQ",
+				"GPIO_EXP_IRQ1",
+				"EMI1_MDC",
+				"EMI1_MDIO",
+				"TMP_DETECT_N",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved";
+};

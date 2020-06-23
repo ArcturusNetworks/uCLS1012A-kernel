@@ -146,6 +146,8 @@ struct fsl_edma_slave_config {
 	u32				dev_addr;
 	u32				burst;
 	u32				attr;
+	dma_addr_t			dma_dev_addr;
+	enum dma_data_direction		dma_dir;
 };
 
 struct fsl_edma_chan {
@@ -256,9 +258,14 @@ static void fsl_edma_chan_mux(struct fsl_edma_chan *fsl_chan,
 	u32 ch = fsl_chan->vchan.chan.chan_id;
 	void __iomem *muxaddr;
 	unsigned chans_per_mux, ch_off;
+	int endian_diff[4] = {3, 1, -1, -3};
 
 	chans_per_mux = fsl_chan->edma->n_chans / DMAMUX_NR;
 	ch_off = fsl_chan->vchan.chan.chan_id % chans_per_mux;
+
+	if (!fsl_chan->edma->big_endian)
+		ch_off += endian_diff[ch_off % 4];
+
 	muxaddr = fsl_chan->edma->muxbase[ch / chans_per_mux];
 	slot = EDMAMUX_CHCFG_SOURCE(slot);
 
@@ -342,6 +349,53 @@ static int fsl_edma_resume(struct dma_chan *chan)
 	return 0;
 }
 
+static void fsl_edma_unprep_slave_dma(struct fsl_edma_chan *fsl_chan)
+{
+	if (fsl_chan->fsc.dma_dir != DMA_NONE)
+		dma_unmap_resource(fsl_chan->vchan.chan.device->dev,
+				   fsl_chan->fsc.dma_dev_addr,
+				   fsl_chan->fsc.burst, fsl_chan->fsc.dma_dir, 0);
+	fsl_chan->fsc.dma_dir = DMA_NONE;
+}
+
+static bool fsl_edma_prep_slave_dma(struct fsl_edma_chan *fsl_chan,
+				    enum dma_transfer_direction dir)
+{
+	struct device *dev = fsl_chan->vchan.chan.device->dev;
+	enum dma_data_direction dma_dir;
+
+	switch (dir) {
+	case DMA_MEM_TO_DEV:
+		dma_dir = DMA_FROM_DEVICE;
+		break;
+	case DMA_DEV_TO_MEM:
+		dma_dir = DMA_TO_DEVICE;
+		break;
+	case DMA_DEV_TO_DEV:
+		dma_dir = DMA_BIDIRECTIONAL;
+		break;
+	default:
+		dma_dir = DMA_NONE;
+		break;
+	}
+
+	/* Already mapped for this config? */
+	if (fsl_chan->fsc.dma_dir == dma_dir)
+		return true;
+
+	fsl_edma_unprep_slave_dma(fsl_chan);
+	fsl_chan->fsc.dma_dev_addr = dma_map_resource(dev,
+						      fsl_chan->fsc.dev_addr,
+						      fsl_chan->fsc.burst,
+						      dma_dir, 0);
+	if (dma_mapping_error(dev, fsl_chan->fsc.dma_dev_addr))
+		return false;
+
+	fsl_chan->fsc.dma_dir = dma_dir;
+
+	return true;
+}
+
 static int fsl_edma_slave_config(struct dma_chan *chan,
 				 struct dma_slave_config *cfg)
 {
@@ -361,6 +415,7 @@ static int fsl_edma_slave_config(struct dma_chan *chan,
 	} else {
 			return -EINVAL;
 	}
+	fsl_edma_unprep_slave_dma(fsl_chan);
 	return 0;
 }
 
@@ -553,6 +608,9 @@ static struct dma_async_tx_descriptor *fsl_edma_prep_dma_cyclic(
 	if (!is_slave_direction(fsl_chan->fsc.dir))
 		return NULL;
 
+	if (!fsl_edma_prep_slave_dma(fsl_chan, fsl_chan->fsc.dir))
+		return NULL;
+
 	sg_len = buf_len / period_len;
 	fsl_desc = fsl_edma_alloc_desc(fsl_chan, sg_len);
 	if (!fsl_desc)
@@ -572,11 +630,11 @@ static struct dma_async_tx_descriptor *fsl_edma_prep_dma_cyclic(
 
 		if (fsl_chan->fsc.dir == DMA_MEM_TO_DEV) {
 			src_addr = dma_buf_next;
-			dst_addr = fsl_chan->fsc.dev_addr;
+			dst_addr = fsl_chan->fsc.dma_dev_addr;
 			soff = fsl_chan->fsc.addr_width;
 			doff = 0;
 		} else {
-			src_addr = fsl_chan->fsc.dev_addr;
+			src_addr = fsl_chan->fsc.dma_dev_addr;
 			dst_addr = dma_buf_next;
 			soff = 0;
 			doff = fsl_chan->fsc.addr_width;
@@ -606,6 +664,9 @@ static struct dma_async_tx_descriptor *fsl_edma_prep_slave_sg(
 	if (!is_slave_direction(fsl_chan->fsc.dir))
 		return NULL;
 
+	if (!fsl_edma_prep_slave_dma(fsl_chan, fsl_chan->fsc.dir))
+		return NULL;
+
 	fsl_desc = fsl_edma_alloc_desc(fsl_chan, sg_len);
 	if (!fsl_desc)
 		return NULL;
@@ -618,11 +679,11 @@ static struct dma_async_tx_descriptor *fsl_edma_prep_slave_sg(
 
 		if (fsl_chan->fsc.dir == DMA_MEM_TO_DEV) {
 			src_addr = sg_dma_address(sg);
-			dst_addr = fsl_chan->fsc.dev_addr;
+			dst_addr = fsl_chan->fsc.dma_dev_addr;
 			soff = fsl_chan->fsc.addr_width;
 			doff = 0;
 		} else {
-			src_addr = fsl_chan->fsc.dev_addr;
+			src_addr = fsl_chan->fsc.dma_dev_addr;
 			dst_addr = sg_dma_address(sg);
 			soff = 0;
 			doff = fsl_chan->fsc.addr_width;
@@ -802,6 +863,7 @@ static void fsl_edma_free_chan_resources(struct dma_chan *chan)
 	fsl_edma_chan_mux(fsl_chan, 0, false);
 	fsl_chan->edesc = NULL;
 	vchan_get_all_descriptors(&fsl_chan->vchan, &head);
+	fsl_edma_unprep_slave_dma(fsl_chan);
 	spin_unlock_irqrestore(&fsl_chan->vchan.lock, flags);
 
 	vchan_dma_desc_free_list(&fsl_chan->vchan, &head);
@@ -852,6 +914,25 @@ fsl_edma_irq_init(struct platform_device *pdev, struct fsl_edma_engine *fsl_edma
 	return 0;
 }
 
+static void fsl_edma_irq_exit(
+		struct platform_device *pdev, struct fsl_edma_engine *fsl_edma)
+{
+	if (fsl_edma->txirq == fsl_edma->errirq) {
+		devm_free_irq(&pdev->dev, fsl_edma->txirq, fsl_edma);
+	} else {
+		devm_free_irq(&pdev->dev, fsl_edma->txirq, fsl_edma);
+		devm_free_irq(&pdev->dev, fsl_edma->errirq, fsl_edma);
+	}
+}
+
+static void fsl_disable_clocks(struct fsl_edma_engine *fsl_edma, int nr_clocks)
+{
+	int i;
+
+	for (i = 0; i < nr_clocks; i++)
+		clk_disable_unprepare(fsl_edma->muxclk[i]);
+}
+
 static int fsl_edma_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -885,27 +966,27 @@ static int fsl_edma_probe(struct platform_device *pdev)
 
 		res = platform_get_resource(pdev, IORESOURCE_MEM, 1 + i);
 		fsl_edma->muxbase[i] = devm_ioremap_resource(&pdev->dev, res);
-		if (IS_ERR(fsl_edma->muxbase[i]))
+		if (IS_ERR(fsl_edma->muxbase[i])) {
+			/* on error: disable all previously enabled clks */
+			fsl_disable_clocks(fsl_edma, i);
 			return PTR_ERR(fsl_edma->muxbase[i]);
+		}
 
 		sprintf(clkname, "dmamux%d", i);
 		fsl_edma->muxclk[i] = devm_clk_get(&pdev->dev, clkname);
 		if (IS_ERR(fsl_edma->muxclk[i])) {
 			dev_err(&pdev->dev, "Missing DMAMUX block clock.\n");
+			/* on error: disable all previously enabled clks */
+			fsl_disable_clocks(fsl_edma, i);
 			return PTR_ERR(fsl_edma->muxclk[i]);
 		}
 
 		ret = clk_prepare_enable(fsl_edma->muxclk[i]);
-		if (ret) {
-			dev_err(&pdev->dev, "DMAMUX clk block failed.\n");
-			return ret;
-		}
+		if (ret)
+			/* on error: disable all previously enabled clks */
+			fsl_disable_clocks(fsl_edma, i);
 
 	}
-
-	ret = fsl_edma_irq_init(pdev, fsl_edma);
-	if (ret)
-		return ret;
 
 	fsl_edma->big_endian = of_property_read_bool(np, "big-endian");
 
@@ -918,11 +999,17 @@ static int fsl_edma_probe(struct platform_device *pdev)
 		fsl_chan->slave_id = 0;
 		fsl_chan->idle = true;
 		fsl_chan->vchan.desc_free = fsl_edma_free_desc;
+		fsl_chan->fsc.dma_dir = DMA_NONE;
 		vchan_init(&fsl_chan->vchan, &fsl_edma->dma_dev);
 
 		edma_writew(fsl_edma, 0x0, fsl_edma->membase + EDMA_TCD_CSR(i));
 		fsl_edma_chan_mux(fsl_chan, 0, false);
 	}
+
+	edma_writel(fsl_edma, ~0, fsl_edma->membase + EDMA_INTR);
+	ret = fsl_edma_irq_init(pdev, fsl_edma);
+	if (ret)
+		return ret;
 
 	dma_cap_set(DMA_PRIVATE, fsl_edma->dma_dev.cap_mask);
 	dma_cap_set(DMA_SLAVE, fsl_edma->dma_dev.cap_mask);
@@ -950,14 +1037,18 @@ static int fsl_edma_probe(struct platform_device *pdev)
 
 	ret = dma_async_device_register(&fsl_edma->dma_dev);
 	if (ret) {
-		dev_err(&pdev->dev, "Can't register Freescale eDMA engine.\n");
+		dev_err(&pdev->dev,
+			"Can't register Freescale eDMA engine. (%d)\n", ret);
+		fsl_disable_clocks(fsl_edma, DMAMUX_NR);
 		return ret;
 	}
 
 	ret = of_dma_controller_register(np, fsl_edma_xlate, fsl_edma);
 	if (ret) {
-		dev_err(&pdev->dev, "Can't register Freescale eDMA of_dma.\n");
+		dev_err(&pdev->dev,
+			"Can't register Freescale eDMA of_dma. (%d)\n", ret);
 		dma_async_device_unregister(&fsl_edma->dma_dev);
+		fsl_disable_clocks(fsl_edma, DMAMUX_NR);
 		return ret;
 	}
 
@@ -967,17 +1058,27 @@ static int fsl_edma_probe(struct platform_device *pdev)
 	return 0;
 }
 
+static void fsl_edma_cleanup_vchan(struct dma_device *dmadev)
+{
+	struct fsl_edma_chan *chan, *_chan;
+
+	list_for_each_entry_safe(chan, _chan,
+				&dmadev->channels, vchan.chan.device_node) {
+		list_del(&chan->vchan.chan.device_node);
+		tasklet_kill(&chan->vchan.task);
+	}
+}
+
 static int fsl_edma_remove(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
 	struct fsl_edma_engine *fsl_edma = platform_get_drvdata(pdev);
-	int i;
 
+	fsl_edma_irq_exit(pdev, fsl_edma);
+	fsl_edma_cleanup_vchan(&fsl_edma->dma_dev);
 	of_dma_controller_free(np);
 	dma_async_device_unregister(&fsl_edma->dma_dev);
-
-	for (i = 0; i < DMAMUX_NR; i++)
-		clk_disable_unprepare(fsl_edma->muxclk[i]);
+	fsl_disable_clocks(fsl_edma, DMAMUX_NR);
 
 	return 0;
 }

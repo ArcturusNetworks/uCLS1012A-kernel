@@ -41,7 +41,6 @@
 #include "genwqe_driver.h"
 
 #define GENWQE_MSI_IRQS			4  /* Just one supported, no MSIx */
-#define GENWQE_FLAG_MSI_ENABLED		(1 << 0)
 
 #define GENWQE_MAX_VFS			15 /* maximum 15 VFs are possible */
 #define GENWQE_MAX_FUNCS		16 /* 1 PF and 15 VFs */
@@ -404,7 +403,7 @@ struct genwqe_file {
 	struct file *filp;
 
 	struct fasync_struct *async_queue;
-	struct task_struct *owner;
+	struct pid *opener;
 	struct list_head list;		/* entry in list of open files */
 
 	spinlock_t map_lock;		/* lock for dma_mappings */
@@ -514,7 +513,7 @@ int  __genwqe_execute_ddcb(struct genwqe_dev *cd,
 /**
  * __genwqe_execute_raw_ddcb() - Execute DDCB request without addr translation
  *
- * This version will not do address translation or any modifcation of
+ * This version will not do address translation or any modification of
  * the DDCB data. It is used e.g. for the MoveFlash DDCB which is
  * entirely prepared by the driver itself. That means the appropriate
  * DMA addresses are already in the DDCB and do not need any

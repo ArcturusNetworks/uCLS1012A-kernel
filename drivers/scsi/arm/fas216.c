@@ -98,6 +98,7 @@ static int level_mask = LOG_ERROR;
 
 module_param(level_mask, int, 0644);
 
+#ifndef MODULE
 static int __init fas216_log_setup(char *str)
 {
 	char *s;
@@ -138,6 +139,7 @@ static int __init fas216_log_setup(char *str)
 }
 
 __setup("fas216_logging=", fas216_log_setup);
+#endif
 
 static inline unsigned char fas216_readb(FAS216_Info *info, unsigned int reg)
 {
@@ -2009,7 +2011,7 @@ static void fas216_rq_sns_done(FAS216_Info *info, struct scsi_cmnd *SCpnt,
 		 * have valid data in the sense buffer that could
 		 * confuse the higher levels.
 		 */
-		memset(SCpnt->sense_buffer, 0, sizeof(SCpnt->sense_buffer));
+		memset(SCpnt->sense_buffer, 0, SCSI_SENSE_BUFFERSIZE);
 //printk("scsi%d.%c: sense buffer: ", info->host->host_no, '0' + SCpnt->device->id);
 //{ int i; for (i = 0; i < 32; i++) printk("%02x ", SCpnt->sense_buffer[i]); printk("\n"); }
 	/*

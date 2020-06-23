@@ -1,179 +1,231 @@
-/* Copyright 2013-2016 Freescale Semiconductor Inc.
+// SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause)
+/*
+ * Copyright 2013-2016 Freescale Semiconductor Inc.
+ * Copyright 2016 NXP
  *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- * * Redistributions of source code must retain the above copyright
- * notice, this list of conditions and the following disclaimer.
- * * Redistributions in binary form must reproduce the above copyright
- * notice, this list of conditions and the following disclaimer in the
- * documentation and/or other materials provided with the distribution.
- * * Neither the name of the above-listed copyright holders nor the
- * names of any contributors may be used to endorse or promote products
- * derived from this software without specific prior written permission.
- *
- *
- * ALTERNATIVELY, this software may be distributed under the terms of the
- * GNU General Public License ("GPL") as published by the Free Software
- * Foundation, either version 2 of that License or (at your option) any
- * later version.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
  */
-#include "../../include/mc-sys.h"
-#include "../../include/mc-cmd.h"
-#include "fsl_dpio.h"
-#include "fsl_dpio_cmd.h"
+#include <linux/kernel.h>
+#include <linux/fsl/mc.h>
 
+#include "dpio.h"
+#include "dpio-cmd.h"
+
+/*
+ * Data Path I/O Portal API
+ * Contains initialization APIs and runtime control APIs for DPIO
+ */
+
+/**
+ * dpio_open() - Open a control session for the specified object
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @dpio_id:	DPIO unique ID
+ * @token:	Returned token; use in subsequent API calls
+ *
+ * This function can be used to open a control session for an
+ * already created object; an object may have been declared in
+ * the DPL or by calling the dpio_create() function.
+ * This function returns a unique authentication token,
+ * associated with the specific object ID and the specific MC
+ * portal; this token must be used in all subsequent commands for
+ * this specific object.
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dpio_open(struct fsl_mc_io *mc_io,
-	      uint32_t cmd_flags,
+	      u32 cmd_flags,
 	      int dpio_id,
-	      uint16_t *token)
+	      u16 *token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
+	struct dpio_cmd_open *dpio_cmd;
 	int err;
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPIO_CMDID_OPEN,
 					  cmd_flags,
 					  0);
-	DPIO_CMD_OPEN(cmd, dpio_id);
+	dpio_cmd = (struct dpio_cmd_open *)cmd.params;
+	dpio_cmd->dpio_id = cpu_to_le32(dpio_id);
 
-	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
 	if (err)
 		return err;
 
 	/* retrieve response parameters */
-	*token = get_mc_cmd_hdr_token(cmd.header);
+	*token = mc_cmd_hdr_read_token(&cmd);
 
 	return 0;
 }
 
+/**
+ * dpio_close() - Close the control session of the object
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPIO object
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
 int dpio_close(struct fsl_mc_io *mc_io,
-	       uint32_t cmd_flags,
-	       uint16_t token)
+	       u32 cmd_flags,
+	       u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPIO_CMDID_CLOSE,
 					  cmd_flags,
 					  token);
 
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }
 
-int dpio_create(struct fsl_mc_io	*mc_io,
-		uint16_t	dprc_token,
-		uint32_t	cmd_flags,
-		const struct dpio_cfg	*cfg,
-		uint32_t	*object_id)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_CREATE,
-					  cmd_flags,
-					  dprc_token);
-	DPIO_CMD_CREATE(cmd, cfg);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	*object_id = get_mc_cmd_create_object_id(&cmd);
-
-	return 0;
-}
-
-int dpio_destroy(struct fsl_mc_io	*mc_io,
-		 uint16_t	dprc_token,
-		 uint32_t	cmd_flags,
-		 uint32_t	object_id)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_DESTROY,
-			cmd_flags,
-			dprc_token);
-	/* set object id to destroy */
-	set_mc_cmd_destroy_object_id(&cmd, object_id);
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
+/**
+ * dpio_enable() - Enable the DPIO, allow I/O portal operations.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPIO object
+ *
+ * Return:	'0' on Success; Error code otherwise
+ */
 int dpio_enable(struct fsl_mc_io *mc_io,
-		uint32_t cmd_flags,
-		uint16_t token)
+		u32 cmd_flags,
+		u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPIO_CMDID_ENABLE,
 					  cmd_flags,
 					  token);
 
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }
 
+/**
+ * dpio_disable() - Disable the DPIO, stop any I/O portal operation.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPIO object
+ *
+ * Return:	'0' on Success; Error code otherwise
+ */
 int dpio_disable(struct fsl_mc_io *mc_io,
-		 uint32_t cmd_flags,
-		 uint16_t token)
+		 u32 cmd_flags,
+		 u16 token)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPIO_CMDID_DISABLE,
 					  cmd_flags,
 					  token);
 
-	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
 }
 
-int dpio_is_enabled(struct fsl_mc_io *mc_io,
-		    uint32_t cmd_flags,
-		    uint16_t token,
-		    int *en)
+/**
+ * dpio_get_attributes() - Retrieve DPIO attributes
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPIO object
+ * @attr:	Returned object's attributes
+ *
+ * Return:	'0' on Success; Error code otherwise
+ */
+int dpio_get_attributes(struct fsl_mc_io *mc_io,
+			u32 cmd_flags,
+			u16 token,
+			struct dpio_attr *attr)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
+	struct dpio_rsp_get_attr *dpio_rsp;
 	int err;
+
 	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_IS_ENABLED, cmd_flags,
+	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_ATTR,
+					  cmd_flags,
 					  token);
 
-	/* send command to mc*/
 	err = mc_send_command(mc_io, &cmd);
 	if (err)
 		return err;
 
 	/* retrieve response parameters */
-	DPIO_RSP_IS_ENABLED(cmd, *en);
+	dpio_rsp = (struct dpio_rsp_get_attr *)cmd.params;
+	attr->id = le32_to_cpu(dpio_rsp->id);
+	attr->qbman_portal_id = le16_to_cpu(dpio_rsp->qbman_portal_id);
+	attr->num_priorities = dpio_rsp->num_priorities;
+	attr->channel_mode = dpio_rsp->channel_mode & DPIO_CHANNEL_MODE_MASK;
+	attr->qbman_portal_ce_offset =
+		le64_to_cpu(dpio_rsp->qbman_portal_ce_addr);
+	attr->qbman_portal_ci_offset =
+		le64_to_cpu(dpio_rsp->qbman_portal_ci_addr);
+	attr->qbman_version = le32_to_cpu(dpio_rsp->qbman_version);
 
 	return 0;
 }
 
-int dpio_reset(struct fsl_mc_io *mc_io,
-	       uint32_t cmd_flags,
-	       uint16_t token)
+int dpio_set_stashing_destination(struct fsl_mc_io *mc_io,
+				  u32 cmd_flags,
+				  u16 token,
+				  u8 sdest)
 {
-	struct mc_command cmd = { 0 };
+	struct fsl_mc_command cmd = { 0 };
+	struct dpio_stashing_dest *dpio_cmd;
+
+	cmd.header = mc_encode_cmd_header(DPIO_CMDID_SET_STASHING_DEST,
+					  cmd_flags, token);
+	dpio_cmd = (struct dpio_stashing_dest *)cmd.params;
+	dpio_cmd->sdest = sdest;
+
+	return mc_send_command(mc_io, &cmd);
+}
+
+/**
+ * dpio_get_api_version - Get Data Path I/O API version
+ * @mc_io:	Pointer to MC portal's DPIO object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @major_ver:	Major version of DPIO API
+ * @minor_ver:	Minor version of DPIO API
+ *
+ * Return:	'0' on Success; Error code otherwise
+ */
+int dpio_get_api_version(struct fsl_mc_io *mc_io,
+			 u32 cmd_flags,
+			 u16 *major_ver,
+			 u16 *minor_ver)
+{
+	struct fsl_mc_command cmd = { 0 };
+	int err;
+
+	/* prepare command */
+	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_API_VERSION,
+					  cmd_flags, 0);
+
+	err = mc_send_command(mc_io, &cmd);
+	if (err)
+		return err;
+
+	/* retrieve response parameters */
+	mc_cmd_read_api_version(&cmd, major_ver, minor_ver);
+
+	return 0;
+}
+
+/**
+ * dpio_reset() - Reset the DPIO, returns the object to initial state.
+ * @mc_io:	Pointer to MC portal's I/O object
+ * @cmd_flags:	Command flags; one or more of 'MC_CMD_FLAG_'
+ * @token:	Token of DPIO object
+ *
+ * Return:	'0' on Success; Error code otherwise.
+ */
+int dpio_reset(struct fsl_mc_io *mc_io,
+	       u32 cmd_flags,
+	       u16 token)
+{
+	struct fsl_mc_command cmd = { 0 };
 
 	/* prepare command */
 	cmd.header = mc_encode_cmd_header(DPIO_CMDID_RESET,
@@ -182,311 +234,4 @@ int dpio_reset(struct fsl_mc_io *mc_io,
 
 	/* send command to mc*/
 	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_set_irq(struct fsl_mc_io	*mc_io,
-		 uint32_t		cmd_flags,
-		 uint16_t		token,
-		 uint8_t		irq_index,
-		 struct dpio_irq_cfg	*irq_cfg)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_SET_IRQ,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_SET_IRQ(cmd, irq_index, irq_cfg);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_get_irq(struct fsl_mc_io	*mc_io,
-		 uint32_t		cmd_flags,
-		 uint16_t		token,
-		 uint8_t		irq_index,
-		 int			*type,
-		 struct dpio_irq_cfg	*irq_cfg)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_IRQ,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_GET_IRQ(cmd, irq_index);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_GET_IRQ(cmd, *type, irq_cfg);
-
-	return 0;
-}
-
-int dpio_set_irq_enable(struct fsl_mc_io *mc_io,
-			uint32_t cmd_flags,
-			uint16_t token,
-			uint8_t irq_index,
-			uint8_t en)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_SET_IRQ_ENABLE,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_SET_IRQ_ENABLE(cmd, irq_index, en);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_get_irq_enable(struct fsl_mc_io *mc_io,
-			uint32_t cmd_flags,
-			uint16_t token,
-			uint8_t irq_index,
-			uint8_t *en)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_IRQ_ENABLE,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_GET_IRQ_ENABLE(cmd, irq_index);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_GET_IRQ_ENABLE(cmd, *en);
-
-	return 0;
-}
-
-int dpio_set_irq_mask(struct fsl_mc_io *mc_io,
-		      uint32_t cmd_flags,
-		      uint16_t token,
-		      uint8_t irq_index,
-		      uint32_t mask)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_SET_IRQ_MASK,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_SET_IRQ_MASK(cmd, irq_index, mask);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_get_irq_mask(struct fsl_mc_io *mc_io,
-		      uint32_t cmd_flags,
-		      uint16_t token,
-		      uint8_t irq_index,
-		      uint32_t *mask)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_IRQ_MASK,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_GET_IRQ_MASK(cmd, irq_index);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_GET_IRQ_MASK(cmd, *mask);
-
-	return 0;
-}
-
-int dpio_get_irq_status(struct fsl_mc_io *mc_io,
-			uint32_t cmd_flags,
-			uint16_t token,
-			uint8_t irq_index,
-			uint32_t *status)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_IRQ_STATUS,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_GET_IRQ_STATUS(cmd, irq_index, *status);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_GET_IRQ_STATUS(cmd, *status);
-
-	return 0;
-}
-
-int dpio_clear_irq_status(struct fsl_mc_io *mc_io,
-			  uint32_t cmd_flags,
-			  uint16_t token,
-			  uint8_t irq_index,
-			  uint32_t status)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_CLEAR_IRQ_STATUS,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_CLEAR_IRQ_STATUS(cmd, irq_index, status);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_get_attributes(struct fsl_mc_io *mc_io,
-			uint32_t cmd_flags,
-			uint16_t token,
-			struct dpio_attr *attr)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_ATTR,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_GET_ATTR(cmd, attr);
-
-	return 0;
-}
-
-int dpio_set_stashing_destination(struct fsl_mc_io *mc_io,
-				  uint32_t cmd_flags,
-				  uint16_t token,
-				  uint8_t sdest)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_SET_STASHING_DEST,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_SET_STASHING_DEST(cmd, sdest);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_get_stashing_destination(struct fsl_mc_io *mc_io,
-				  uint32_t cmd_flags,
-				  uint16_t token,
-				  uint8_t *sdest)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_STASHING_DEST,
-					  cmd_flags,
-					  token);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_GET_STASHING_DEST(cmd, *sdest);
-
-	return 0;
-}
-
-int dpio_add_static_dequeue_channel(struct fsl_mc_io *mc_io,
-				    uint32_t cmd_flags,
-				    uint16_t token,
-				    int dpcon_id,
-				    uint8_t *channel_index)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_ADD_STATIC_DEQUEUE_CHANNEL,
-					  cmd_flags,
-					  token);
-	DPIO_CMD_ADD_STATIC_DEQUEUE_CHANNEL(cmd, dpcon_id);
-
-	/* send command to mc*/
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	/* retrieve response parameters */
-	DPIO_RSP_ADD_STATIC_DEQUEUE_CHANNEL(cmd, *channel_index);
-
-	return 0;
-}
-
-int dpio_remove_static_dequeue_channel(struct fsl_mc_io *mc_io,
-				       uint32_t cmd_flags,
-				       uint16_t token,
-				       int dpcon_id)
-{
-	struct mc_command cmd = { 0 };
-
-	/* prepare command */
-	cmd.header = mc_encode_cmd_header(
-				DPIO_CMDID_REMOVE_STATIC_DEQUEUE_CHANNEL,
-				cmd_flags,
-				token);
-	DPIO_CMD_REMOVE_STATIC_DEQUEUE_CHANNEL(cmd, dpcon_id);
-
-	/* send command to mc*/
-	return mc_send_command(mc_io, &cmd);
-}
-
-int dpio_get_api_version(struct fsl_mc_io *mc_io,
-			 uint32_t cmd_flags,
-			 uint16_t *major_ver,
-			 uint16_t *minor_ver)
-{
-	struct mc_command cmd = { 0 };
-	int err;
-
-	cmd.header = mc_encode_cmd_header(DPIO_CMDID_GET_API_VERSION,
-					cmd_flags,
-					0);
-
-	err = mc_send_command(mc_io, &cmd);
-	if (err)
-		return err;
-
-	get_mc_cmd_object_api_ver(&cmd, major_ver, minor_ver);
-
-	return 0;
 }

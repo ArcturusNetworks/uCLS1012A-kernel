@@ -378,7 +378,7 @@ static void qman_get_ip_revision(struct device_node *dn)
 static struct qm_portal_config * __init parse_pcfg(struct device_node *node)
 {
 	struct qm_portal_config *pcfg;
-	const u32 *index_p, *channel_p;
+	const u32 *index_p;
 	u32 index, channel;
 	int irq, ret;
 	resource_size_t len;
@@ -430,16 +430,7 @@ static struct qm_portal_config * __init parse_pcfg(struct device_node *node)
 		goto err;
 	}
 
-	channel_p = of_get_property(node, "fsl,qman-channel-id", &ret);
-	if (!channel_p || (ret != 4)) {
-		pr_err("Can't get %s property '%s'\n", node->full_name,
-			"fsl,qman-channel-id");
-		goto err;
-	}
-	channel = be32_to_cpu(*channel_p);
-	if (channel != (index + QM_CHANNEL_SWPORTAL0))
-		pr_err("Warning: node %s has mismatched %s and %s\n",
-			node->full_name, "cell-index", "fsl,qman-channel-id");
+	channel = index + QM_CHANNEL_SWPORTAL0;
 	pcfg->public_cfg.channel = channel;
 	pcfg->public_cfg.cpu = -1;
 	irq = irq_of_parse_and_map(node, 0);
@@ -468,14 +459,15 @@ static struct qm_portal_config * __init parse_pcfg(struct device_node *node)
                                 pcfg->addr_phys[DPA_PORTAL_CI].start,
                                 resource_size(&pcfg->addr_phys[DPA_PORTAL_CI]));
 #else
-	pcfg->addr_virt[DPA_PORTAL_CE] = ioremap_prot(
-				pcfg->addr_phys[DPA_PORTAL_CE].start,
-				(unsigned long)len,
-				0);
-	pcfg->addr_virt[DPA_PORTAL_CI] = ioremap_prot(
-				pcfg->addr_phys[DPA_PORTAL_CI].start,
-				resource_size(&pcfg->addr_phys[DPA_PORTAL_CI]),
-				_PAGE_GUARDED | _PAGE_NO_CACHE);
+
+	pcfg->addr_virt[DPA_PORTAL_CE] =
+		memremap(pcfg->addr_phys[DPA_PORTAL_CE].start,
+			 (unsigned long)len, MEMREMAP_WB);
+
+	pcfg->addr_virt[DPA_PORTAL_CI] =
+		ioremap(pcfg->addr_phys[DPA_PORTAL_CI].start,
+			resource_size(&pcfg->addr_phys[DPA_PORTAL_CI]));
+
 #endif
 	return pcfg;
 err:
@@ -654,7 +646,7 @@ static struct qman_portal *init_pcfg(struct qm_portal_config *pcfg)
 static void init_slave(int cpu)
 {
 	struct qman_portal *p;
-	struct cpumask oldmask = *tsk_cpus_allowed(current);
+	struct cpumask oldmask = current->cpus_allowed;
 	set_cpus_allowed_ptr(current, get_cpu_mask(cpu));
 	p = qman_create_affine_slave(shared_portals[shared_portals_idx++], cpu);
 	if (!p)
@@ -702,7 +694,7 @@ static void qman_portal_update_sdest(const struct qm_portal_config *pcfg,
 #endif
 }
 
-static void qman_offline_cpu(unsigned int cpu)
+static int qman_offline_cpu(unsigned int cpu)
 {
 	struct qman_portal *p;
 	const struct qm_portal_config *pcfg;
@@ -714,10 +706,11 @@ static void qman_offline_cpu(unsigned int cpu)
 			qman_portal_update_sdest(pcfg, 0);
 		}
 	}
+	return 0;
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
-static void qman_online_cpu(unsigned int cpu)
+static int qman_online_cpu(unsigned int cpu)
 {
 	struct qman_portal *p;
 	const struct qm_portal_config *pcfg;
@@ -729,30 +722,9 @@ static void qman_online_cpu(unsigned int cpu)
 			qman_portal_update_sdest(pcfg, cpu);
 		}
 	}
+	return 0;
 }
 
-static int __cpuinit qman_hotplug_cpu_callback(struct notifier_block *nfb,
-				unsigned long action, void *hcpu)
-{
-	unsigned int cpu = (unsigned long)hcpu;
-
-	switch (action) {
-	case CPU_ONLINE:
-	case CPU_ONLINE_FROZEN:
-		qman_online_cpu(cpu);
-		break;
-	case CPU_DOWN_PREPARE:
-	case CPU_DOWN_PREPARE_FROZEN:
-		qman_offline_cpu(cpu);
-	default:
-		break;
-	}
-	return NOTIFY_OK;
-}
-
-static struct notifier_block qman_hotplug_cpu_notifier = {
-	.notifier_call = qman_hotplug_cpu_callback,
-};
 #endif /* CONFIG_HOTPLUG_CPU */
 
 __init int qman_init(void)
@@ -902,7 +874,13 @@ __init int qman_init(void)
 	for_each_cpu(cpu, &offline_cpus)
 		qman_offline_cpu(cpu);
 #ifdef CONFIG_HOTPLUG_CPU
-	register_hotcpu_notifier(&qman_hotplug_cpu_notifier);
+	ret = cpuhp_setup_state_nocalls(CPUHP_AP_ONLINE_DYN,
+					"soc/qman_portal:online",
+					qman_online_cpu, qman_offline_cpu);
+	if (ret < 0) {
+		pr_err("qman: failed to register hotplug callbacks.\n");
+		return ret;
+	}
 #endif
 	return 0;
 }
@@ -982,4 +960,3 @@ void resume_unused_qportal(void)
 	return;
 }
 #endif
-

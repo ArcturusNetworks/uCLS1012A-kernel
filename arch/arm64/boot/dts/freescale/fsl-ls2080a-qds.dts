@@ -1,16 +1,13 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Device Tree file for Freescale LS2080a QDS Board
+ * Device Tree file for Freescale LS2080a QDS Board.
  *
- * Copyright (C) 2015-2016, Freescale Semiconductor
+ * Copyright 2015-2016 Freescale Semiconductor, Inc.
  * Copyright 2017 NXP
  *
  * Abhimanyu Saini <abhimanyu.saini@nxp.com>
  * Bhupesh Sharma <bhupesh.sharma@freescale.com>
- * Harninder Rai <harninder.rai@freescale.com>
  *
- * This file is licensed under the terms of the GNU General Public
- * License version 2.  This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  */
 
 /dts-v1/;
@@ -21,6 +18,10 @@
 / {
 	model = "Freescale Layerscape 2080a QDS Board";
 	compatible = "fsl,ls2080a-qds", "fsl,ls2080a";
+
+	chosen {
+		stdout-path = "serial0:115200n8";
+	};
 };
 
 &ifc {
@@ -41,9 +42,8 @@
 			#size-cells = <0>;
 
 			/* Child MDIO buses, one for each riser card:
-			   reg = 0x0, 0x20, 0x40, 0x60, 0x80, 0xa0.
-
-			   VSC8234 PHYs on the riser cards.
+			 * reg = 0x0, 0x20, 0x40, 0x60, 0x80, 0xa0.
+			 * VSC8234 PHYs on the riser cards.
 			 */
 
 			mdio_mux3: mdio@60 {

@@ -1765,8 +1765,7 @@ struct qm_mc_result {
 static inline int QM_MCR_QUERYCONGESTION(struct __qm_mcr_querycongestion *p,
 					u8 cgr)
 {
-	return be32_to_cpu(p->__state[__CGR_WORD(cgr)]) &
-	       (0x80000000 >> __CGR_SHIFT(cgr));
+	return p->__state[__CGR_WORD(cgr)] & (0x80000000 >> __CGR_SHIFT(cgr));
 }
 
 
@@ -3814,6 +3813,18 @@ int qman_ceetm_query_lfqmt(int lfqid,
 			   struct qm_mcr_ceetm_lfqmt_query *lfqmt_query);
 
 /**
+ * qman_ceetm_query_cq - Queries a CEETM CQ
+ * @cqid: the channel ID (first byte) followed by the CQ idx
+ * @dcpid: CEETM portal ID
+ * @cq_query: storage for the queried CQ fields
+ *
+ * Returns zero for success or -EIO if the query command returns error.
+ *
+*/
+int qman_ceetm_query_cq(unsigned int cqid, unsigned int dcpid,
+			struct qm_mcr_ceetm_cq_query *cq_query);
+
+/**
  * qman_ceetm_query_write_statistics - Query (and optionally write) statistics
  * @cid: Target ID (CQID or CCGRID)
  * @dcp_idx: CEETM portal ID
@@ -3882,6 +3893,16 @@ int qman_p_enqueue_orp(struct qman_portal *p, struct qman_fq *fq,
 int qman_p_enqueue_precommit(struct qman_portal *p, struct qman_fq *fq,
 				const struct qm_fd *fd, u32 flags,
 				qman_cb_precommit cb, void *cb_arg);
+
+static inline int qman_is_probed(void) {
+	return 1;
+}
+
+
+static inline int qman_portals_probed(void) {
+	return 1;
+}
+
 #ifdef __cplusplus
 }
 #endif

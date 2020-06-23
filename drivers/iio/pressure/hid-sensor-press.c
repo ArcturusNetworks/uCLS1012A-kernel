@@ -77,6 +77,7 @@ static int press_read_raw(struct iio_dev *indio_dev,
 	int report_id = -1;
 	u32 address;
 	int ret_type;
+	s32 min;
 
 	*val = 0;
 	*val2 = 0;
@@ -85,8 +86,8 @@ static int press_read_raw(struct iio_dev *indio_dev,
 		switch (chan->scan_index) {
 		case  CHANNEL_SCAN_INDEX_PRESSURE:
 			report_id = press_state->press_attr.report_id;
-			address =
-			HID_USAGE_SENSOR_ATMOSPHERIC_PRESSURE;
+			min = press_state->press_attr.logical_minimum;
+			address = HID_USAGE_SENSOR_ATMOSPHERIC_PRESSURE;
 			break;
 		default:
 			report_id = -1;
@@ -99,7 +100,8 @@ static int press_read_raw(struct iio_dev *indio_dev,
 				press_state->common_attributes.hsdev,
 				HID_USAGE_SENSOR_PRESSURE, address,
 				report_id,
-				SENSOR_HUB_SYNC);
+				SENSOR_HUB_SYNC,
+				min < 0);
 			hid_sensor_power_state(&press_state->common_attributes,
 						false);
 		} else {
@@ -260,7 +262,6 @@ static int hid_press_probe(struct platform_device *pdev)
 	struct iio_dev *indio_dev;
 	struct press_state *press_state;
 	struct hid_sensor_hub_device *hsdev = pdev->dev.platform_data;
-	struct iio_chan_spec *channels;
 
 	indio_dev = devm_iio_device_alloc(&pdev->dev,
 				sizeof(struct press_state));
@@ -280,20 +281,21 @@ static int hid_press_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	channels = kmemdup(press_channels, sizeof(press_channels), GFP_KERNEL);
-	if (!channels) {
+	indio_dev->channels = kmemdup(press_channels, sizeof(press_channels),
+				      GFP_KERNEL);
+	if (!indio_dev->channels) {
 		dev_err(&pdev->dev, "failed to duplicate channels\n");
 		return -ENOMEM;
 	}
 
-	ret = press_parse_report(pdev, hsdev, channels,
-				HID_USAGE_SENSOR_PRESSURE, press_state);
+	ret = press_parse_report(pdev, hsdev,
+				 (struct iio_chan_spec *)indio_dev->channels,
+				 HID_USAGE_SENSOR_PRESSURE, press_state);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to setup attributes\n");
 		goto error_free_dev_mem;
 	}
 
-	indio_dev->channels = channels;
 	indio_dev->num_channels =
 				ARRAY_SIZE(press_channels);
 	indio_dev->dev.parent = &pdev->dev;
@@ -360,7 +362,7 @@ static int hid_press_remove(struct platform_device *pdev)
 	return 0;
 }
 
-static struct platform_device_id hid_press_ids[] = {
+static const struct platform_device_id hid_press_ids[] = {
 	{
 		/* Format: HID-SENSOR-usage_id_in_hex_lowercase */
 		.name = "HID-SENSOR-200031",

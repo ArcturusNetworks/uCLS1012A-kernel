@@ -1,4 +1,5 @@
 /* Copyright 2015 Freescale Semiconductor Inc.
+ * Copyright 2018 NXP
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -33,6 +34,7 @@
 
 #include <linux/netdevice.h>
 #include <linux/etherdevice.h>
+#include <linux/msi.h>
 #include <linux/rtnetlink.h>
 #include <linux/if_vlan.h>
 
@@ -45,8 +47,7 @@
 #include <linux/phy.h>
 #include <linux/phy_fixed.h>
 
-#include "../../fsl-mc/include/mc.h"
-#include "../../fsl-mc/include/mc-sys.h"
+#include <linux/fsl/mc.h>
 
 #include "dpmac.h"
 #include "dpmac-cmd.h"
@@ -56,6 +57,8 @@ struct dpaa2_mac_priv {
 	struct fsl_mc_device		*mc_dev;
 	struct dpmac_attr		attr;
 	struct dpmac_link_state		old_state;
+	u16				dpmac_ver_major;
+	u16				dpmac_ver_minor;
 };
 
 /* TODO: fix the 10G modes, mapping can't be right:
@@ -76,7 +79,61 @@ static phy_interface_t dpaa2_mac_iface_mode[] =  {
 	PHY_INTERFACE_MODE_QSGMII,	/* DPMAC_ETH_IF_QSGMII */
 	PHY_INTERFACE_MODE_XGMII,	/* DPMAC_ETH_IF_XAUI */
 	PHY_INTERFACE_MODE_XGMII,	/* DPMAC_ETH_IF_XFI */
+	PHY_INTERFACE_MODE_XGMII,        /* DPMAC_ETH_IF_CAUI */
+	PHY_INTERFACE_MODE_XGMII,       /* DPMAC_ETH_IF_1000BASEX */
+	PHY_INTERFACE_MODE_XGMII,       /* DPMAC_ETH_IF_USXGMII */
 };
+
+static int cmp_dpmac_ver(struct dpaa2_mac_priv *priv,
+			 u16 ver_major, u16 ver_minor)
+{
+	if (priv->dpmac_ver_major == ver_major)
+		return priv->dpmac_ver_minor - ver_minor;
+	return priv->dpmac_ver_major - ver_major;
+}
+
+#define DPMAC_LINK_AUTONEG_VER_MAJOR		4
+#define DPMAC_LINK_AUTONEG_VER_MINOR		3
+
+struct dpaa2_mac_link_mode_map {
+	u64 dpmac_lm;
+	u64 ethtool_lm;
+};
+
+static const struct dpaa2_mac_link_mode_map dpaa2_mac_lm_map[] = {
+	{DPMAC_ADVERTISED_10BASET_FULL, ETHTOOL_LINK_MODE_10baseT_Full_BIT},
+	{DPMAC_ADVERTISED_100BASET_FULL, ETHTOOL_LINK_MODE_100baseT_Full_BIT},
+	{DPMAC_ADVERTISED_1000BASET_FULL, ETHTOOL_LINK_MODE_1000baseT_Full_BIT},
+	{DPMAC_ADVERTISED_10000BASET_FULL, ETHTOOL_LINK_MODE_10000baseT_Full_BIT},
+	{DPMAC_ADVERTISED_2500BASEX_FULL, ETHTOOL_LINK_MODE_2500baseX_Full_BIT},
+	{DPMAC_ADVERTISED_AUTONEG, ETHTOOL_LINK_MODE_Autoneg_BIT},
+};
+
+static void link_mode_dpmac2phydev(u64 dpmac_lm, u32 *phydev_lm)
+{
+	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
+	int i;
+
+	for (i = 0; i < ARRAY_SIZE(dpaa2_mac_lm_map); i++) {
+		if (dpmac_lm & dpaa2_mac_lm_map[i].dpmac_lm)
+			__set_bit(dpaa2_mac_lm_map[i].ethtool_lm, mask);
+	}
+
+	ethtool_convert_link_mode_to_legacy_u32(phydev_lm, mask);
+}
+
+static void link_mode_phydev2dpmac(u32 phydev_lm, u64 *dpni_lm)
+{
+	unsigned long lm;
+	int i;
+
+	ethtool_convert_legacy_u32_to_link_mode(&lm, phydev_lm);
+
+	for (i = 0; i < ARRAY_SIZE(dpaa2_mac_lm_map); i++) {
+		if (test_bit(dpaa2_mac_lm_map[i].ethtool_lm, &lm))
+			*dpni_lm |= dpaa2_mac_lm_map[i].dpmac_lm;
+	}
+}
 
 static void dpaa2_mac_link_changed(struct net_device *netdev)
 {
@@ -97,6 +154,12 @@ static void dpaa2_mac_link_changed(struct net_device *netdev)
 		if (phydev->autoneg)
 			state.options |= DPMAC_LINK_OPT_AUTONEG;
 
+		if (phydev->pause && (phydev->advertising & ADVERTISED_Pause))
+			state.options |= DPMAC_LINK_OPT_PAUSE;
+		if (phydev->pause &&
+		    (phydev->advertising & ADVERTISED_Asym_Pause))
+			state.options |= DPMAC_LINK_OPT_ASYM_PAUSE;
+
 		netif_carrier_on(netdev);
 	} else {
 		netif_carrier_off(netdev);
@@ -109,22 +172,20 @@ static void dpaa2_mac_link_changed(struct net_device *netdev)
 		phy_print_status(phydev);
 	}
 
-	/* We must interrogate MC at all times, because we don't know
-	 * when and whether a potential DPNI may have read the link state.
-	 */
-	err = dpmac_set_link_state(priv->mc_dev->mc_io, 0,
-				   priv->mc_dev->mc_handle, &state);
+	if (cmp_dpmac_ver(priv, DPMAC_LINK_AUTONEG_VER_MAJOR,
+			  DPMAC_LINK_AUTONEG_VER_MINOR) < 0) {
+		err = dpmac_set_link_state(priv->mc_dev->mc_io, 0,
+					   priv->mc_dev->mc_handle, &state);
+	} else {
+		link_mode_phydev2dpmac(phydev->supported, &state.supported);
+		link_mode_phydev2dpmac(phydev->advertising, &state.advertising);
+		state.state_valid = 1;
+
+		err = dpmac_set_link_state_v2(priv->mc_dev->mc_io, 0,
+					      priv->mc_dev->mc_handle, &state);
+	}
 	if (unlikely(err))
 		dev_err(&priv->mc_dev->dev, "dpmac_set_link_state: %d\n", err);
-}
-
-#ifdef CONFIG_FSL_DPAA2_MAC_NETDEVS
-static netdev_tx_t dpaa2_mac_drop_frame(struct sk_buff *skb,
-					struct net_device *dev)
-{
-	/* we don't support I/O for now, drop the frame */
-	dev_kfree_skb_any(skb);
-	return NETDEV_TX_OK;
 }
 
 static int dpaa2_mac_open(struct net_device *netdev)
@@ -151,21 +212,43 @@ done:
 	return 0;
 }
 
-static int dpaa2_mac_get_settings(struct net_device *netdev,
-				  struct ethtool_cmd *cmd)
+#ifdef CONFIG_FSL_DPAA2_MAC_NETDEVS
+static netdev_tx_t dpaa2_mac_drop_frame(struct sk_buff *skb,
+					struct net_device *dev)
 {
-	return phy_ethtool_gset(netdev->phydev, cmd);
+	/* we don't support I/O for now, drop the frame */
+	dev_kfree_skb_any(skb);
+	return NETDEV_TX_OK;
 }
 
-static int dpaa2_mac_set_settings(struct net_device *netdev,
-				  struct ethtool_cmd *cmd)
+static void dpaa2_mac_get_drvinfo(struct net_device *net_dev,
+				  struct ethtool_drvinfo *drvinfo)
 {
-	return phy_ethtool_sset(netdev->phydev, cmd);
+	struct dpaa2_mac_priv *priv = netdev_priv(net_dev);
+
+	strlcpy(drvinfo->driver, KBUILD_MODNAME, sizeof(drvinfo->driver));
+	snprintf(drvinfo->fw_version, sizeof(drvinfo->fw_version),
+		 "%u.%u", priv->dpmac_ver_major, priv->dpmac_ver_minor);
+	strlcpy(drvinfo->bus_info, dev_name(net_dev->dev.parent->parent),
+		sizeof(drvinfo->bus_info));
 }
 
-static struct rtnl_link_stats64
-*dpaa2_mac_get_stats(struct net_device *netdev,
-		     struct rtnl_link_stats64 *storage)
+static int dpaa2_mac_get_link_ksettings(struct net_device *netdev,
+					struct ethtool_link_ksettings *ks)
+{
+	phy_ethtool_ksettings_get(netdev->phydev, ks);
+
+	return 0;
+}
+
+static int dpaa2_mac_set_link_ksettings(struct net_device *netdev,
+					const struct ethtool_link_ksettings *ks)
+{
+	return phy_ethtool_ksettings_set(netdev->phydev, ks);
+}
+
+static void dpaa2_mac_get_stats(struct net_device *netdev,
+				struct rtnl_link_stats64 *storage)
 {
 	struct dpaa2_mac_priv	*priv = netdev_priv(netdev);
 	u64			tmp;
@@ -227,11 +310,9 @@ static struct rtnl_link_stats64
 	if (err)
 		goto error;
 
-	return storage;
-
+	return;
 error:
 	netdev_err(netdev, "dpmac_get_counter err %d\n", err);
-	return storage;
 }
 
 static struct {
@@ -314,15 +395,16 @@ static int dpaa2_mac_get_sset_count(struct net_device *dev, int sset)
 }
 
 static const struct net_device_ops dpaa2_mac_ndo_ops = {
-	.ndo_start_xmit		= &dpaa2_mac_drop_frame,
 	.ndo_open		= &dpaa2_mac_open,
 	.ndo_stop		= &dpaa2_mac_stop,
+	.ndo_start_xmit		= &dpaa2_mac_drop_frame,
 	.ndo_get_stats64	= &dpaa2_mac_get_stats,
 };
 
 static const struct ethtool_ops dpaa2_mac_ethtool_ops = {
-	.get_settings		= &dpaa2_mac_get_settings,
-	.set_settings		= &dpaa2_mac_set_settings,
+	.get_drvinfo		= &dpaa2_mac_get_drvinfo,
+	.get_link_ksettings	= &dpaa2_mac_get_link_ksettings,
+	.set_link_ksettings	= &dpaa2_mac_set_link_ksettings,
 	.get_strings		= &dpaa2_mac_get_strings,
 	.get_ethtool_stats	= &dpaa2_mac_get_ethtool_stats,
 	.get_sset_count		= &dpaa2_mac_get_sset_count,
@@ -340,11 +422,30 @@ static void configure_link(struct dpaa2_mac_priv *priv,
 	phydev->speed = cfg->rate;
 	phydev->duplex  = !!(cfg->options & DPMAC_LINK_OPT_HALF_DUPLEX);
 
+	if (cfg->advertising != 0) {
+		phydev->advertising = 0;
+		link_mode_dpmac2phydev(cfg->advertising, &phydev->advertising);
+	}
+
+	if (phydev->supported & SUPPORTED_Pause) {
+		if (cfg->options & DPMAC_LINK_OPT_PAUSE)
+			phydev->advertising |= ADVERTISED_Pause;
+		else
+			phydev->advertising &= ~ADVERTISED_Pause;
+	}
+
+	if (phydev->supported & SUPPORTED_Asym_Pause) {
+		if (cfg->options & DPMAC_LINK_OPT_ASYM_PAUSE)
+			phydev->advertising |= ADVERTISED_Asym_Pause;
+		else
+			phydev->advertising &= ~ADVERTISED_Asym_Pause;
+	}
+
 	if (cfg->options & DPMAC_LINK_OPT_AUTONEG) {
-		phydev->autoneg = 1;
+		phydev->autoneg = AUTONEG_ENABLE;
 		phydev->advertising |= ADVERTISED_Autoneg;
 	} else {
-		phydev->autoneg = 0;
+		phydev->autoneg = AUTONEG_DISABLE;
 		phydev->advertising &= ~ADVERTISED_Autoneg;
 	}
 
@@ -356,7 +457,7 @@ static irqreturn_t dpaa2_mac_irq_handler(int irq_num, void *arg)
 	struct device *dev = (struct device *)arg;
 	struct fsl_mc_device *mc_dev = to_fsl_mc_device(dev);
 	struct dpaa2_mac_priv *priv = dev_get_drvdata(dev);
-	struct dpmac_link_cfg link_cfg;
+	struct dpmac_link_cfg link_cfg = { 0 };
 	u32 status;
 	int err;
 
@@ -367,8 +468,14 @@ static irqreturn_t dpaa2_mac_irq_handler(int irq_num, void *arg)
 
 	/* DPNI-initiated link configuration; 'ifconfig up' also calls this */
 	if (status & DPMAC_IRQ_EVENT_LINK_CFG_REQ) {
-		err = dpmac_get_link_cfg(mc_dev->mc_io, 0, mc_dev->mc_handle,
-					 &link_cfg);
+		if (cmp_dpmac_ver(priv, DPMAC_LINK_AUTONEG_VER_MAJOR,
+				  DPMAC_LINK_AUTONEG_VER_MINOR) < 0)
+			err = dpmac_get_link_cfg(mc_dev->mc_io, 0,
+						 mc_dev->mc_handle, &link_cfg);
+		else
+			err = dpmac_get_link_cfg_v2(mc_dev->mc_io, 0,
+						    mc_dev->mc_handle,
+						    &link_cfg);
 		if (unlikely(err))
 			goto out;
 
@@ -384,7 +491,8 @@ out:
 
 static int setup_irqs(struct fsl_mc_device *mc_dev)
 {
-	int err;
+	int err = 0;
+	struct fsl_mc_device_irq *irq;
 
 	err = fsl_mc_allocate_irqs(mc_dev);
 	if (err) {
@@ -392,8 +500,8 @@ static int setup_irqs(struct fsl_mc_device *mc_dev)
 		return err;
 	}
 
-	err = devm_request_threaded_irq(&mc_dev->dev,
-					mc_dev->irqs[0]->irq_number,
+	irq = mc_dev->irqs[0];
+	err = devm_request_threaded_irq(&mc_dev->dev, irq->msi_desc->irq,
 					NULL, &dpaa2_mac_irq_handler,
 					IRQF_NO_SUSPEND | IRQF_ONESHOT,
 					dev_name(&mc_dev->dev), &mc_dev->dev);
@@ -466,7 +574,7 @@ static int dpaa2_mac_probe(struct fsl_mc_device *mc_dev)
 	struct dpaa2_mac_priv	*priv = NULL;
 	struct device_node	*phy_node, *dpmac_node;
 	struct net_device	*netdev;
-	phy_interface_t		if_mode;
+	int			if_mode;
 	int			err = 0;
 
 	dev = &mc_dev->dev;
@@ -490,10 +598,12 @@ static int dpaa2_mac_probe(struct fsl_mc_device *mc_dev)
 
 	dev_set_drvdata(dev, priv);
 
-	err = fsl_mc_portal_allocate(mc_dev, 0, &mc_dev->mc_io);
+	/* We may need to issue MC commands while in atomic context */
+	err = fsl_mc_portal_allocate(mc_dev, FSL_MC_IO_ATOMIC_CONTEXT_PORTAL,
+				     &mc_dev->mc_io);
 	if (err || !mc_dev->mc_io) {
-		dev_err(dev, "fsl_mc_portal_allocate error: %d\n", err);
-		err = -ENODEV;
+		dev_dbg(dev, "fsl_mc_portal_allocate error: %d\n", err);
+		err = -EPROBE_DEFER;
 		goto err_free_netdev;
 	}
 
@@ -503,6 +613,21 @@ static int dpaa2_mac_probe(struct fsl_mc_device *mc_dev)
 		dev_err(dev, "dpmac_open error: %d\n", err);
 		err = -ENODEV;
 		goto err_free_mcp;
+	}
+
+	err = dpmac_get_api_version(mc_dev->mc_io, 0, &priv->dpmac_ver_major,
+				    &priv->dpmac_ver_minor);
+	if (err) {
+		dev_err(dev, "dpmac_get_api_version failed\n");
+		goto err_version;
+	}
+
+	if (cmp_dpmac_ver(priv, DPMAC_VER_MAJOR, DPMAC_VER_MINOR) < 0) {
+		dev_err(dev, "DPMAC version %u.%u lower than supported %u.%u\n",
+			priv->dpmac_ver_major, priv->dpmac_ver_minor,
+			DPMAC_VER_MAJOR, DPMAC_VER_MINOR);
+		err = -ENOTSUPP;
+		goto err_version;
 	}
 
 	err = dpmac_get_attributes(mc_dev->mc_io, 0,
@@ -543,31 +668,37 @@ static int dpaa2_mac_probe(struct fsl_mc_device *mc_dev)
 	}
 #endif /* CONFIG_FSL_DPAA2_MAC_NETDEVS */
 
-	/* probe the PHY as a fixed-link if the link type declared in DPC
-	 * explicitly mandates this
-	 */
-	if (priv->attr.link_type == DPMAC_LINK_TYPE_FIXED)
-		goto probe_fixed_link;
+	/* get the interface mode from the dpmac of node or from the MC attributes */
+	if_mode = of_get_phy_mode(dpmac_node);
+	if (if_mode >= 0) {
+		dev_dbg(dev, "\tusing if mode %s for eth_if %d\n",
+			phy_modes(if_mode), priv->attr.eth_if);
+		goto link_type;
+	}
 
 	if (priv->attr.eth_if < ARRAY_SIZE(dpaa2_mac_iface_mode)) {
 		if_mode = dpaa2_mac_iface_mode[priv->attr.eth_if];
 		dev_dbg(dev, "\tusing if mode %s for eth_if %d\n",
 			phy_modes(if_mode), priv->attr.eth_if);
 	} else {
-		dev_warn(dev, "Unexpected interface mode %d, will probe as fixed link\n",
-			 priv->attr.eth_if);
+		dev_err(dev, "Unexpected interface mode %d\n",
+			priv->attr.eth_if);
+		err = -EINVAL;
+		goto err_no_if_mode;
+	}
+
+link_type:
+	/* probe the PHY as fixed-link if the DPMAC attribute indicates so */
+	if (priv->attr.link_type == DPMAC_LINK_TYPE_FIXED)
+		goto probe_fixed_link;
+
+	/* or if there's no phy-handle defined in the device tree */
+	phy_node = of_parse_phandle(dpmac_node, "phy-handle", 0);
+	if (!phy_node) {
 		goto probe_fixed_link;
 	}
 
 	/* try to connect to the PHY */
-	phy_node = of_parse_phandle(dpmac_node, "phy-handle", 0);
-	if (!phy_node) {
-		if (!phy_node) {
-			dev_err(dev, "dpmac node has no phy-handle property\n");
-			err = -ENODEV;
-			goto err_no_phy;
-		}
-	}
 	netdev->phydev = of_phy_connect(netdev, phy_node,
 					&dpaa2_mac_link_changed, 0, if_mode);
 	if (!netdev->phydev) {
@@ -591,7 +722,8 @@ probe_fixed_link:
 		};
 
 		/* try to register a fixed link phy */
-		netdev->phydev = fixed_phy_register(PHY_POLL, &status, NULL);
+		netdev->phydev = fixed_phy_register(PHY_POLL, &status, -1,
+						    NULL);
 		if (!netdev->phydev || IS_ERR(netdev->phydev)) {
 			dev_err(dev, "error trying to register fixed PHY\n");
 			/* So we don't crash unregister_netdev() later on */
@@ -599,17 +731,22 @@ probe_fixed_link:
 			err = -EFAULT;
 			goto err_no_phy;
 		}
+
+		err = phy_connect_direct(netdev, netdev->phydev,
+					 &dpaa2_mac_link_changed, if_mode);
+		if (err) {
+			dev_err(dev, "error trying to connect to PHY\n");
+			goto err_no_phy;
+		}
+
 		dev_info(dev, "Registered fixed PHY.\n");
 	}
 
-	/* start PHY state machine */
-#ifdef CONFIG_FSL_DPAA2_MAC_NETDEVS
 	dpaa2_mac_open(netdev);
-#else /* CONFIG_FSL_DPAA2_MAC_NETDEVS */
-	phy_start(netdev->phydev);
-#endif /* CONFIG_FSL_DPAA2_MAC_NETDEVS */
+
 	return 0;
 
+err_no_if_mode:
 err_defer:
 err_no_phy:
 #ifdef CONFIG_FSL_DPAA2_MAC_NETDEVS
@@ -617,6 +754,7 @@ err_no_phy:
 err_free_irq:
 #endif
 	teardown_irqs(mc_dev);
+err_version:
 err_close:
 	dpmac_close(mc_dev->mc_io, 0, mc_dev->mc_handle);
 err_free_mcp:
@@ -631,6 +769,15 @@ static int dpaa2_mac_remove(struct fsl_mc_device *mc_dev)
 {
 	struct device		*dev = &mc_dev->dev;
 	struct dpaa2_mac_priv	*priv = dev_get_drvdata(dev);
+	struct net_device	*netdev = priv->netdev;
+
+	dpaa2_mac_stop(netdev);
+
+	if (phy_is_pseudo_fixed_link(netdev->phydev))
+		fixed_phy_unregister(netdev->phydev);
+	else
+		phy_disconnect(netdev->phydev);
+	netdev->phydev = NULL;
 
 #ifdef CONFIG_FSL_DPAA2_MAC_NETDEVS
 	unregister_netdev(priv->netdev);
@@ -641,20 +788,18 @@ static int dpaa2_mac_remove(struct fsl_mc_device *mc_dev)
 	free_netdev(priv->netdev);
 
 	dev_set_drvdata(dev, NULL);
-	kfree(priv);
 
 	return 0;
 }
 
-static const struct fsl_mc_device_match_id dpaa2_mac_match_id_table[] = {
+static const struct fsl_mc_device_id dpaa2_mac_match_id_table[] = {
 	{
 		.vendor = FSL_MC_VENDOR_FREESCALE,
 		.obj_type = "dpmac",
-		.ver_major = DPMAC_VER_MAJOR,
-		.ver_minor = DPMAC_VER_MINOR,
 	},
-	{}
+	{ .vendor = 0x0 }
 };
+MODULE_DEVICE_TABLE(fslmc, dpaa2_mac_match_id_table);
 
 static struct fsl_mc_driver dpaa2_mac_drv = {
 	.driver = {

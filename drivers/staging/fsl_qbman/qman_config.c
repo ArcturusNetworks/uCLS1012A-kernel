@@ -254,7 +254,7 @@ static const struct qman_error_info_mdata error_mdata[] = {
 	QMAN_ERR_MDATA(0x01FF, 72, "WQ context memory"),
 	QMAN_ERR_MDATA(0x00FF, 240, "CGR memory"),
 	QMAN_ERR_MDATA(0x00FF, 302, "Internal Order Restoration List memory"),
-	QMAN_ERR_MDATA(0x01FF, 256, "SW portal ring memory"),
+	QMAN_ERR_MDATA(0x7FFF, 256, "SW portal ring memory"),
 	QMAN_ERR_MDATA(0x07FF, 181, "CEETM class queue descriptor memory"),
 	QMAN_ERR_MDATA(0x0FFF, 140, "CEETM extended SFDR memory"),
 	QMAN_ERR_MDATA(0x0FFF, 25, "CEETM logical FQ mapping memory"),
@@ -812,7 +812,7 @@ int qman_set_sdest(u16 channel, unsigned int cpu_idx)
 
 	if (!qman_have_ccsr())
 		return -ENODEV;
-	if ((qman_ip_rev & 0xFF00) == QMAN_REV31) {
+	if ((qman_ip_rev & 0xFFFF) == QMAN_REV31) {
 		/* LS1043A - only one L2 cache */
 		cpu_idx = 0;
 	}

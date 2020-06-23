@@ -1,9 +1,9 @@
 /***************************************************************************
  *                                                                         *
- *   cx2070x-sysfs.c Conexant CX2070x speakers-on chip (SPoC)                *
+ *   cx2070x-sysfs.c Conexant CX2070x speakers-on chip (SPoC)              *
  *                 sysfs control interface driver                          *
  *                                                                         *
- *   Copyright (c) 2011-2017 Arcturus Networks Inc.                        *
+ *   Copyright (c) 2011-2020 Arcturus Networks Inc.                        *
  *                 by Oleksandr Zhadan <www.ArcturusNetworks.com>          *
  *                                                                         *
  ***************************************************************************/
@@ -97,8 +97,8 @@ static ssize_t cx2070x_show(struct device *dev, struct device_attribute *attr,
 	struct i2c_client *client = to_i2c_client(dev);
 	struct cx2070x_priv *data = i2c_get_clientdata(client);
 
-	return sprintf(buf, "0x%x=0x%x\n", psa->index,
-		       snd_soc_read(data->codec, psa->index));
+	return sprintf(buf, "0x%x=0x%02x\n", psa->index,
+		       (unsigned char)snd_soc_read(data->codec, psa->index));
 }
 
 static ssize_t cx2070x_store(struct device *dev, struct device_attribute *attr,
@@ -257,7 +257,7 @@ static ssize_t cx2070x_indirect_regs_get(struct device *dev,
 	l = snd_soc_read(data->codec, CXREG_UPDATE_AL);	/* UpdateAL[7:0] 0x02fc */
 	m = snd_soc_read(data->codec, CXREG_UPDATE_AM);	/* UpdateAM[7:0] 0x02fd */
 	h = snd_soc_read(data->codec, CXREG_UPDATE_AH);	/* UpdateAH[7:0] 0x02fe */
-	s = snd_soc_read(data->codec, CXREG_UPDATE_LEN);/* UpdateLen[7:0] 0x02ff */
+	s = snd_soc_read(data->codec, CXREG_UPDATE_LEN);	/* UpdateLen[7:0] 0x02ff */
 
 	return sprintf(buf, "0x%02x%02x%02x %d\n", h, m, l, s);
 }
@@ -340,8 +340,8 @@ static ssize_t patchVersion(struct device *dev,
 	a7 = snd_soc_read(data->codec, 0x1585);	/* Patch_MED [7:0] 0x1585 */
 	a8 = snd_soc_read(data->codec, 0x1586);	/* Patch_LO [7:0] 0x1586 */
 
-	return sprintf(buf, "Cx2070%d FW Patch Version: %x.%x.%x\n", a1, a6, a7,
-		       a8);
+	return sprintf(buf, "Cx2070%d FW Patch Version: %02x.%02x.%02x\n", a1,
+		       a6, a7, a8);
 }
 
 static ssize_t fwVersion(struct device *dev,
@@ -362,8 +362,9 @@ static ssize_t fwVersion(struct device *dev,
 	a7 = snd_soc_read(data->codec, 0x1585);	/* Patch_MED [7:0] 0x1585 */
 	a8 = snd_soc_read(data->codec, 0x1586);	/* Patch_LO [7:0] 0x1586 */
 
-	return sprintf(buf, "Cx2070%d FW Version: %x.%x.%x.%x (%x.%x.%x)\n", a1,
-		       a2, a3, a4, a5, a6, a7, a8);
+	return sprintf(buf,
+		       "Cx2070%d FW Version: %02x.%02x.%02x.%02x (%02x.%02x.%02x)\n",
+		       a1, a2, a3, a4, a5, a6, a7, a8);
 }
 
 void do_cx_dump(struct snd_soc_codec *codec);
@@ -372,8 +373,7 @@ void do_cx_dump(struct snd_soc_codec *codec)
 	u8 a1, a2, a3, a4, a5, a6, a7, a8;
 	int i;
 
-	for (i = 0; i < 0x1600; ) {
-		printk("0x%04x : ", i);
+	for (i = 0; i < CX2070X_REG_MAX;) {
 		a1 = snd_soc_read(codec, i++);
 		a2 = snd_soc_read(codec, i++);
 		a3 = snd_soc_read(codec, i++);
@@ -382,11 +382,10 @@ void do_cx_dump(struct snd_soc_codec *codec)
 		a6 = snd_soc_read(codec, i++);
 		a7 = snd_soc_read(codec, i++);
 		a8 = snd_soc_read(codec, i++);
-		printk(" %04x %04x %04x %04x %04x %04x %04x\n", a1, a2, a3, a4, a5, a6, a7, a8);
+		pr_crit("0x%04x :  %02x %02x %02x %02x %02x %02x %02x %02x\n", (i - 8), a1, a2, a3,
+		       a4, a5, a6, a7, a8);
 	}
-
 }
-
 
 static ssize_t cxregdump(struct device *dev,
 			 struct device_attribute *attr, char *buf)
@@ -394,10 +393,40 @@ static ssize_t cxregdump(struct device *dev,
 	struct i2c_client *client = to_i2c_client(dev);
 	struct cx2070x_priv *data = i2c_get_clientdata(client);
 	u8 a1, a2, a3, a4, a5, a6, a7, a8;
-	int i;
+#if 0
+	int i, j;
+	unsigned char ret;
+	int loop_cnt = CX2070X_MAX_STORE_LOOPS;
+#endif
 
 	do_cx_dump(data->codec);
 
+#if 0				/* show contains on EEPROM */
+	printk("\nEEPROM: 16K Bytes\n");
+	for (j = 0; j < 16 * 1024; j += 256) {
+		cx2070x_i2c_indirect_set(client, j, 255);	/* addr */
+		snd_soc_write(data->codec, 0x400, 0x82);	/* read EEPROM */
+		ret = snd_soc_read(data->codec, 0x400);
+		loop_cnt = CX2070X_MAX_STORE_LOOPS;
+		do {
+			ret = snd_soc_read(data->codec, 0x0400);
+			udelay(100);
+		} while (ret & 0x80 && loop_cnt--);
+		printk("0x%04x:\n", j);
+		for (i = 0; i < 256;) {
+			a1 = snd_soc_read(data->codec, (0x300 + i++));
+			a2 = snd_soc_read(data->codec, (0x300 + i++));
+			a3 = snd_soc_read(data->codec, (0x300 + i++));
+			a4 = snd_soc_read(data->codec, (0x300 + i++));
+			a5 = snd_soc_read(data->codec, (0x300 + i++));
+			a6 = snd_soc_read(data->codec, (0x300 + i++));
+			a7 = snd_soc_read(data->codec, (0x300 + i++));
+			a8 = snd_soc_read(data->codec, (0x300 + i++));
+			printk(" %02x %02x %02x %02x %02x %02x %02x %02x\n", a1,
+			       a2, a3, a4, a5, a6, a7, a8);
+		}
+	}
+#endif
 	a1 = snd_soc_read(data->codec, 0x1005);	/* Chip[7:0] 0x1005 */
 	a2 = snd_soc_read(data->codec, 0x1002);	/* FV_HI [7:0] 0x1002 */
 	a3 = snd_soc_read(data->codec, 0x1001);	/* FV_LO [7:0] 0x1001 */
@@ -407,9 +436,10 @@ static ssize_t cxregdump(struct device *dev,
 	a7 = snd_soc_read(data->codec, 0x1585);	/* Patch_MED [7:0] 0x1585 */
 	a8 = snd_soc_read(data->codec, 0x1586);	/* Patch_LO [7:0] 0x1586 */
 
-	return sprintf(buf, "Cx2070%d FW Version: %x.%x.%x.%x (%x.%x.%x)\n", a1, a2, a3, a4, a5, a6, a7, a8);
+	return sprintf(buf,
+		       "Cx2070%d FW Version: %02x.%02x.%02x.%02x (%02x.%02x.%02x)\n",
+		       a1, a2, a3, a4, a5, a6, a7, a8);
 }
-
 
 static ssize_t cx2070x_aec_show(struct device *dev,
 				struct device_attribute *attr, char *buf)

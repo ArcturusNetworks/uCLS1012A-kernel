@@ -1,5 +1,7 @@
-dtb-$(CONFIG_ARCH_LAYERSCAPE) += \
-	arc-ucls1012a.dtb arc-ucls1012a-oc.dtb 	arc-ucls1012a-phone.dtb
+# SPDX-License-Identifier: GPL-2.0
+#
+
+dtb-$(CONFIG_ARCH_LAYERSCAPE) += arc-ucls1012a.dtb
 
 always		:= $(dtb-y)
 subdir-y	:= $(dts-dirs)

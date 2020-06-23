@@ -10,6 +10,7 @@
  */
 #include <asm/asm.h>
 #include <asm/asm-offsets.h>
+#include <asm/export.h>
 #include <asm/regdef.h>
 
 #if LONGSIZE == 4
@@ -218,7 +219,7 @@
 1:	PTR_ADDIU	a0, 1			/* fill bytewise */
 	R10KCBARRIER(0(ra))
 	bne		t1, a0, 1b
-	sb		a1, -1(a0)
+	 EX(sb, a1, -1(a0), .Lsmall_fixup\@)
 
 2:	jr		ra			/* done */
 	move		a2, zero
@@ -228,10 +229,12 @@
 	.hidden __memset
 	.endif
 
+#ifdef CONFIG_CPU_MIPSR6
 .Lbyte_fixup\@:
 	PTR_SUBU	a2, $0, t0
 	jr		ra
 	 PTR_ADDIU	a2, 1
+#endif /* CONFIG_CPU_MIPSR6 */
 
 .Lfirst_fixup\@:
 	jr	ra
@@ -249,13 +252,18 @@
 	PTR_L		t0, TI_TASK($28)
 	andi		a2, STORMASK
 	LONG_L		t0, THREAD_BUADDR(t0)
-	LONG_ADDU	a2, t1
+	LONG_ADDU	a2, a0
 	jr		ra
 	LONG_SUBU	a2, t0
 
 .Llast_fixup\@:
 	jr		ra
-	andi		v1, a2, STORMASK
+	 nop
+
+.Lsmall_fixup\@:
+	PTR_SUBU	a2, t1, a0
+	jr		ra
+	 PTR_ADDIU	a2, 1
 
 	.endm
 
@@ -268,6 +276,7 @@
  */
 
 LEAF(memset)
+EXPORT_SYMBOL(memset)
 	beqz		a1, 1f
 	move		v0, a0			/* result */
 
@@ -283,11 +292,16 @@ LEAF(memset)
 1:
 #ifndef CONFIG_EVA
 FEXPORT(__bzero)
+EXPORT_SYMBOL(__bzero)
+#else
+FEXPORT(__bzero_kernel)
+EXPORT_SYMBOL(__bzero_kernel)
 #endif
 	__BUILD_BZERO LEGACY_MODE
 
 #ifdef CONFIG_EVA
 LEAF(__bzero)
+EXPORT_SYMBOL(__bzero)
 	__BUILD_BZERO EVA_MODE
 END(__bzero)
 #endif

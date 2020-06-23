@@ -36,153 +36,161 @@
 #define DPMAC_VER_MAJOR				4
 #define DPMAC_VER_MINOR				2
 #define DPMAC_CMD_BASE_VERSION			1
+#define DPMAC_CMD_2ND_VERSION			2
 #define DPMAC_CMD_ID_OFFSET			4
 
+#define DPMAC_CMD(id)	(((id) << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
+#define DPMAC_CMD_V2(id) (((id) << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_2ND_VERSION)
+
 /* Command IDs */
-#define DPMAC_CMDID_CLOSE                       ((0x800 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_OPEN                        ((0x80c << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_CREATE                      ((0x90c << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_DESTROY                     ((0x98c << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_API_VERSION             ((0xa0c << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
+#define DPMAC_CMDID_CLOSE		DPMAC_CMD(0x800)
+#define DPMAC_CMDID_OPEN		DPMAC_CMD(0x80c)
+#define DPMAC_CMDID_CREATE		DPMAC_CMD(0x90c)
+#define DPMAC_CMDID_DESTROY		DPMAC_CMD(0x98c)
+#define DPMAC_CMDID_GET_API_VERSION	DPMAC_CMD(0xa0c)
 
-#define DPMAC_CMDID_GET_ATTR                    ((0x004 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_RESET                       ((0x005 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
+#define DPMAC_CMDID_GET_ATTR		DPMAC_CMD(0x004)
+#define DPMAC_CMDID_RESET		DPMAC_CMD(0x005)
 
-#define DPMAC_CMDID_SET_IRQ                     ((0x010 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_IRQ                     ((0x011 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_SET_IRQ_ENABLE              ((0x012 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_IRQ_ENABLE              ((0x013 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_SET_IRQ_MASK                ((0x014 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_IRQ_MASK                ((0x015 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_IRQ_STATUS              ((0x016 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_CLEAR_IRQ_STATUS            ((0x017 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
+#define DPMAC_CMDID_SET_IRQ_ENABLE	DPMAC_CMD(0x012)
+#define DPMAC_CMDID_GET_IRQ_ENABLE	DPMAC_CMD(0x013)
+#define DPMAC_CMDID_SET_IRQ_MASK	DPMAC_CMD(0x014)
+#define DPMAC_CMDID_GET_IRQ_MASK	DPMAC_CMD(0x015)
+#define DPMAC_CMDID_GET_IRQ_STATUS	DPMAC_CMD(0x016)
+#define DPMAC_CMDID_CLEAR_IRQ_STATUS	DPMAC_CMD(0x017)
 
-#define DPMAC_CMDID_MDIO_READ                   ((0x0c0 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_MDIO_WRITE                  ((0x0c1 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_LINK_CFG                ((0x0c2 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_SET_LINK_STATE              ((0x0c3 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
-#define DPMAC_CMDID_GET_COUNTER                 ((0x0c4 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
+#define DPMAC_CMDID_GET_LINK_CFG	DPMAC_CMD(0x0c2)
+#define DPMAC_CMDID_GET_LINK_CFG_V2	DPMAC_CMD_V2(0x0c2)
+#define DPMAC_CMDID_SET_LINK_STATE	DPMAC_CMD(0x0c3)
+#define DPMAC_CMDID_SET_LINK_STATE_V2	DPMAC_CMD_V2(0x0c3)
+#define DPMAC_CMDID_GET_COUNTER		DPMAC_CMD(0x0c4)
 
-#define DPMAC_CMDID_SET_PORT_MAC_ADDR           ((0x0c5 << DPMAC_CMD_ID_OFFSET) | DPMAC_CMD_BASE_VERSION)
+#define DPMAC_CMDID_SET_PORT_MAC_ADDR	DPMAC_CMD(0x0c5)
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_CREATE(cmd, cfg) \
-	MC_CMD_OP(cmd, 0, 0,  16, uint16_t,      cfg->mac_id)
+/* Macros for accessing command fields smaller than 1byte */
+#define DPMAC_MASK(field)        \
+	GENMASK(DPMAC_##field##_SHIFT + DPMAC_##field##_SIZE - 1, \
+		DPMAC_##field##_SHIFT)
+#define dpmac_set_field(var, field, val) \
+	((var) |= (((val) << DPMAC_##field##_SHIFT) & DPMAC_MASK(field)))
+#define dpmac_get_field(var, field)      \
+	(((var) & DPMAC_MASK(field)) >> DPMAC_##field##_SHIFT)
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_OPEN(cmd, dpmac_id) \
-	MC_CMD_OP(cmd, 0, 0,  32, int,	    dpmac_id)
+struct dpmac_cmd_open {
+	u32 dpmac_id;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_SET_IRQ(cmd, irq_index, irq_cfg) \
-do { \
-	MC_CMD_OP(cmd, 0, 0,  8,  uint8_t,  irq_index);\
-	MC_CMD_OP(cmd, 0, 32, 32, uint32_t, irq_cfg->val);\
-	MC_CMD_OP(cmd, 1, 0,  64, uint64_t, irq_cfg->addr); \
-	MC_CMD_OP(cmd, 2, 0,  32, int,	    irq_cfg->irq_num); \
-} while (0)
+struct dpmac_cmd_create {
+	u32 mac_id;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_GET_IRQ(cmd, irq_index) \
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index)
+struct dpmac_cmd_destroy {
+	u32 dpmac_id;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_RSP_GET_IRQ(cmd, type, irq_cfg) \
-do { \
-	MC_RSP_OP(cmd, 0, 0,  32, uint32_t, irq_cfg->val); \
-	MC_RSP_OP(cmd, 1, 0,  64, uint64_t, irq_cfg->addr); \
-	MC_RSP_OP(cmd, 2, 0,  32, int,	    irq_cfg->irq_num); \
-	MC_RSP_OP(cmd, 2, 32, 32, int,	    type); \
-} while (0)
+struct dpmac_cmd_set_irq_enable {
+	u8 enable;
+	u8 pad[3];
+	u8 irq_index;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_SET_IRQ_ENABLE(cmd, irq_index, en) \
-do { \
-	MC_CMD_OP(cmd, 0, 0,  8,  uint8_t,  en); \
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index);\
-} while (0)
+struct dpmac_cmd_get_irq_enable {
+	u32 pad;
+	u8 irq_index;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_GET_IRQ_ENABLE(cmd, irq_index) \
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index)
+struct dpmac_rsp_get_irq_enable {
+	u8 enabled;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_RSP_GET_IRQ_ENABLE(cmd, en) \
-	MC_RSP_OP(cmd, 0, 0,  8,  uint8_t,  en)
+struct dpmac_cmd_set_irq_mask {
+	u32 mask;
+	u8 irq_index;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_SET_IRQ_MASK(cmd, irq_index, mask) \
-do { \
-	MC_CMD_OP(cmd, 0, 0,  32, uint32_t, mask);\
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index);\
-} while (0)
+struct dpmac_cmd_get_irq_mask {
+	u32 pad;
+	u8 irq_index;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_GET_IRQ_MASK(cmd, irq_index) \
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index)
+struct dpmac_rsp_get_irq_mask {
+	u32 mask;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_RSP_GET_IRQ_MASK(cmd, mask) \
-	MC_RSP_OP(cmd, 0, 0,  32, uint32_t, mask)
+struct dpmac_cmd_get_irq_status {
+	u32 status;
+	u8 irq_index;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_GET_IRQ_STATUS(cmd, irq_index, status) \
-do { \
-	MC_CMD_OP(cmd, 0, 0,  32, uint32_t, status);\
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index);\
-} while (0)
+struct dpmac_rsp_get_irq_status {
+	u32 status;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_RSP_GET_IRQ_STATUS(cmd, status) \
-	MC_RSP_OP(cmd, 0, 0,  32, uint32_t, status)
+struct dpmac_cmd_clear_irq_status {
+	u32 status;
+	u8 irq_index;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_CLEAR_IRQ_STATUS(cmd, irq_index, status) \
-do { \
-	MC_CMD_OP(cmd, 0, 0,  32, uint32_t, status); \
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  irq_index);\
-} while (0)
+struct dpmac_rsp_get_attributes {
+	u8 eth_if;
+	u8 link_type;
+	u16 id;
+	u32 max_rate;
+};
 
-/*                cmd, param, offset, width, type,	arg_name */
-#define DPMAC_RSP_GET_ATTRIBUTES(cmd, attr) \
-do { \
-	MC_RSP_OP(cmd, 0, 0,  8,  uint8_t,		attr->eth_if);\
-	MC_RSP_OP(cmd, 0, 8,  8,  uint8_t,		attr->link_type);\
-	MC_RSP_OP(cmd, 0, 16, 16, uint16_t,		attr->id);\
-	MC_RSP_OP(cmd, 0, 32, 32, uint32_t,		attr->max_rate);\
-} while (0)
+struct dpmac_rsp_get_link_cfg {
+	u64 options;
+	u32 rate;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_RSP_GET_LINK_CFG(cmd, cfg) \
-do { \
-	MC_RSP_OP(cmd, 0, 0,  64, uint64_t, cfg->options); \
-	MC_RSP_OP(cmd, 1, 0,  32, uint32_t, cfg->rate); \
-} while (0)
+struct dpmac_rsp_get_link_cfg_v2 {
+	u64 options;
+	u32 rate;
+	u32 pad;
+	u64 advertising;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_SET_LINK_STATE(cmd, cfg) \
-do { \
-	MC_CMD_OP(cmd, 0, 0,  64, uint64_t, cfg->options); \
-	MC_CMD_OP(cmd, 1, 0,  32, uint32_t, cfg->rate); \
-	MC_CMD_OP(cmd, 2, 0,  1,  int,      cfg->up); \
-} while (0)
+#define DPMAC_STATE_SIZE	1
+#define DPMAC_STATE_SHIFT	0
+#define DPMAC_STATE_VALID_SIZE	1
+#define DPMAC_STATE_VALID_SHIFT	1
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_CMD_GET_COUNTER(cmd, type) \
-	MC_CMD_OP(cmd, 0, 0,  8, enum dpmac_counter, type)
+struct dpmac_cmd_set_link_state {
+	u64 options;
+	u32 rate;
+	u32 pad;
+	/* only least significant bit is valid */
+	u8 up;
+};
 
-/*                cmd, param, offset, width, type, arg_name */
-#define DPMAC_RSP_GET_COUNTER(cmd, counter) \
-	MC_RSP_OP(cmd, 1, 0, 64, uint64_t, counter)
+struct dpmac_cmd_set_link_state_v2 {
+	u64 options;
+	u32 rate;
+	u32 pad0;
+	/* from lsb: up:1, state_valid:1 */
+	u8 state;
+	u8 pad1[7];
+	u64 supported;
+	u64 advertising;
+};
 
-#define DPMAC_CMD_SET_PORT_MAC_ADDR(cmd, addr) \
-do { \
-	MC_CMD_OP(cmd, 0, 16, 8,  uint8_t,  addr[5]); \
-	MC_CMD_OP(cmd, 0, 24, 8,  uint8_t,  addr[4]); \
-	MC_CMD_OP(cmd, 0, 32, 8,  uint8_t,  addr[3]); \
-	MC_CMD_OP(cmd, 0, 40, 8,  uint8_t,  addr[2]); \
-	MC_CMD_OP(cmd, 0, 48, 8,  uint8_t,  addr[1]); \
-	MC_CMD_OP(cmd, 0, 56, 8,  uint8_t,  addr[0]); \
-} while (0)
+struct dpmac_cmd_get_counter {
+	u8 type;
+};
+
+struct dpmac_rsp_get_counter {
+	u64 pad;
+	u64 counter;
+};
+
+struct dpmac_rsp_get_api_version {
+	u16 major;
+	u16 minor;
+};
+
+struct dpmac_cmd_set_port_mac_addr {
+	u8 pad[2];
+	u8 addr[6];
+};
 
 #endif /* _FSL_DPMAC_CMD_H */

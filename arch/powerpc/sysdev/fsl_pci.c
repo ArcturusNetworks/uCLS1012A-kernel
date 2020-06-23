@@ -21,26 +21,27 @@
 #include <linux/pci.h>
 #include <linux/delay.h>
 #include <linux/string.h>
+#include <linux/fsl/edac.h>
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/memblock.h>
 #include <linux/log2.h>
+#include <linux/platform_device.h>
 #include <linux/slab.h>
 #include <linux/suspend.h>
 #include <linux/syscore_ops.h>
 #include <linux/uaccess.h>
 
 #include <asm/io.h>
-#include <asm/fsl_pm.h>
 #include <asm/prom.h>
 #include <asm/pci-bridge.h>
 #include <asm/ppc-pci.h>
 #include <asm/machdep.h>
+#include <asm/mpc85xx.h>
 #include <asm/disassemble.h>
 #include <asm/ppc-opcode.h>
 #include <sysdev/fsl_soc.h>
 #include <sysdev/fsl_pci.h>
-#include <linux/fsl/svr.h>
 
 static int fsl_pcie_bus_fixup, is_mpc83xx_pci;
 
@@ -110,8 +111,7 @@ static struct pci_ops fsl_indirect_pcie_ops =
 	.write = indirect_write_config,
 };
 
-#define MAX_PHYS_ADDR_BITS	40
-static u64 pci64_dma_offset = 1ull << MAX_PHYS_ADDR_BITS;
+static u64 pci64_dma_offset;
 
 #ifdef CONFIG_SWIOTLB
 static void setup_swiotlb_ops(struct pci_controller *hose)
@@ -131,12 +131,10 @@ static int fsl_pci_dma_set_mask(struct device *dev, u64 dma_mask)
 		return -EIO;
 
 	/*
-	 * Fixup PCI devices that are able to DMA to above the physical
-	 * address width of the SoC such that we can address any internal
-	 * SoC address from across PCI if needed
+	 * Fix up PCI devices that are able to DMA to the large inbound
+	 * mapping that allows addressing any RAM address from across PCI.
 	 */
-	if ((dev_is_pci(dev)) &&
-	    dma_mask >= DMA_BIT_MASK(MAX_PHYS_ADDR_BITS)) {
+	if (dev_is_pci(dev) && dma_mask >= pci64_dma_offset * 2 - 1) {
 		set_dma_ops(dev, &dma_direct_ops);
 		set_dma_offset(dev, pci64_dma_offset);
 	}
@@ -204,7 +202,6 @@ static void setup_pci_atmu(struct pci_controller *hose)
 	u32 pcicsrbar = 0, pcicsrbar_sz;
 	u32 piwar = PIWAR_EN | PIWAR_PF | PIWAR_TGI_LOCAL |
 			PIWAR_READ_SNOOP | PIWAR_WRITE_SNOOP;
-	const char *name = hose->dn->full_name;
 	const u64 *reg;
 	int len;
 	bool setup_inbound;
@@ -217,6 +214,19 @@ static void setup_pci_atmu(struct pci_controller *hose)
 	 * hose->dma_window_size still get set.
 	 */
 	setup_inbound = !is_kdump();
+
+	if (of_device_is_compatible(hose->dn, "fsl,bsc9132-pcie")) {
+		/*
+		 * BSC9132 Rev1.0 has an issue where all the PEX inbound
+		 * windows have implemented the default target value as 0xf
+		 * for CCSR space.In all Freescale legacy devices the target
+		 * of 0xf is reserved for local memory space. 9132 Rev1.0
+		 * now has local mempry space mapped to target 0x0 instead of
+		 * 0xf. Hence adding a workaround to remove the target 0xf
+		 * defined for memory space from Inbound window attributes.
+		 */
+		piwar &= ~PIWAR_TGI_LOCAL;
+	}
 
 	if (early_find_capability(hose, 0, 0, PCI_CAP_ID_EXP)) {
 		if (in_be32(&pci->block_rev1) >= PCIE_IP_REV_2_2) {
@@ -279,12 +289,12 @@ static void setup_pci_atmu(struct pci_controller *hose)
 	paddr_lo -= offset;
 
 	if (paddr_hi == paddr_lo) {
-		pr_err("%s: No outbound window space\n", name);
+		pr_err("%pOF: No outbound window space\n", hose->dn);
 		return;
 	}
 
 	if (paddr_lo == 0) {
-		pr_err("%s: No space for inbound window\n", name);
+		pr_err("%pOF: No space for inbound window\n", hose->dn);
 		return;
 	}
 
@@ -302,7 +312,7 @@ static void setup_pci_atmu(struct pci_controller *hose)
 
 	paddr_lo = min(paddr_lo, (u64)pcicsrbar);
 
-	pr_info("%s: PCICSRBAR @ 0x%x\n", name, pcicsrbar);
+	pr_info("%pOF: PCICSRBAR @ 0x%x\n", hose->dn, pcicsrbar);
 
 	/* Setup inbound mem window */
 	mem = memblock_end_of_DRAM();
@@ -325,12 +335,12 @@ static void setup_pci_atmu(struct pci_controller *hose)
 		u64 address = be64_to_cpup(reg);
 
 		if ((address >= mem) && (address < (mem + PAGE_SIZE))) {
-			pr_info("%s: extending DDR ATMU to cover MSIIR", name);
+			pr_info("%pOF: extending DDR ATMU to cover MSIIR", hose->dn);
 			mem += PAGE_SIZE;
 		} else {
 			/* TODO: Create a new ATMU for MSIIR */
-			pr_warn("%s: msi-address-64 address of %llx is "
-				"unsupported\n", name, address);
+			pr_warn("%pOF: msi-address-64 address of %llx is "
+				"unsupported\n", hose->dn, address);
 		}
 	}
 
@@ -343,8 +353,8 @@ static void setup_pci_atmu(struct pci_controller *hose)
 		if ((1ull << mem_log) != mem) {
 			mem_log++;
 			if ((1ull << mem_log) > mem)
-				pr_info("%s: Setting PCI inbound window "
-					"greater than memory size\n", name);
+				pr_info("%pOF: Setting PCI inbound window "
+					"greater than memory size\n", hose->dn);
 		}
 
 		piwar |= ((mem_log - 1) & PIWAR_SZ_MASK);
@@ -373,6 +383,7 @@ static void setup_pci_atmu(struct pci_controller *hose)
 				mem_log++;
 
 			piwar = (piwar & ~PIWAR_SZ_MASK) | (mem_log - 1);
+			pci64_dma_offset = 1ULL << mem_log;
 
 			if (setup_inbound) {
 				/* Setup inbound memory window */
@@ -390,7 +401,7 @@ static void setup_pci_atmu(struct pci_controller *hose)
 			 */
 			ppc_md.dma_set_mask = fsl_pci_dma_set_mask;
 
-			pr_info("%s: Setup 64-bit PCI DMA window\n", name);
+			pr_info("%pOF: Setup 64-bit PCI DMA window\n", hose->dn);
 		}
 	} else {
 		u64 paddr = 0;
@@ -431,18 +442,18 @@ static void setup_pci_atmu(struct pci_controller *hose)
 #ifdef CONFIG_SWIOTLB
 		ppc_swiotlb_enable = 1;
 #else
-		pr_err("%s: ERROR: Memory size exceeds PCI ATMU ability to "
+		pr_err("%pOF: ERROR: Memory size exceeds PCI ATMU ability to "
 			"map - enable CONFIG_SWIOTLB to avoid dma errors.\n",
-			 name);
+			 hose->dn);
 #endif
 		/* adjusting outbound windows could reclaim space in mem map */
 		if (paddr_hi < 0xffffffffull)
-			pr_warning("%s: WARNING: Outbound window cfg leaves "
+			pr_warning("%pOF: WARNING: Outbound window cfg leaves "
 				"gaps in memory map. Adjusting the memory map "
 				"could reduce unnecessary bounce buffering.\n",
-				name);
+				hose->dn);
 
-		pr_info("%s: DMA window size is 0x%llx\n", name,
+		pr_info("%pOF: DMA window size is 0x%llx\n", hose->dn,
 			(u64)hose->dma_window_size);
 	}
 }
@@ -514,15 +525,17 @@ int fsl_add_bridge(struct platform_device *pdev, int is_primary)
 	u8 hdr_type, progif;
 	struct device_node *dev;
 	struct ccsr_pci __iomem *pci;
+	u16 temp;
+	u32 svr = mfspr(SPRN_SVR);
 
 	dev = pdev->dev.of_node;
 
 	if (!of_device_is_available(dev)) {
-		pr_warning("%s: disabled\n", dev->full_name);
+		pr_warning("%pOF: disabled\n", dev);
 		return -ENODEV;
 	}
 
-	pr_debug("Adding PCI host bridge %s\n", dev->full_name);
+	pr_debug("Adding PCI host bridge %pOF\n", dev);
 
 	/* Fetch host bridge registers address */
 	if (of_address_to_resource(dev, 0, &rsrc)) {
@@ -533,8 +546,8 @@ int fsl_add_bridge(struct platform_device *pdev, int is_primary)
 	/* Get bus range if any */
 	bus_range = of_get_property(dev, "bus-range", &len);
 	if (bus_range == NULL || len < 2 * sizeof(int))
-		printk(KERN_WARNING "Can't get bus-range for %s, assume"
-			" bus 0\n", dev->full_name);
+		printk(KERN_WARNING "Can't get bus-range for %pOF, assume"
+			" bus 0\n", dev);
 
 	pci_add_flags(PCI_REASSIGN_ALL_BUS);
 	hose = pcibios_alloc_controller(dev);
@@ -562,7 +575,7 @@ int fsl_add_bridge(struct platform_device *pdev, int is_primary)
 	if (early_find_capability(hose, 0, 0, PCI_CAP_ID_EXP)) {
 		/* use fsl_indirect_read_config for PCIe */
 		hose->ops = &fsl_indirect_pcie_ops;
-		/* For PCIE read HEADER_TYPE to identify controler mode */
+		/* For PCIE read HEADER_TYPE to identify controller mode */
 		early_read_config_byte(hose, 0, 0, PCI_HEADER_TYPE, &hdr_type);
 		if ((hdr_type & 0x7f) != PCI_HEADER_TYPE_BRIDGE)
 			goto no_bridge;
@@ -583,6 +596,27 @@ int fsl_add_bridge(struct platform_device *pdev, int is_primary)
 			PPC_INDIRECT_TYPE_SURPRESS_PRIMARY_BUS;
 		if (fsl_pcie_check_link(hose))
 			hose->indirect_type |= PPC_INDIRECT_TYPE_NO_PCIE_LINK;
+	} else {
+		/*
+		 * Set PBFR(PCI Bus Function Register)[10] = 1 to
+		 * disable the combining of crossing cacheline
+		 * boundary requests into one burst transaction.
+		 * PCI-X operation is not affected.
+		 * Fix erratum PCI 5 on MPC8548
+		 */
+#define PCI_BUS_FUNCTION 0x44
+#define PCI_BUS_FUNCTION_MDS 0x400	/* Master disable streaming */
+		if (((SVR_SOC_VER(svr) == SVR_8543) ||
+		     (SVR_SOC_VER(svr) == SVR_8545) ||
+		     (SVR_SOC_VER(svr) == SVR_8547) ||
+		     (SVR_SOC_VER(svr) == SVR_8548)) &&
+		    !early_find_capability(hose, 0, 0, PCI_CAP_ID_PCIX)) {
+			early_read_config_word(hose, 0, 0,
+					PCI_BUS_FUNCTION, &temp);
+			temp |= PCI_BUS_FUNCTION_MDS;
+			early_write_config_word(hose, 0, 0,
+					PCI_BUS_FUNCTION, temp);
+		}
 	}
 
 	printk(KERN_INFO "Found FSL PCI host bridge at 0x%016llx. "
@@ -774,11 +808,11 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 	is_mpc83xx_pci = 1;
 
 	if (!of_device_is_available(dev)) {
-		pr_warning("%s: disabled by the firmware.\n",
-			   dev->full_name);
+		pr_warning("%pOF: disabled by the firmware.\n",
+			   dev);
 		return -ENODEV;
 	}
-	pr_debug("Adding PCI host bridge %s\n", dev->full_name);
+	pr_debug("Adding PCI host bridge %pOF\n", dev);
 
 	/* Fetch host bridge registers address */
 	if (of_address_to_resource(dev, 0, &rsrc_reg)) {
@@ -813,8 +847,8 @@ int __init mpc83xx_add_bridge(struct device_node *dev)
 	/* Get bus range if any */
 	bus_range = of_get_property(dev, "bus-range", &len);
 	if (bus_range == NULL || len < 2 * sizeof(int)) {
-		printk(KERN_WARNING "Can't get bus-range for %s, assume"
-		       " bus 0\n", dev->full_name);
+		printk(KERN_WARNING "Can't get bus-range for %pOF, assume"
+		       " bus 0\n", dev);
 	}
 
 	pci_add_flags(PCI_REASSIGN_ALL_BUS);
@@ -1039,10 +1073,10 @@ int fsl_pci_mcheck_exception(struct pt_regs *regs)
 			ret = get_user(regs->nip, &inst);
 			pagefault_enable();
 		} else {
-			ret = probe_kernel_address(regs->nip, inst);
+			ret = probe_kernel_address((void *)regs->nip, inst);
 		}
 
-		if (mcheck_handle_load(regs, inst)) {
+		if (!ret && mcheck_handle_load(regs, inst)) {
 			regs->nip += 4;
 			return 1;
 		}
@@ -1153,7 +1187,7 @@ static int fsl_pci_pme_probe(struct pci_controller *hose)
 			IRQF_SHARED,
 			"[PCI] PME", hose);
 	if (res < 0) {
-		dev_err(&dev->dev, "Unable to requiest irq %d for PME\n", pme_irq);
+		dev_err(&dev->dev, "Unable to request irq %d for PME\n", pme_irq);
 		irq_dispose_mapping(pme_irq);
 
 		return -ENODEV;
@@ -1177,17 +1211,6 @@ static int fsl_pci_pme_probe(struct pci_controller *hose)
 	return 0;
 }
 
-static int pcie_slot_flag;
-
-/* Workaround: p1022ds need reset slot when the system wakeup from deep sleep */
-static int reset_pcie_slot(void)
-{
-#ifdef CONFIG_P1022_DS
-	p1022ds_reset_pcie_slot();
-#endif
-	return 0;
-}
-
 static void send_pme_turnoff_message(struct pci_controller *hose)
 {
 	struct ccsr_pci __iomem *pci = hose->private_data;
@@ -1198,39 +1221,20 @@ static void send_pme_turnoff_message(struct pci_controller *hose)
 	setbits32(&pci->pex_pmcr, PEX_PMCR_PTOMR);
 
 	/* Wait trun off done */
-	/* RC will get this detect quickly */
-	for (i = 0; i < 50; i++) {
+	for (i = 0; i < 150; i++) {
 		dr = in_be32(&pci->pex_pme_mes_dr);
-		if (dr & ENL23_DETECT_BIT) {
+		if (dr) {
 			out_be32(&pci->pex_pme_mes_dr, dr);
 			break;
 		}
 
-		mdelay(1);
+		udelay(1000);
 	}
-
-	/*
-	 * "PCI Bus Power Management Interface Specification" define
-	 * Minimum System Software Guaranteed Delays
-	 *
-	 * D0, D1 or D2 --> D3, need delay 10ms.
-	 * But based on test results, it needs to delay 30ms when EP
-	 * plug in p1022 slot2. And it needs to delay 100ms when EP plug
-	 * in p1022 slot1. So need to get maximum delay.
-	 */
-	mdelay(100);
 }
 
 static void fsl_pci_syscore_do_suspend(struct pci_controller *hose)
 {
-	suspend_state_t pm_state;
-
-	pm_state = pm_suspend_state();
-
 	send_pme_turnoff_message(hose);
-
-	if (pm_state == PM_SUSPEND_MEM)
-		pcie_slot_flag = 0;
 }
 
 static int fsl_pci_syscore_suspend(void)
@@ -1243,74 +1247,26 @@ static int fsl_pci_syscore_suspend(void)
 	return 0;
 }
 
-#define PCIE_RESET_SLOT_WAITTIME	100000 /* wait 100 ms */
 static void fsl_pci_syscore_do_resume(struct pci_controller *hose)
 {
 	struct ccsr_pci __iomem *pci = hose->private_data;
-	struct pci_dev *dev;
-	u32 svr = mfspr(SPRN_SVR);
 	u32 dr;
-	suspend_state_t pm_state;
 	int i;
-	u16 pms;
 
 	/* Send Exit L2 State Message */
 	setbits32(&pci->pex_pmcr, PEX_PMCR_EXL2S);
 
 	/* Wait exit done */
-	/* RC will get this detect quickly */
-	for (i = 0; i < 50; i++) {
+	for (i = 0; i < 150; i++) {
 		dr = in_be32(&pci->pex_pme_mes_dr);
-		if (dr & EXL23_DETECT_BIT) {
+		if (dr) {
 			out_be32(&pci->pex_pme_mes_dr, dr);
 			break;
 		}
 
-		mdelay(1);
+		udelay(1000);
 	}
 
-	/*
-	 * "PCI Bus Power Management Interface Specification" define
-	 * Minimum System Software Guaranteed Delays
-	 *
-	 * D0, D1 or D2 --> D3, need delay 10ms.
-	 * But based on test results, it needs to delay 30ms when EP
-	 * plug in p1022 slot2. And it needs to delay 100ms when EP plug
-	 * in p1022 slot1. So need to get maximum delay.
-	 */
-	mdelay(100);
-
-	pm_state = pm_suspend_state();
-	if (pm_state != PM_SUSPEND_MEM)
-		goto setup_atmu;
-
-	/* After resume from deep-sleep, it needs to restore below registers */
-	/* Enable PTOD, ENL23D & EXL23D */
-	clrbits32(&pci->pex_pme_mes_disr,
-		  PME_DISR_EN_PTOD | PME_DISR_EN_ENL23D | PME_DISR_EN_EXL23D);
-
-	out_be32(&pci->pex_pme_mes_ier, 0);
-	setbits32(&pci->pex_pme_mes_ier,
-		  PME_DISR_EN_PTOD | PME_DISR_EN_ENL23D | PME_DISR_EN_EXL23D);
-
-	/* Get hose's pci_dev */
-	dev = list_first_entry(&hose->bus->devices, typeof(*dev), bus_list);
-
-	/* PME Enable */
-	pci_read_config_word(dev, dev->pm_cap + PCI_PM_CTRL, &pms);
-	pms |= PCI_PM_CTRL_PME_ENABLE;
-	pci_write_config_word(dev, dev->pm_cap + PCI_PM_CTRL, pms);
-
-	/* Only reset slot, can rework the EP device */
-	if (SVR_SOC_VER(svr) == SVR_P1022 && !pcie_slot_flag) {
-		reset_pcie_slot();
-		pcie_slot_flag = 1;
-	}
-
-	spin_event_timeout(!fsl_pcie_check_link(hose),
-			   PCIE_RESET_SLOT_WAITTIME, 0);
-
-setup_atmu:
 	setup_pci_atmu(hose);
 }
 
@@ -1326,26 +1282,32 @@ static struct syscore_ops pci_syscore_pm_ops = {
 	.suspend = fsl_pci_syscore_suspend,
 	.resume = fsl_pci_syscore_resume,
 };
-
-#ifdef CONFIG_HIBERNATE_CALLBACKS
-static int fsl_pci_thaw_noirq(struct device *dev)
-{
-	struct pci_dev *pci_dev = to_pci_dev(dev);
-
-	pci_restore_state(pci_dev);
-	return 0;
-}
-#endif
 #endif
 
 void fsl_pcibios_fixup_phb(struct pci_controller *phb)
 {
 #ifdef CONFIG_PM_SLEEP
 	fsl_pci_pme_probe(phb);
-#ifdef CONFIG_HIBERNATE_CALLBACKS
-	pcibios_pm_ops.thaw_noirq = fsl_pci_thaw_noirq;
 #endif
-#endif
+}
+
+static int add_err_dev(struct platform_device *pdev)
+{
+	struct platform_device *errdev;
+	struct mpc85xx_edac_pci_plat_data pd = {
+		.of_node = pdev->dev.of_node
+	};
+
+	errdev = platform_device_register_resndata(&pdev->dev,
+						   "mpc85xx-pci-edac",
+						   PLATFORM_DEVID_AUTO,
+						   pdev->resource,
+						   pdev->num_resources,
+						   &pd, sizeof(pd));
+	if (IS_ERR(errdev))
+		return PTR_ERR(errdev);
+
+	return 0;
 }
 
 static int fsl_pci_probe(struct platform_device *pdev)
@@ -1355,8 +1317,13 @@ static int fsl_pci_probe(struct platform_device *pdev)
 
 	node = pdev->dev.of_node;
 	ret = fsl_add_bridge(pdev, fsl_pci_primary == node);
+	if (ret)
+		return ret;
 
-	mpc85xx_pci_err_probe(pdev);
+	ret = add_err_dev(pdev);
+	if (ret)
+		dev_err(&pdev->dev, "couldn't register error device: %d\n",
+			ret);
 
 	return 0;
 }

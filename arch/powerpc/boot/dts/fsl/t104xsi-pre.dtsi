@@ -1,7 +1,7 @@
 /*
  * T1040/T1042 Silicon/SoC Device Tree Source (pre include)
  *
- * Copyright 2013 Freescale Semiconductor Inc.
+ * Copyright 2013-2014 Freescale Semiconductor Inc.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -59,9 +59,6 @@
 
 		crypto = &crypto;
 
-		pme = &pme;
-		qman = &qman;
-		bman = &bman;
 		fman0 = &fman0;
 		ethernet0 = &enet0;
 		ethernet1 = &enet1;

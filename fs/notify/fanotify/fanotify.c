@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 #include <linux/fanotify.h>
 #include <linux/fdtable.h>
 #include <linux/fsnotify_backend.h>
@@ -6,6 +7,7 @@
 #include <linux/kernel.h> /* UINT_MAX */
 #include <linux/mount.h>
 #include <linux/sched.h>
+#include <linux/sched/user.h>
 #include <linux/types.h>
 #include <linux/wait.h>
 
@@ -31,7 +33,6 @@ static bool should_merge(struct fsnotify_event *old_fsn,
 static int fanotify_merge(struct list_head *list, struct fsnotify_event *event)
 {
 	struct fsnotify_event *test_event;
-	bool do_merge = false;
 
 	pr_debug("%s: list=%p event=%p\n", __func__, list, event);
 
@@ -47,21 +48,18 @@ static int fanotify_merge(struct list_head *list, struct fsnotify_event *event)
 
 	list_for_each_entry_reverse(test_event, list, list) {
 		if (should_merge(test_event, event)) {
-			do_merge = true;
-			break;
+			test_event->mask |= event->mask;
+			return 1;
 		}
 	}
 
-	if (!do_merge)
-		return 0;
-
-	test_event->mask |= event->mask;
-	return 1;
+	return 0;
 }
 
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
 static int fanotify_get_response(struct fsnotify_group *group,
-				 struct fanotify_perm_event_info *event)
+				 struct fanotify_perm_event_info *event,
+				 struct fsnotify_iter_info *iter_info)
 {
 	int ret;
 
@@ -90,10 +88,10 @@ static int fanotify_get_response(struct fsnotify_group *group,
 static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 				       struct fsnotify_mark *vfsmnt_mark,
 				       u32 event_mask,
-				       void *data, int data_type)
+				       const void *data, int data_type)
 {
-	__u32 marks_mask, marks_ignored_mask;
-	struct path *path = data;
+	__u32 marks_mask = 0, marks_ignored_mask = 0;
+	const struct path *path = data;
 
 	pr_debug("%s: inode_mark=%p vfsmnt_mark=%p mask=%x data=%p"
 		 " data_type=%d\n", __func__, inode_mark, vfsmnt_mark,
@@ -108,24 +106,20 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 	    !d_can_lookup(path->dentry))
 		return false;
 
-	if (inode_mark && vfsmnt_mark) {
-		marks_mask = (vfsmnt_mark->mask | inode_mark->mask);
-		marks_ignored_mask = (vfsmnt_mark->ignored_mask | inode_mark->ignored_mask);
-	} else if (inode_mark) {
-		/*
-		 * if the event is for a child and this inode doesn't care about
-		 * events on the child, don't send it!
-		 */
-		if ((event_mask & FS_EVENT_ON_CHILD) &&
-		    !(inode_mark->mask & FS_EVENT_ON_CHILD))
-			return false;
-		marks_mask = inode_mark->mask;
-		marks_ignored_mask = inode_mark->ignored_mask;
-	} else if (vfsmnt_mark) {
-		marks_mask = vfsmnt_mark->mask;
-		marks_ignored_mask = vfsmnt_mark->ignored_mask;
-	} else {
-		BUG();
+	/*
+	 * if the event is for a child and this inode doesn't care about
+	 * events on the child, don't send it!
+	 */
+	if (inode_mark &&
+	    (!(event_mask & FS_EVENT_ON_CHILD) ||
+	     (inode_mark->mask & FS_EVENT_ON_CHILD))) {
+		marks_mask |= inode_mark->mask;
+		marks_ignored_mask |= inode_mark->ignored_mask;
+	}
+
+	if (vfsmnt_mark) {
+		marks_mask |= vfsmnt_mark->mask;
+		marks_ignored_mask |= vfsmnt_mark->ignored_mask;
 	}
 
 	if (d_is_dir(path->dentry) &&
@@ -140,7 +134,7 @@ static bool fanotify_should_send_event(struct fsnotify_mark *inode_mark,
 }
 
 struct fanotify_event_info *fanotify_alloc_event(struct inode *inode, u32 mask,
-						 struct path *path)
+						 const struct path *path)
 {
 	struct fanotify_event_info *event;
 
@@ -177,8 +171,9 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 				 struct inode *inode,
 				 struct fsnotify_mark *inode_mark,
 				 struct fsnotify_mark *fanotify_mark,
-				 u32 mask, void *data, int data_type,
-				 const unsigned char *file_name, u32 cookie)
+				 u32 mask, const void *data, int data_type,
+				 const unsigned char *file_name, u32 cookie,
+				 struct fsnotify_iter_info *iter_info)
 {
 	int ret = 0;
 	struct fanotify_event_info *event;
@@ -202,9 +197,21 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 	pr_debug("%s: group=%p inode=%p mask=%x\n", __func__, group, inode,
 		 mask);
 
+#ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
+	if (mask & FAN_ALL_PERM_EVENTS) {
+		/*
+		 * fsnotify_prepare_user_wait() fails if we race with mark
+		 * deletion.  Just let the operation pass in that case.
+		 */
+		if (!fsnotify_prepare_user_wait(iter_info))
+			return 0;
+	}
+#endif
+
 	event = fanotify_alloc_event(inode, mask, data);
+	ret = -ENOMEM;
 	if (unlikely(!event))
-		return -ENOMEM;
+		goto finish;
 
 	fsn_event = &event->fse;
 	ret = fsnotify_add_event(group, fsn_event, fanotify_merge);
@@ -214,14 +221,21 @@ static int fanotify_handle_event(struct fsnotify_group *group,
 		/* Our event wasn't used in the end. Free it. */
 		fsnotify_destroy_event(group, fsn_event);
 
-		return 0;
+		ret = 0;
+		goto finish;
 	}
 
 #ifdef CONFIG_FANOTIFY_ACCESS_PERMISSIONS
 	if (mask & FAN_ALL_PERM_EVENTS) {
-		ret = fanotify_get_response(group, FANOTIFY_PE(fsn_event));
+		ret = fanotify_get_response(group, FANOTIFY_PE(fsn_event),
+					    iter_info);
 		fsnotify_destroy_event(group, fsn_event);
 	}
+finish:
+	if (mask & FAN_ALL_PERM_EVENTS)
+		fsnotify_finish_user_wait(iter_info);
+#else
+finish:
 #endif
 	return ret;
 }
@@ -252,8 +266,14 @@ static void fanotify_free_event(struct fsnotify_event *fsn_event)
 	kmem_cache_free(fanotify_event_cachep, event);
 }
 
+static void fanotify_free_mark(struct fsnotify_mark *fsn_mark)
+{
+	kmem_cache_free(fanotify_mark_cache, fsn_mark);
+}
+
 const struct fsnotify_ops fanotify_fsnotify_ops = {
 	.handle_event = fanotify_handle_event,
 	.free_group_priv = fanotify_free_group_priv,
 	.free_event = fanotify_free_event,
+	.free_mark = fanotify_free_mark,
 };

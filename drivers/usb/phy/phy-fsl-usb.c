@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2007,2008 Freescale semiconductor, Inc.
+ * Copyright 2007,2008 Freescale Semiconductor, Inc.
  *
  * Author: Li Yang <LeoLi@freescale.com>
  *         Jerry Huang <Chang-Ming.Huang@freescale.com>
@@ -43,6 +43,13 @@
 #include <asm/unaligned.h>
 
 #include "phy-fsl-usb.h"
+
+#ifdef VERBOSE
+#define VDBG(fmt, args...) pr_debug("[%s]  " fmt, \
+				 __func__, ## args)
+#else
+#define VDBG(stuff...)	do {} while (0)
+#endif
 
 #define DRIVER_VERSION "Rev. 1.55"
 #define DRIVER_AUTHOR "Jerry Huang/Li Yang"
@@ -656,17 +663,6 @@ static int fsl_otg_set_peripheral(struct usb_otg *otg,
 	return 0;
 }
 
-/* Set OTG port power, only for B-device */
-static int fsl_otg_set_power(struct usb_phy *phy, unsigned mA)
-{
-	if (!fsl_otg_dev)
-		return -ENODEV;
-	if (phy->otg->state == OTG_STATE_B_PERIPHERAL)
-		pr_info("FSL OTG: Draw %d mA\n", mA);
-
-	return 0;
-}
-
 /*
  * Delayed pin detect interrupt processing.
  *
@@ -830,7 +826,6 @@ static int fsl_otg_conf(struct platform_device *pdev)
 	/* initialize the otg structure */
 	fsl_otg_tc->phy.label = DRIVER_DESC;
 	fsl_otg_tc->phy.dev = &pdev->dev;
-	fsl_otg_tc->phy.set_power = fsl_otg_set_power;
 
 	fsl_otg_tc->phy.otg->usb_phy = &fsl_otg_tc->phy;
 	fsl_otg_tc->phy.otg->set_host = fsl_otg_set_host;
@@ -888,6 +883,7 @@ int usb_otg_start(struct platform_device *pdev)
 	if (pdata->init && pdata->init(pdev) != 0)
 		return -EINVAL;
 
+#ifdef CONFIG_PPC32
 	if (pdata->big_endian_mmio) {
 		_fsl_readl = _fsl_readl_be;
 		_fsl_writel = _fsl_writel_be;
@@ -895,6 +891,7 @@ int usb_otg_start(struct platform_device *pdev)
 		_fsl_readl = _fsl_readl_le;
 		_fsl_writel = _fsl_writel_le;
 	}
+#endif
 
 	/* request irq */
 	p_otg->irq = platform_get_irq(pdev, 0);
@@ -937,10 +934,10 @@ int usb_otg_start(struct platform_device *pdev)
 			setbits32(&p_otg->dr_mem_map->control,
 				USB_CTRL_ULPI_PHY_CLK_SEL);
 			/*
-			* Due to controller issue of PHY_CLK_VALID in ULPI
-			* mode, we set USB_CTRL_USB_EN before checking
-			* PHY_CLK_VALID, otherwise PHY_CLK_VALID doesn't work.
-			*/
+			 * Due to controller issue of PHY_CLK_VALID in ULPI
+			 * mode, we set USB_CTRL_USB_EN before checking
+			 * PHY_CLK_VALID, otherwise PHY_CLK_VALID doesn't work.
+			 */
 			clrsetbits_be32(&p_otg->dr_mem_map->control,
 				USB_CTRL_UTMI_PHY_EN, USB_CTRL_IOENB);
 		}
@@ -1005,7 +1002,7 @@ int usb_otg_start(struct platform_device *pdev)
 /*
  * state file in sysfs
  */
-static int show_fsl_usb2_otg_state(struct device *dev,
+static ssize_t show_fsl_usb2_otg_state(struct device *dev,
 				   struct device_attribute *attr, char *buf)
 {
 	struct otg_fsm *fsm = &fsl_otg_dev->fsm;

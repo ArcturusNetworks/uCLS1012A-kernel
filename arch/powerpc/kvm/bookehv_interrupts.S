@@ -62,7 +62,6 @@
 #define NEED_EMU		0x00000001 /* emulation -- save nv regs */
 #define NEED_DEAR		0x00000002 /* save faulting DEAR */
 #define NEED_ESR		0x00000004 /* save faulting ESR */
-#define NEED_LPER		0x00000008 /* save faulting LPER */
 
 /*
  * On entry:
@@ -75,6 +74,10 @@
 	PPC_STL	r2, VCPU_GPR(R2)(r4)
 	PPC_LL	r1, VCPU_HOST_STACK(r4)
 	PPC_LL	r2, HOST_R2(r1)
+
+START_BTB_FLUSH_SECTION
+	BTB_FLUSH(r10)
+END_BTB_FLUSH_SECTION
 
 	mfspr	r10, SPRN_PID
 	lwz	r8, VCPU_HOST_PID(r4)
@@ -158,12 +161,6 @@
 	.if	\flags & NEED_DEAR
 	mfspr	r9, SPRN_DEAR
 	PPC_STL	r9, VCPU_FAULT_DEAR(r4)
-	.endif
-
-	/* Only supported on 64-bit cores for now */
-	.if	\flags & NEED_LPER
-	mfspr	r7, SPRN_LPER
-	std	r7, VCPU_FAULT_LPER(r4)
 	.endif
 
 	b	kvmppc_resume_host
@@ -286,7 +283,7 @@ kvm_handler BOOKE_INTERRUPT_DEBUG, EX_PARAMS(DBG), \
 kvm_handler BOOKE_INTERRUPT_DEBUG, EX_PARAMS(CRIT), \
 	SPRN_CSRR0, SPRN_CSRR1, 0
 kvm_handler BOOKE_INTERRUPT_LRAT_ERROR, EX_PARAMS(GEN), \
-	SPRN_SRR0, SPRN_SRR1, (NEED_EMU | NEED_DEAR | NEED_ESR | NEED_LPER)
+	SPRN_SRR0, SPRN_SRR1, (NEED_EMU | NEED_DEAR | NEED_ESR)
 #else
 /*
  * For input register values, see arch/powerpc/include/asm/kvm_booke_hv_asm.h
