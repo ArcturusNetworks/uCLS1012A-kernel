@@ -97,7 +97,10 @@
 	};
 
 	reboot {
-		compatible = "gpio-restart";
+		compatible = "syscon-reboot";
+		regmap = <&dcfg>;
+		offset = <0xb0>;
+		mask = <0x02>;
 	};
 
 	soc {
