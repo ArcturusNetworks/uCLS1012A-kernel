@@ -96,12 +96,18 @@
 		interrupts = <1 9 IRQ_TYPE_LEVEL_LOW>;
 	};
 
+#if RESET_BY_GPIO
+	reboot {
+		compatible = "gpio-restart";
+	};
+#else
 	reboot {
 		compatible = "syscon-reboot";
 		regmap = <&dcfg>;
 		offset = <0xb0>;
 		mask = <0x02>;
 	};
+#endif
 
 	soc {
 		compatible = "simple-bus";
