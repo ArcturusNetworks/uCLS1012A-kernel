@@ -255,7 +255,7 @@ static int ftm_rtc_probe(struct platform_device *pdev)
 
 	rtc = devm_kzalloc(&pdev->dev, sizeof(*rtc), GFP_KERNEL);
 	if (unlikely(!rtc)) {
-		dev_err(&pdev->dev, "cannot alloc memery for rtc\n");
+		dev_err(&pdev->dev, "cannot alloc memory for rtc\n");
 		return -ENOMEM;
 	}
 
@@ -308,11 +308,11 @@ static int ftm_rtc_probe(struct platform_device *pdev)
 static const struct of_device_id ftm_rtc_match[] = {
 	{ .compatible = "fsl,ls1012a-ftm-alarm", },
 	{ .compatible = "fsl,ls1021a-ftm-alarm", },
+	{ .compatible = "fsl,ls1028a-ftm-alarm", },
 	{ .compatible = "fsl,ls1043a-ftm-alarm", },
 	{ .compatible = "fsl,ls1046a-ftm-alarm", },
 	{ .compatible = "fsl,ls1088a-ftm-alarm", },
 	{ .compatible = "fsl,ls208xa-ftm-alarm", },
-	{ .compatible = "fsl,ls1028a-ftm-alarm", },
 	{ .compatible = "fsl,lx2160a-ftm-alarm", },
 	{ },
 };

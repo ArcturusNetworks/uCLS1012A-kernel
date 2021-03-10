@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * (C) COPYRIGHT 2016 ARM Limited. All rights reserved.
  * Author: Brian Starkey <brian.starkey@arm.com>
@@ -8,12 +9,14 @@
  * of such GNU licence.
  */
 
+#include <linux/dma-fence.h>
+
 #include <drm/drm_crtc.h>
+#include <drm/drm_device.h>
+#include <drm/drm_drv.h>
 #include <drm/drm_modeset_helper_vtables.h>
 #include <drm/drm_property.h>
 #include <drm/drm_writeback.h>
-#include <drm/drmP.h>
-#include <linux/dma-fence.h>
 
 /**
  * DOC: overview
@@ -21,10 +24,13 @@
  * Writeback connectors are used to expose hardware which can write the output
  * from a CRTC to a memory buffer. They are used and act similarly to other
  * types of connectors, with some important differences:
- *  - Writeback connectors don't provide a way to output visually to the user.
- *  - Writeback connectors should always report as "disconnected" (so that
- *    clients which don't understand them will ignore them).
- *  - Writeback connectors don't have EDID.
+ *
+ * * Writeback connectors don't provide a way to output visually to the user.
+ *
+ * * Writeback connectors are visible to userspace only when the client sets
+ *   DRM_CLIENT_CAP_WRITEBACK_CONNECTORS.
+ *
+ * * Writeback connectors don't have EDID.
  *
  * A framebuffer may only be attached to a writeback connector when the
  * connector is attached to a CRTC. The WRITEBACK_FB_ID property which sets the
@@ -105,7 +111,7 @@ static const struct dma_fence_ops drm_writeback_fence_ops = {
 	.wait = dma_fence_default_wait,
 };
 
-static bool create_writeback_properties(struct drm_device *dev)
+static int create_writeback_properties(struct drm_device *dev)
 {
 	struct drm_property *prop;
 
@@ -114,15 +120,17 @@ static bool create_writeback_properties(struct drm_device *dev)
 						  "WRITEBACK_FB_ID",
 						  DRM_MODE_OBJECT_FB);
 		if (!prop)
-			return false;
+			return -ENOMEM;
 		dev->mode_config.writeback_fb_id_property = prop;
 	}
 
 	if (!dev->mode_config.writeback_pixel_formats_property) {
-		prop = drm_property_create(dev, DRM_MODE_PROP_BLOB | DRM_MODE_PROP_IMMUTABLE,
+		prop = drm_property_create(dev, DRM_MODE_PROP_BLOB |
+					   DRM_MODE_PROP_ATOMIC |
+					   DRM_MODE_PROP_IMMUTABLE,
 					   "WRITEBACK_PIXEL_FORMATS", 0);
 		if (!prop)
-			return false;
+			return -ENOMEM;
 		dev->mode_config.writeback_pixel_formats_property = prop;
 	}
 
@@ -135,7 +143,7 @@ static bool create_writeback_properties(struct drm_device *dev)
 		dev->mode_config.writeback_out_fence_ptr_property = prop;
 	}
 
-	return true;
+	return 0;
 }
 
 static const struct drm_encoder_funcs drm_writeback_encoder_funcs = {
@@ -169,13 +177,13 @@ int drm_writeback_connector_init(struct drm_device *dev,
 				 const struct drm_encoder_helper_funcs *enc_helper_funcs,
 				 const u32 *formats, int n_formats)
 {
-	int ret;
 	struct drm_property_blob *blob;
 	struct drm_connector *connector = &wb_connector->base;
 	struct drm_mode_config *config = &dev->mode_config;
+	int ret = create_writeback_properties(dev);
 
-	if (!create_writeback_properties(dev))
-		return -EINVAL;
+	if (ret != 0)
+		return ret;
 
 	blob = drm_property_create_blob(dev, n_formats * sizeof(*formats),
 					formats);
@@ -196,7 +204,7 @@ int drm_writeback_connector_init(struct drm_device *dev,
 	if (ret)
 		goto connector_fail;
 
-	ret = drm_mode_connector_attach_encoder(connector,
+	ret = drm_connector_attach_encoder(connector,
 						&wb_connector->encoder);
 	if (ret)
 		goto attach_fail;
@@ -228,19 +236,57 @@ attach_fail:
 connector_fail:
 	drm_encoder_cleanup(&wb_connector->encoder);
 fail:
-	drm_property_unreference_blob(blob);
+	drm_property_blob_put(blob);
 	return ret;
 }
 EXPORT_SYMBOL(drm_writeback_connector_init);
 
+int drm_writeback_set_fb(struct drm_connector_state *conn_state,
+			 struct drm_framebuffer *fb)
+{
+	WARN_ON(conn_state->connector->connector_type != DRM_MODE_CONNECTOR_WRITEBACK);
+
+	if (!conn_state->writeback_job) {
+		conn_state->writeback_job =
+			kzalloc(sizeof(*conn_state->writeback_job), GFP_KERNEL);
+		if (!conn_state->writeback_job)
+			return -ENOMEM;
+
+		conn_state->writeback_job->connector =
+			drm_connector_to_writeback(conn_state->connector);
+	}
+
+	drm_framebuffer_assign(&conn_state->writeback_job->fb, fb);
+	return 0;
+}
+
+int drm_writeback_prepare_job(struct drm_writeback_job *job)
+{
+	struct drm_writeback_connector *connector = job->connector;
+	const struct drm_connector_helper_funcs *funcs =
+		connector->base.helper_private;
+	int ret;
+
+	if (funcs->prepare_writeback_job) {
+		ret = funcs->prepare_writeback_job(connector, job);
+		if (ret < 0)
+			return ret;
+	}
+
+	job->prepared = true;
+	return 0;
+}
+EXPORT_SYMBOL(drm_writeback_prepare_job);
+
 /**
- * @drm_writeback_queue_job: Queue a writeback job for later signalling
+ * drm_writeback_queue_job - Queue a writeback job for later signalling
  * @wb_connector: The writeback connector to queue a job on
- * @job: The job to queue
+ * @conn_state: The connector state containing the job to queue
  *
- * This function adds a job to the job_queue for a writeback connector. It
- * should be considered to take ownership of the writeback job, and so any other
- * references to the job must be cleared after calling this function.
+ * This function adds the job contained in @conn_state to the job_queue for a
+ * writeback connector. It takes ownership of the writeback job and sets the
+ * @conn_state->writeback_job to NULL, and so no access to the job may be
+ * performed by the caller after this function returns.
  *
  * Drivers must ensure that for a given writeback connector, jobs are queued in
  * exactly the same order as they will be completed by the hardware (and
@@ -252,9 +298,13 @@ EXPORT_SYMBOL(drm_writeback_connector_init);
  * See also: drm_writeback_signal_completion()
  */
 void drm_writeback_queue_job(struct drm_writeback_connector *wb_connector,
-			     struct drm_writeback_job *job)
+			     struct drm_connector_state *conn_state)
 {
+	struct drm_writeback_job *job;
 	unsigned long flags;
+
+	job = conn_state->writeback_job;
+	conn_state->writeback_job = NULL;
 
 	spin_lock_irqsave(&wb_connector->job_lock, flags);
 	list_add_tail(&job->list_entry, &wb_connector->job_queue);
@@ -262,20 +312,21 @@ void drm_writeback_queue_job(struct drm_writeback_connector *wb_connector,
 }
 EXPORT_SYMBOL(drm_writeback_queue_job);
 
-/**
- * @drm_writeback_cleanup_job: Cleanup and free a writeback job
- * @job: The writeback job to free
- *
- * Drops any references held by the writeback job, and frees the structure.
- */
 void drm_writeback_cleanup_job(struct drm_writeback_job *job)
 {
-	if (!job)
-		return;
+	struct drm_writeback_connector *connector = job->connector;
+	const struct drm_connector_helper_funcs *funcs =
+		connector->base.helper_private;
+
+	if (job->prepared && funcs->cleanup_writeback_job)
+		funcs->cleanup_writeback_job(connector, job);
 
 	if (job->fb)
-		drm_framebuffer_unreference(job->fb);
-	dma_fence_put(job->out_fence);
+		drm_framebuffer_put(job->fb);
+
+	if (job->out_fence)
+		dma_fence_put(job->out_fence);
+
 	kfree(job);
 }
 EXPORT_SYMBOL(drm_writeback_cleanup_job);
@@ -292,11 +343,12 @@ static void cleanup_work(struct work_struct *work)
 	struct drm_writeback_job *job = container_of(work,
 						     struct drm_writeback_job,
 						     cleanup_work);
+
 	drm_writeback_cleanup_job(job);
 }
 
 /**
- * @drm_writeback_signal_completion: Signal the completion of a writeback job
+ * drm_writeback_signal_completion - Signal the completion of a writeback job
  * @wb_connector: The writeback connector whose job is complete
  * @status: Status code to set in the writeback out_fence (0 for success)
  *
@@ -317,23 +369,28 @@ drm_writeback_signal_completion(struct drm_writeback_connector *wb_connector,
 {
 	unsigned long flags;
 	struct drm_writeback_job *job;
+	struct dma_fence *out_fence;
 
 	spin_lock_irqsave(&wb_connector->job_lock, flags);
 	job = list_first_entry_or_null(&wb_connector->job_queue,
 				       struct drm_writeback_job,
 				       list_entry);
-	if (job) {
+	if (job)
 		list_del(&job->list_entry);
-		if (job->out_fence) {
-			if (status)
-				dma_fence_set_error(job->out_fence, status);
-			dma_fence_signal(job->out_fence);
-		}
-	}
+
 	spin_unlock_irqrestore(&wb_connector->job_lock, flags);
 
 	if (WARN_ON(!job))
 		return;
+
+	out_fence = job->out_fence;
+	if (out_fence) {
+		if (status)
+			dma_fence_set_error(out_fence, status);
+		dma_fence_signal(out_fence);
+		dma_fence_put(out_fence);
+		job->out_fence = NULL;
+	}
 
 	INIT_WORK(&job->cleanup_work, cleanup_work);
 	queue_work(system_long_wq, &job->cleanup_work);

@@ -1,13 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * An I2C driver for Ricoh RS5C372, R2025S/D and RV5C38[67] RTCs
  *
  * Copyright (C) 2005 Pavel Mironchik <pmironchik@optifacio.net>
  * Copyright (C) 2006 Tower Technologies
  * Copyright (C) 2008 Paul Mundt
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <linux/i2c.h>
@@ -52,8 +49,10 @@
 #	define RS5C_CTRL1_CT4		(4 << 0)	/* 1 Hz level irq */
 #define RS5C_REG_CTRL2		15
 #	define RS5C372_CTRL2_24		(1 << 5)
-#	define R2025_CTRL2_XST		(1 << 5)
-#	define RS5C_CTRL2_XSTP		(1 << 4)	/* only if !R2025S/D */
+#	define RS5C_CTRL2_XSTP		(1 << 4)	/* only if !R2x2x */
+#	define R2x2x_CTRL2_VDET		(1 << 6)	/* only if  R2x2x */
+#	define R2x2x_CTRL2_XSTP		(1 << 5)	/* only if  R2x2x */
+#	define R2x2x_CTRL2_PON		(1 << 4)	/* only if  R2x2x */
 #	define RS5C_CTRL2_CTFG		(1 << 2)
 #	define RS5C_CTRL2_AAFG		(1 << 1)	/* or WAFG */
 #	define RS5C_CTRL2_BAFG		(1 << 0)	/* or DAFG */
@@ -207,13 +206,31 @@ static unsigned rs5c_hr2reg(struct rs5c372 *rs5c, unsigned hour)
 	return bin2bcd(hour);
 }
 
-static int rs5c372_get_datetime(struct i2c_client *client, struct rtc_time *tm)
+static int rs5c372_rtc_read_time(struct device *dev, struct rtc_time *tm)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	struct rs5c372	*rs5c = i2c_get_clientdata(client);
 	int		status = rs5c_get_regs(rs5c);
+	unsigned char ctrl2 = rs5c->regs[RS5C_REG_CTRL2];
 
 	if (status < 0)
 		return status;
+
+	switch (rs5c->type) {
+	case rtc_r2025sd:
+	case rtc_r2221tl:
+		if ((rs5c->type == rtc_r2025sd && !(ctrl2 & R2x2x_CTRL2_XSTP)) ||
+		    (rs5c->type == rtc_r2221tl &&  (ctrl2 & R2x2x_CTRL2_XSTP))) {
+			dev_warn(&client->dev, "rtc oscillator interruption detected. Please reset the rtc clock.\n");
+			return -EINVAL;
+		}
+		break;
+	default:
+		if (ctrl2 & RS5C_CTRL2_XSTP) {
+			dev_warn(&client->dev, "rtc oscillator interruption detected. Please reset the rtc clock.\n");
+			return -EINVAL;
+		}
+	}
 
 	tm->tm_sec = bcd2bin(rs5c->regs[RS5C372_REG_SECS] & 0x7f);
 	tm->tm_min = bcd2bin(rs5c->regs[RS5C372_REG_MINS] & 0x7f);
@@ -234,14 +251,15 @@ static int rs5c372_get_datetime(struct i2c_client *client, struct rtc_time *tm)
 		tm->tm_sec, tm->tm_min, tm->tm_hour,
 		tm->tm_mday, tm->tm_mon, tm->tm_year, tm->tm_wday);
 
-	/* rtc might need initialization */
-	return rtc_valid_tm(tm);
+	return 0;
 }
 
-static int rs5c372_set_datetime(struct i2c_client *client, struct rtc_time *tm)
+static int rs5c372_rtc_set_time(struct device *dev, struct rtc_time *tm)
 {
+	struct i2c_client *client = to_i2c_client(dev);
 	struct rs5c372	*rs5c = i2c_get_clientdata(client);
 	unsigned char	buf[7];
+	unsigned char	ctrl2;
 	int		addr;
 
 	dev_dbg(&client->dev, "%s: tm is secs=%d, mins=%d, hours=%d "
@@ -260,7 +278,32 @@ static int rs5c372_set_datetime(struct i2c_client *client, struct rtc_time *tm)
 	buf[6] = bin2bcd(tm->tm_year - 100);
 
 	if (i2c_smbus_write_i2c_block_data(client, addr, sizeof(buf), buf) < 0) {
-		dev_err(&client->dev, "%s: write error\n", __func__);
+		dev_dbg(&client->dev, "%s: write error in line %i\n",
+			__func__, __LINE__);
+		return -EIO;
+	}
+
+	addr = RS5C_ADDR(RS5C_REG_CTRL2);
+	ctrl2 = i2c_smbus_read_byte_data(client, addr);
+
+	/* clear rtc warning bits */
+	switch (rs5c->type) {
+	case rtc_r2025sd:
+	case rtc_r2221tl:
+		ctrl2 &= ~(R2x2x_CTRL2_VDET | R2x2x_CTRL2_PON);
+		if (rs5c->type == rtc_r2025sd)
+			ctrl2 |= R2x2x_CTRL2_XSTP;
+		else
+			ctrl2 &= ~R2x2x_CTRL2_XSTP;
+		break;
+	default:
+		ctrl2 &= ~RS5C_CTRL2_XSTP;
+		break;
+	}
+
+	if (i2c_smbus_write_byte_data(client, addr, ctrl2) < 0) {
+		dev_dbg(&client->dev, "%s: write error in line %i\n",
+			__func__, __LINE__);
 		return -EIO;
 	}
 
@@ -304,17 +347,6 @@ static int rs5c372_get_trim(struct i2c_client *client, int *osc, int *trim)
 	return 0;
 }
 #endif
-
-static int rs5c372_rtc_read_time(struct device *dev, struct rtc_time *tm)
-{
-	return rs5c372_get_datetime(to_i2c_client(dev), tm);
-}
-
-static int rs5c372_rtc_set_time(struct device *dev, struct rtc_time *tm)
-{
-	return rs5c372_set_datetime(to_i2c_client(dev), tm);
-}
-
 
 static int rs5c_rtc_alarm_irq_enable(struct device *dev, unsigned int enabled)
 {
@@ -361,7 +393,9 @@ static int rs5c_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 {
 	struct i2c_client	*client = to_i2c_client(dev);
 	struct rs5c372		*rs5c = i2c_get_clientdata(client);
-	int			status;
+	int			status, wday_offs;
+	struct rtc_time 	rtc;
+	unsigned long 		alarm_secs;
 
 	status = rs5c_get_regs(rs5c);
 	if (status < 0)
@@ -371,6 +405,30 @@ static int rs5c_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 	t->time.tm_sec = 0;
 	t->time.tm_min = bcd2bin(rs5c->regs[RS5C_REG_ALARM_A_MIN] & 0x7f);
 	t->time.tm_hour = rs5c_reg2hr(rs5c, rs5c->regs[RS5C_REG_ALARM_A_HOURS]);
+	t->time.tm_wday = ffs(rs5c->regs[RS5C_REG_ALARM_A_WDAY] & 0x7f) - 1;
+
+	/* determine the day, month and year based on alarm wday, taking as a
+	 * reference the current time from the rtc
+	 */
+	status = rs5c372_rtc_read_time(dev, &rtc);
+	if (status < 0)
+		return status;
+
+	wday_offs = t->time.tm_wday - rtc.tm_wday;
+	alarm_secs = mktime64(rtc.tm_year + 1900,
+			      rtc.tm_mon + 1,
+			      rtc.tm_mday + wday_offs,
+			      t->time.tm_hour,
+			      t->time.tm_min,
+			      t->time.tm_sec);
+
+	if (wday_offs < 0 || (wday_offs == 0 &&
+			      (t->time.tm_hour < rtc.tm_hour ||
+			       (t->time.tm_hour == rtc.tm_hour &&
+				t->time.tm_min <= rtc.tm_min))))
+		alarm_secs += 7 * 86400;
+
+	rtc_time64_to_tm(alarm_secs, &t->time);
 
 	/* ... and status */
 	t->enabled = !!(rs5c->regs[RS5C_REG_CTRL1] & RS5C_CTRL1_AALE);
@@ -385,12 +443,20 @@ static int rs5c_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	struct rs5c372		*rs5c = i2c_get_clientdata(client);
 	int			status, addr, i;
 	unsigned char		buf[3];
+	struct rtc_time 	rtc_tm;
+	unsigned long 		rtc_secs, alarm_secs;
 
-	/* only handle up to 24 hours in the future, like RTC_ALM_SET */
-	if (t->time.tm_mday != -1
-			|| t->time.tm_mon != -1
-			|| t->time.tm_year != -1)
+	/* chip only can handle alarms up to one week in the future*/
+	status = rs5c372_rtc_read_time(dev, &rtc_tm);
+	if (status)
+		return status;
+	rtc_secs = rtc_tm_to_time64(&rtc_tm);
+	alarm_secs = rtc_tm_to_time64(&t->time);
+	if (alarm_secs >= rtc_secs + 7 * 86400) {
+		dev_err(dev, "%s: alarm maximum is one week in the future (%d)\n",
+			__func__, status);
 		return -EINVAL;
+	}
 
 	/* REVISIT: round up tm_sec */
 
@@ -411,7 +477,9 @@ static int rs5c_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	/* set alarm */
 	buf[0] = bin2bcd(t->time.tm_min);
 	buf[1] = rs5c_hr2reg(rs5c, t->time.tm_hour);
-	buf[2] = 0x7f;	/* any/all days */
+	/* each bit is the day of the week, 0x7f means all days */
+	buf[2] = (t->time.tm_wday >= 0 && t->time.tm_wday < 7) ?
+		  BIT(t->time.tm_wday) : 0x7f;
 
 	for (i = 0; i < sizeof(buf); i++) {
 		addr = RS5C_ADDR(RS5C_REG_ALARM_A_MIN + i);
@@ -529,19 +597,24 @@ static int rs5c_oscillator_setup(struct rs5c372 *rs5c372)
 	unsigned char buf[2];
 	int addr, i, ret = 0;
 
-	if (rs5c372->type == rtc_r2025sd) {
-		if (rs5c372->regs[RS5C_REG_CTRL2] & R2025_CTRL2_XST)
-			return ret;
-		rs5c372->regs[RS5C_REG_CTRL2] |= R2025_CTRL2_XST;
-	} else {
-		if (!(rs5c372->regs[RS5C_REG_CTRL2] & RS5C_CTRL2_XSTP))
-			return ret;
-		rs5c372->regs[RS5C_REG_CTRL2] &= ~RS5C_CTRL2_XSTP;
-	}
-
 	addr   = RS5C_ADDR(RS5C_REG_CTRL1);
 	buf[0] = rs5c372->regs[RS5C_REG_CTRL1];
 	buf[1] = rs5c372->regs[RS5C_REG_CTRL2];
+
+	switch (rs5c372->type) {
+	case rtc_r2025sd:
+		if (buf[1] & R2x2x_CTRL2_XSTP)
+			return ret;
+		break;
+	case rtc_r2221tl:
+		if (!(buf[1] & R2x2x_CTRL2_XSTP))
+			return ret;
+		break;
+	default:
+		if (!(buf[1] & RS5C_CTRL2_XSTP))
+			return ret;
+		break;
+	}
 
 	/* use 24hr mode */
 	switch (rs5c372->type) {
@@ -581,7 +654,7 @@ static int rs5c372_probe(struct i2c_client *client,
 	int err = 0;
 	int smbus_mode = 0;
 	struct rs5c372 *rs5c372;
-	struct rtc_time tm;
+	bool rs5c372_can_wakeup_device = false;
 
 	dev_dbg(&client->dev, "%s\n", __func__);
 
@@ -617,6 +690,12 @@ static int rs5c372_probe(struct i2c_client *client,
 	else
 		rs5c372->type = id->driver_data;
 
+#ifdef CONFIG_OF
+	if(of_property_read_bool(client->dev.of_node,
+					      "wakeup-source"))
+		rs5c372_can_wakeup_device = true;
+#endif
+
 	/* we read registers 0x0f then 0x00-0x0f; skip the first one */
 	rs5c372->regs = &rs5c372->buf[1];
 	rs5c372->smbus = smbus_mode;
@@ -650,6 +729,8 @@ static int rs5c372_probe(struct i2c_client *client,
 		goto exit;
 	}
 
+	rs5c372->has_irq = 1;
+
 	/* if the oscillator lost power and no other software (like
 	 * the bootloader) set it up, do it here.
 	 *
@@ -661,9 +742,6 @@ static int rs5c372_probe(struct i2c_client *client,
 		dev_err(&client->dev, "setup error\n");
 		goto exit;
 	}
-
-	if (rs5c372_get_datetime(client, &tm) < 0)
-		dev_warn(&client->dev, "clock needs to be set\n");
 
 	dev_info(&client->dev, "%s found, %s\n",
 			({ char *s; switch (rs5c372->type) {
@@ -679,6 +757,10 @@ static int rs5c372_probe(struct i2c_client *client,
 			);
 
 	/* REVISIT use client->irq to register alarm irq ... */
+	if (rs5c372_can_wakeup_device) {
+		device_init_wakeup(&client->dev, true);
+	}
+
 	rs5c372->rtc = devm_rtc_device_register(&client->dev,
 					rs5c372_driver.driver.name,
 					&rs5c372_rtc_ops, THIS_MODULE);
@@ -691,6 +773,9 @@ static int rs5c372_probe(struct i2c_client *client,
 	err = rs5c_sysfs_register(&client->dev);
 	if (err)
 		goto exit;
+
+	/* the rs5c372 alarm only supports a minute accuracy */
+	rs5c372->rtc->uie_unsupported = 1;
 
 	return 0;
 

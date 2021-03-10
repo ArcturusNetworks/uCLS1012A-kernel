@@ -2,10 +2,13 @@
 /*
  * Device Tree Include file for Arcturus uCLS1012A-SOM.
  *
- * Copyright 2017-2020, Arcturus Networks Inc.
+ * Copyright 2017-2021, Arcturus Networks Inc.
  *
  */
 /dts-v1/;
+
+#define RESET_BY_GPIO 1
+#define ENABLE_EXTERNAL_WATCHDOG_PING 0
 
 #include "arc-ls1012a.dtsi"
 
@@ -14,7 +17,6 @@
 	compatible = "fsl,ls1012a-frdm", "fsl,ls1012a";
 
 	aliases {
-		crypto = &crypto;
 		ethernet0 = &pfe_mac0;
 		ethernet1 = &pfe_mac1;
 	};
@@ -24,13 +26,90 @@
 		#clock-cells = <0>;
 		clock-frequency = <25000000>;
 	};
+#if RESET_BY_GPIO
+	gpio-restart {
+		compatible = "gpio-restart";
+		/* gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>; For modules Rev. < 1,4 */
+		gpios = <&gpio0 31 GPIO_ACTIVE_HIGH>;
+		open-source;
+		priority = <200>;
+	};
+#endif
 
-	regulator_1p8v: regulator {
+	reg_1p8v: regulator-1p8v {
 		compatible = "regulator-fixed";
 		regulator-name = "1P8V";
 		regulator-min-microvolt = <1800000>;
 		regulator-max-microvolt = <1800000>;
 		regulator-always-on;
+	};
+
+	reg_2p5v: regulator-2p5v {
+		compatible = "regulator-fixed";
+		regulator-name = "2P5V";
+		regulator-min-microvolt = <2500000>;
+		regulator-max-microvolt = <2500000>;
+		regulator-always-on;
+	};
+
+	reg_3p3v: regulator-3p3v {
+		compatible = "regulator-fixed";
+		regulator-name = "3P3V";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
+
+	reg_5p0v: regulator-5p0v {
+		compatible = "regulator-fixed";
+		regulator-name = "5P0V";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+	};
+
+	sound {
+		compatible = "simple-audio-card";
+		simple-audio-card,format = "i2s";
+		simple-audio-card,widgets =
+			"Line", "Line In Jack",
+			"Line", "Line Out Jack";
+		simple-audio-card,routing =
+			"LINEIN1", "Line In Jack",
+			"LINEIN2", "Line In Jack",
+			"Line Out Jack", "LINEOUT";
+		simple-audio-card,cpu {
+			sound-dai = <&sai2>;
+			frame-master;
+			bitclock-master;
+		};
+		simple-audio-card,codec {
+			sound-dai = <&codec>;
+			frame-master;
+			bitclock-master;
+			system-clock-frequency = <25000000>;
+		};
+	};
+
+#if ENABLE_EXTERNAL_WATCHDOG_PING
+	xwatchdog: xwatchdog {
+		compatible = "linux,wdt-gpio";
+		gpios = <&gpio0 25 GPIO_ACTIVE_HIGH>;
+		hw_algo = "toggle";
+		hw_margin_ms = <1000>;
+		always-running;
+		status = "okay";
+	};
+#endif
+
+	leds {
+		compatible = "gpio-leds";
+		status = "okay";
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		status = "okay";
 	};
 };
 
@@ -49,9 +128,74 @@
 &i2c0 {
 	status = "okay";
 
-	dtt@4C {
+	codec: cx2070x@14 {
+		#sound-dai-cells = <0>;
+		compatible = "conexant,cx2070x";
+		reg = <0x14>;
+		clocks = <&sys_mclk>;
+		VDDA-supply = <&reg_1p8v>;
+		VDDIO-supply = <&reg_1p8v>;
+	};
+
+	dtt@4c {
 		compatible = "national,lm90";
 		reg = <0x4C>;
+	};
+
+	/* U23 */
+	gpio2: pca9575@20 {
+		compatible = "nxp,pca9575";
+		reg =<0x20>;
+
+		/* GPIO pin base & pin0# = 432 */
+		gpio-controller;
+		#gpio-cells = <2>;
+
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <12 IRQ_TYPE_EDGE_FALLING>;
+		vcc-supply = <&reg_3p3v>;
+
+		reset-gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
+
+		gpio-line-names = "IN1",
+				  "IN2",
+				  "IN3",
+				  "IN4",
+				  "IN5",
+				  "IN6",
+				  "IN7",
+				  "IN8",
+				  "OUT1",
+				  "OUT2",
+				  "OUT3",
+				  "OUT4",
+				  "OUT5",
+				  "OUT6",
+				  "OUT7",
+				  "OUT8";
+	};
+
+	/* U13 */
+	gpio3: pca9575@21 {
+		compatible = "nxp,pca9575";
+		reg =<0x21>;
+
+		/* GPIO pin base & pin0# = 416 */
+		gpio-controller;
+		#gpio-cells = <2>;
+
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <14 IRQ_TYPE_EDGE_FALLING>;
+		vcc-supply = <&reg_3p3v>;
+	};
+
+	eeprom@50 {
+		compatible = "at,24c1024";
+		reg = <0x50>;
 	};
 };
 
@@ -113,30 +257,12 @@
 };
 
 &sai2 {
-	status = "disabled";
-};
-
-&sata {
 	status = "okay";
 };
 
 &dspi {
 	bus-num = <0>;
 	status = "okay";
-/*** Disabled until RCW will be changed
-	mmc-spi@1 {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		compatible = "mmc-spi-slot";
-		reg = <1>;
-		spi-max-frequency = <5000000>;
-		voltage-ranges = <3200 3400>;
-		spi-rx-bus-width = <1>;
-		spi-tx-bus-width = <1>;
-		disable-wp;
-		disable-cd;
-	};
-***/
 };
 
 &esdhc0 {
@@ -145,6 +271,10 @@
 };
 
 &usb0 {
+	status = "okay";
+};
+
+&wdog0 {
 	status = "okay";
 };
 
@@ -222,4 +352,12 @@
 				"reserved",
 				"reserved",
 				"reserved";
+
+	cx_rst {
+		gpio-hog;
+		gpios = <3 GPIO_ACTIVE_LOW>;
+		output-high;
+		line-name = "cx_reset";
+	};
 };
+

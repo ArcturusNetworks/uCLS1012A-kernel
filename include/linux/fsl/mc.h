@@ -12,7 +12,8 @@
 #include <linux/device.h>
 #include <linux/mod_devicetable.h>
 #include <linux/interrupt.h>
-#include <linux/cdev.h>
+#include <linux/ioctl.h>
+#include <linux/miscdevice.h>
 #include <uapi/linux/fsl_mc.h>
 
 #define FSL_MC_VENDOR_FREESCALE	0x1957
@@ -199,6 +200,7 @@ struct fsl_mc_device {
 	struct resource *regions;
 	struct fsl_mc_device_irq **irqs;
 	struct fsl_mc_resource *resource;
+	struct device_link *consumer_link;
 	const char *driver_override;
 };
 
@@ -238,11 +240,11 @@ enum mc_cmd_status {
 /* Command completion flag */
 #define MC_CMD_FLAG_INTR_DIS	0x01
 
-static inline u64 mc_encode_cmd_header(u16 cmd_id,
-				       u32 cmd_flags,
-				       u16 token)
+static inline __le64 mc_encode_cmd_header(u16 cmd_id,
+					  u32 cmd_flags,
+					  u16 token)
 {
-	u64 header = 0;
+	__le64 header = 0;
 	struct mc_cmd_header *hdr = (struct mc_cmd_header *)&header;
 
 	hdr->cmd_id = cpu_to_le16(cmd_id);
@@ -647,6 +649,7 @@ struct dprc_rsp_get_obj_region {
 	__le32 flags;
 	__le32 pad3;
 	/* response word 4 */
+	/* base_addr may be zero if older MC firmware is used */
 	__le64 base_addr;
 };
 
@@ -970,21 +973,19 @@ struct fsl_mc_resource_pool {
 };
 
 /**
- * struct fsl_mc_restool - information associated with a restool device file
- * @cdev: struct char device linked to the root dprc
- * @dev: dev_t for the char device to be added
+ * struct fsl_mc_uapi - information associated with a device file
+ * @misc: struct miscdevice linked to the root dprc
  * @device: newly created device in /dev
  * @mutex: mutex lock to serialize the open/release operations
  * @local_instance_in_use: local MC I/O instance in use or not
- * @dynamic_instance_count: number of dynamically created MC I/O instances
+ * @static_mc_io: pointer to the static MC I/O object
  */
-struct fsl_mc_restool {
-	struct cdev cdev;
-	dev_t dev;
+struct fsl_mc_uapi {
+	struct miscdevice misc;
 	struct device *device;
 	struct mutex mutex; /* serialize open/release operations */
-	bool local_instance_in_use;
-	u32 dynamic_instance_count;
+	u32 local_instance_in_use;
+	struct fsl_mc_io *static_mc_io;
 };
 
 /**
@@ -996,7 +997,7 @@ struct fsl_mc_restool {
  * @irq_resources: Pointer to array of IRQ objects for the IRQ pool
  * @scan_mutex: Serializes bus scanning
  * @dprc_attr: DPRC attributes
- * @restool_misc: struct that abstracts the interaction with userspace restool
+ * @uapi_misc: struct that abstracts the interaction with userspace
  */
 struct fsl_mc_bus {
 	struct fsl_mc_device mc_dev;
@@ -1004,13 +1005,22 @@ struct fsl_mc_bus {
 	struct fsl_mc_device_irq *irq_resources;
 	struct mutex scan_mutex;    /* serializes bus scanning */
 	struct dprc_attributes dprc_attr;
-	struct fsl_mc_restool restool_misc;
+	struct fsl_mc_uapi uapi_misc;
 	int irq_enabled;
 };
 
 int dprc_scan_objects(struct fsl_mc_device *mc_bus_dev,
 		      const char *driver_override,
+			  bool alloc_interrupts,
 		      unsigned int *total_irq_count);
+
+int __must_check fsl_create_mc_io(struct device *dev,
+				  phys_addr_t mc_portal_phys_addr,
+				  u32 mc_portal_size,
+				  struct fsl_mc_device *dpmcp_dev,
+				  u32 flags, struct fsl_mc_io **new_mc_io);
+
+void fsl_destroy_mc_io(struct fsl_mc_io *mc_io);
 
 int fsl_mc_find_msi_domain(struct device *mc_platform_dev,
 			   struct irq_domain **mc_msi_domain);

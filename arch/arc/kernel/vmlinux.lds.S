@@ -1,9 +1,6 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * Copyright (C) 2004, 2007-2010, 2011-2012 Synopsys, Inc. (www.synopsys.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  */
 
 #include <asm-generic/vmlinux.lds.h>
@@ -29,6 +26,19 @@ SECTIONS
 	 */
 
 	. = CONFIG_LINUX_LINK_BASE;
+
+	/*
+	* In OpenWRT we want to patch built binary embedding .dtb of choice.
+	* This is implemented with "patch-dtb" utility which searches for
+	* "OWRTDTB:" string in first 16k of image and if it is found
+	* copies .dtb right after mentioned string.
+	*
+	* Note: "OWRTDTB:" won't be overwritten with .dtb, .dtb will follow it.
+	*/
+ 	.owrt : {
+		*(.owrt)
+	. = ALIGN(PAGE_SIZE);
+	}
 
 	_int_vec_base_lds = .;
 	.vector : {
@@ -71,7 +81,6 @@ SECTIONS
 		INIT_SETUP(L1_CACHE_BYTES)
 		INIT_CALLS
 		CON_INITCALL
-		SECURITY_INITCALL
 	}
 
 	.init.arch.info : {

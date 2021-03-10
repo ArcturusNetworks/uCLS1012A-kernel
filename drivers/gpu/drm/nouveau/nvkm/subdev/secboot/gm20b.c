@@ -108,6 +108,7 @@ gm20b_secboot_new(struct nvkm_device *device, int index,
 	struct gm200_secboot *gsb;
 	struct nvkm_acr *acr;
 
+	*psb = NULL;
 	acr = acr_r352_new(BIT(NVKM_SECBOOT_FALCON_FECS) |
 			   BIT(NVKM_SECBOOT_FALCON_PMU));
 	if (IS_ERR(acr))
@@ -116,10 +117,8 @@ gm20b_secboot_new(struct nvkm_device *device, int index,
 	acr->optional_falcons = BIT(NVKM_SECBOOT_FALCON_PMU);
 
 	gsb = kzalloc(sizeof(*gsb), GFP_KERNEL);
-	if (!gsb) {
-		psb = NULL;
+	if (!gsb)
 		return -ENOMEM;
-	}
 	*psb = &gsb->base;
 
 	ret = nvkm_secboot_ctor(&gm20b_secboot, acr, device, index, &gsb->base);
@@ -129,6 +128,7 @@ gm20b_secboot_new(struct nvkm_device *device, int index,
 	return 0;
 }
 
+#if IS_ENABLED(CONFIG_ARCH_TEGRA_210_SOC)
 MODULE_FIRMWARE("nvidia/gm20b/acr/bl.bin");
 MODULE_FIRMWARE("nvidia/gm20b/acr/ucode_load.bin");
 MODULE_FIRMWARE("nvidia/gm20b/gr/fecs_bl.bin");
@@ -144,3 +144,4 @@ MODULE_FIRMWARE("nvidia/gm20b/gr/sw_method_init.bin");
 MODULE_FIRMWARE("nvidia/gm20b/pmu/desc.bin");
 MODULE_FIRMWARE("nvidia/gm20b/pmu/image.bin");
 MODULE_FIRMWARE("nvidia/gm20b/pmu/sig.bin");
+#endif

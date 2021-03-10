@@ -97,7 +97,7 @@ static struct regmap_config ocelot_regmap_config = {
 	.reg_stride	= 4,
 };
 
-struct regmap *ocelot_io_init(struct ocelot *ocelot, struct resource *res)
+struct regmap *ocelot_regmap_init(struct ocelot *ocelot, struct resource *res)
 {
 	void __iomem *regs;
 
@@ -109,4 +109,4 @@ struct regmap *ocelot_io_init(struct ocelot *ocelot, struct resource *res)
 
 	return devm_regmap_init_mmio(ocelot->dev, regs, &ocelot_regmap_config);
 }
-EXPORT_SYMBOL(ocelot_io_init);
+EXPORT_SYMBOL(ocelot_regmap_init);

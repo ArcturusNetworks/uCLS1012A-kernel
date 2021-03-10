@@ -245,7 +245,7 @@ static int fsl_bman_probe(struct platform_device *pdev)
 	}
 
 	/*
-	 * If FBPR memory wasn't defined using the qbman compatiable string
+	 * If FBPR memory wasn't defined using the qbman compatible string
 	 * try using the of_reserved_mem_device method
 	 */
 	if (!fbpr_a) {
@@ -268,9 +268,7 @@ static int fsl_bman_probe(struct platform_device *pdev)
 			dev_warn(dev, "failed to iommu_map() %d\n", ret);
 	}
 
-	ret = bm_set_memory(fbpr_a, fbpr_sz);
-	if (ret < 0)
-		return ret;
+	bm_set_memory(fbpr_a, fbpr_sz);
 
 	err_irq = platform_get_irq(pdev, 0);
 	if (err_irq <= 0) {

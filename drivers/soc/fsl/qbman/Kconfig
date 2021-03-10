@@ -1,5 +1,6 @@
+# SPDX-License-Identifier: GPL-2.0-only
 menuconfig FSL_DPAA
-	bool "Freescale DPAA 1.x support"
+	bool "QorIQ DPAA1 framework support"
 	depends on ((FSL_SOC_BOOKE || ARCH_LAYERSCAPE) && ARCH_DMA_ADDR_T_64BIT)
 	select GENERIC_ALLOCATOR
 	help

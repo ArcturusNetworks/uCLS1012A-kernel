@@ -284,6 +284,22 @@
 	};
 };
 
+&sata0 {
+	status = "okay";
+};
+
+&sata1 {
+	status = "okay";
+};
+
+&sata2 {
+	status = "okay";
+};
+
+&sata3 {
+	status = "okay";
+};
+
 &uart0 {
 	status = "okay";
 };
@@ -297,5 +313,21 @@
 };
 
 &usb1 {
+	status = "okay";
+};
+
+&sata0 {
+	status = "okay";
+};
+
+&sata1 {
+	status = "okay";
+};
+
+&sata2 {
+	status = "okay";
+};
+
+&sata3 {
 	status = "okay";
 };

@@ -187,6 +187,12 @@
 			#size-cells = <0>;
 			reg = <0x3>;
 
+			temperature-sensor@4c {
+				compatible = "nxp,sa56004";
+				reg = <0x4c>;
+				vcc-supply = <&sb_3v3>;
+			};
+
 			eeprom@56 {
 				compatible = "atmel,24c512";
 				reg = <0x56>;
@@ -195,12 +201,6 @@
 			eeprom@57 {
 				compatible = "atmel,24c512";
 				reg = <0x57>;
-			};
-
-			temperature-sensor@4c {
-				compatible = "nxp,sa56004";
-				reg = <0x4c>;
-				vcc-supply = <&sb_3v3>;
 			};
 		};
 
@@ -236,17 +236,17 @@
 
 };
 
-&enetc_port1 {
-	phy-handle = <&qds_phy1>;
-	phy-connection-type = "rgmii-id";
-};
-
 &i2c1 {
 	status = "okay";
 	rtc@51 {
 		compatible = "nxp,pcf2129";
 		reg = <0x51>;
 	};
+};
+
+&enetc_port1 {
+	phy-handle = <&qds_phy1>;
+	phy-connection-type = "rgmii-id";
 };
 
 &fspi {
@@ -268,21 +268,11 @@
 	status = "okay";
 };
 
-&display1 {
-	fsl,no_edid;
-	resolution = "3840x2160@60",
-		   "1920x1080@60",
-		   "1280x720@60",
-		   "720x480@60";
-	lane_mapping = <0x4e>;
-	edp_link_rate = <0x6>;
-	edp_num_lanes = <0x4>;
-	status = "okay";
-};
-
 &sata {
 	status = "okay";
 };
 
-#include "fsl-ls1028a-qds-8xxx.dtsi"
-#include "fsl-ls1028a-qds-x5xx.dtsi"
+&hdptx0 {
+	lane-mapping = <0x4e>;
+	status = "okay";
+};

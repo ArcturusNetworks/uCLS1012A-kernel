@@ -1,12 +1,9 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  *  linux/arch/arm/kernel/module.c
  *
  *  Copyright (C) 2002 Russell King.
  *  Modified for nommu by Hyok S. Choi
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * Module allocation method suggested by Andi Kleen.
  */
@@ -58,6 +55,13 @@ void *module_alloc(unsigned long size)
 }
 #endif
 
+bool module_exit_section(const char *name)
+{
+	return strstarts(name, ".exit") ||
+		strstarts(name, ".ARM.extab.exit") ||
+		strstarts(name, ".ARM.exidx.exit");
+}
+
 int
 apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 	       unsigned int relindex, struct module *module)
@@ -94,6 +98,10 @@ apply_relocate(Elf32_Shdr *sechdrs, const char *strtab, unsigned int symindex,
 			       rel->r_offset, dstsec->sh_size);
 			return -ENOEXEC;
 		}
+
+		if ((IS_ERR_VALUE(sym->st_value) || !sym->st_value) &&
+		    ELF_ST_BIND(sym->st_info) == STB_WEAK)
+			continue;
 
 		loc = dstsec->sh_addr + rel->r_offset;
 

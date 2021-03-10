@@ -80,4 +80,3 @@ mdio-mux-2 { // Mux consumer
 	..
 	..
 };
-

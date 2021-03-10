@@ -47,7 +47,7 @@
 #include "../crypto/caam/error.h"
 #include "../crypto/caam/desc_constr.h"
 
-#define DESC_DMA_MEMCPY_LEN	((CAAM_DESC_BYTES_MAX - DESC_JOB_IO_LEN) / \
+#define DESC_DMA_MEMCPY_LEN	((CAAM_DESC_BYTES_MAX - DESC_JOB_IO_LEN_MIN) / \
 				 CAAM_CMD_SZ)
 
 /*
@@ -351,7 +351,7 @@ static void set_caam_dma_desc(u32 *desc)
 			     1);
 }
 
-static int __init caam_dma_probe(struct platform_device *pdev)
+static int caam_dma_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
 	struct device *ctrldev = dev->parent;

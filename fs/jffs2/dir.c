@@ -227,7 +227,7 @@ static int jffs2_unlink(struct inode *dir_i, struct dentry *dentry)
 	struct jffs2_inode_info *dir_f = JFFS2_INODE_INFO(dir_i);
 	struct jffs2_inode_info *dead_f = JFFS2_INODE_INFO(d_inode(dentry));
 	int ret;
-	uint32_t now = get_seconds();
+	uint32_t now = JFFS2_NOW();
 
 	ret = jffs2_do_unlink(c, dir_f, dentry->d_name.name,
 			      dentry->d_name.len, dead_f, now);
@@ -260,7 +260,7 @@ static int jffs2_link (struct dentry *old_dentry, struct inode *dir_i, struct de
 	type = (d_inode(old_dentry)->i_mode & S_IFMT) >> 12;
 	if (!type) type = DT_REG;
 
-	now = get_seconds();
+	now = JFFS2_NOW();
 	ret = jffs2_do_link(c, dir_f, f->inocache->ino, type, dentry->d_name.name, dentry->d_name.len, now);
 
 	if (!ret) {
@@ -400,7 +400,7 @@ static int jffs2_symlink (struct inode *dir_i, struct dentry *dentry, const char
 	rd->pino = cpu_to_je32(dir_i->i_ino);
 	rd->version = cpu_to_je32(++dir_f->highest_version);
 	rd->ino = cpu_to_je32(inode->i_ino);
-	rd->mctime = cpu_to_je32(get_seconds());
+	rd->mctime = cpu_to_je32(JFFS2_NOW());
 	rd->nsize = namelen;
 	rd->type = DT_LNK;
 	rd->node_crc = cpu_to_je32(crc32(0, rd, sizeof(*rd)-8));
@@ -543,7 +543,7 @@ static int jffs2_mkdir (struct inode *dir_i, struct dentry *dentry, umode_t mode
 	rd->pino = cpu_to_je32(dir_i->i_ino);
 	rd->version = cpu_to_je32(++dir_f->highest_version);
 	rd->ino = cpu_to_je32(inode->i_ino);
-	rd->mctime = cpu_to_je32(get_seconds());
+	rd->mctime = cpu_to_je32(JFFS2_NOW());
 	rd->nsize = namelen;
 	rd->type = DT_DIR;
 	rd->node_crc = cpu_to_je32(crc32(0, rd, sizeof(*rd)-8));
@@ -588,12 +588,16 @@ static int jffs2_rmdir (struct inode *dir_i, struct dentry *dentry)
 	struct jffs2_inode_info *f = JFFS2_INODE_INFO(d_inode(dentry));
 	struct jffs2_full_dirent *fd;
 	int ret;
-	uint32_t now = get_seconds();
+	uint32_t now = JFFS2_NOW();
 
+	mutex_lock(&f->sem);
 	for (fd = f->dents ; fd; fd = fd->next) {
-		if (fd->ino)
+		if (fd->ino) {
+			mutex_unlock(&f->sem);
 			return -ENOTEMPTY;
+		}
 	}
+	mutex_unlock(&f->sem);
 
 	ret = jffs2_do_unlink(c, dir_f, dentry->d_name.name,
 			      dentry->d_name.len, f, now);
@@ -712,7 +716,7 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, umode_t mode
 	rd->pino = cpu_to_je32(dir_i->i_ino);
 	rd->version = cpu_to_je32(++dir_f->highest_version);
 	rd->ino = cpu_to_je32(inode->i_ino);
-	rd->mctime = cpu_to_je32(get_seconds());
+	rd->mctime = cpu_to_je32(JFFS2_NOW());
 	rd->nsize = namelen;
 
 	/* XXX: This is ugly. */
@@ -752,6 +756,24 @@ static int jffs2_mknod (struct inode *dir_i, struct dentry *dentry, umode_t mode
 	return ret;
 }
 
+static int jffs2_whiteout (struct inode *old_dir, struct dentry *old_dentry)
+{
+	struct dentry *wh;
+	int err;
+
+	wh = d_alloc(old_dentry->d_parent, &old_dentry->d_name);
+	if (!wh)
+		return -ENOMEM;
+
+	err = jffs2_mknod(old_dir, wh, S_IFCHR | WHITEOUT_MODE,
+			  WHITEOUT_DEV);
+	if (err)
+		return err;
+
+	d_rehash(wh);
+	return 0;
+}
+
 static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 			 struct inode *new_dir_i, struct dentry *new_dentry,
 			 unsigned int flags)
@@ -759,18 +781,31 @@ static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 	int ret;
 	struct jffs2_sb_info *c = JFFS2_SB_INFO(old_dir_i->i_sb);
 	struct jffs2_inode_info *victim_f = NULL;
+	struct inode *fst_inode = d_inode(old_dentry);
+	struct inode *snd_inode = d_inode(new_dentry);
 	uint8_t type;
 	uint32_t now;
 
-	if (flags & ~RENAME_NOREPLACE)
+	if (flags & ~(RENAME_NOREPLACE|RENAME_WHITEOUT|RENAME_EXCHANGE))
 		return -EINVAL;
+
+	if ((flags & RENAME_EXCHANGE) && (old_dir_i != new_dir_i)) {
+		if (S_ISDIR(fst_inode->i_mode) && !S_ISDIR(snd_inode->i_mode)) {
+			inc_nlink(new_dir_i);
+			drop_nlink(old_dir_i);
+		}
+		else if (!S_ISDIR(fst_inode->i_mode) && S_ISDIR(snd_inode->i_mode)) {
+			drop_nlink(new_dir_i);
+			inc_nlink(old_dir_i);
+		}
+	}
 
 	/* The VFS will check for us and prevent trying to rename a
 	 * file over a directory and vice versa, but if it's a directory,
 	 * the VFS can't check whether the victim is empty. The filesystem
 	 * needs to do that for itself.
 	 */
-	if (d_really_is_positive(new_dentry)) {
+	if (d_really_is_positive(new_dentry) && !(flags & RENAME_EXCHANGE)) {
 		victim_f = JFFS2_INODE_INFO(d_inode(new_dentry));
 		if (d_is_dir(new_dentry)) {
 			struct jffs2_full_dirent *fd;
@@ -797,7 +832,7 @@ static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 	type = (d_inode(old_dentry)->i_mode & S_IFMT) >> 12;
 	if (!type) type = DT_REG;
 
-	now = get_seconds();
+	now = JFFS2_NOW();
 	ret = jffs2_do_link(c, JFFS2_INODE_INFO(new_dir_i),
 			    d_inode(old_dentry)->i_ino, type,
 			    new_dentry->d_name.name, new_dentry->d_name.len, now);
@@ -805,7 +840,7 @@ static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 	if (ret)
 		return ret;
 
-	if (victim_f) {
+	if (victim_f && !(flags & RENAME_EXCHANGE)) {
 		/* There was a victim. Kill it off nicely */
 		if (d_is_dir(new_dentry))
 			clear_nlink(d_inode(new_dentry));
@@ -828,9 +863,20 @@ static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 	if (d_is_dir(old_dentry) && !victim_f)
 		inc_nlink(new_dir_i);
 
-	/* Unlink the original */
-	ret = jffs2_do_unlink(c, JFFS2_INODE_INFO(old_dir_i),
-			      old_dentry->d_name.name, old_dentry->d_name.len, NULL, now);
+	if (flags & RENAME_WHITEOUT)
+		/* Replace with whiteout */
+		ret = jffs2_whiteout(old_dir_i, old_dentry);
+	else if (flags & RENAME_EXCHANGE)
+		/* Replace the original */
+		ret = jffs2_do_link(c, JFFS2_INODE_INFO(old_dir_i),
+				    d_inode(new_dentry)->i_ino, type,
+				    old_dentry->d_name.name, old_dentry->d_name.len,
+				    now);
+	else
+		/* Unlink the original */
+		ret = jffs2_do_unlink(c, JFFS2_INODE_INFO(old_dir_i),
+				      old_dentry->d_name.name,
+				      old_dentry->d_name.len, NULL, now);
 
 	/* We don't touch inode->i_nlink */
 
@@ -857,7 +903,7 @@ static int jffs2_rename (struct inode *old_dir_i, struct dentry *old_dentry,
 		return ret;
 	}
 
-	if (d_is_dir(old_dentry))
+	if (d_is_dir(old_dentry) && !(flags & RENAME_EXCHANGE))
 		drop_nlink(old_dir_i);
 
 	new_dir_i->i_mtime = new_dir_i->i_ctime = old_dir_i->i_mtime = old_dir_i->i_ctime = ITIME(now);

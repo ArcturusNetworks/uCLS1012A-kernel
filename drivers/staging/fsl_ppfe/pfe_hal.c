@@ -860,15 +860,9 @@ void gemac_set_mode(void *base, int mode)
 	/*Remove loopbank*/
 	val &= ~EMAC_RCNTRL_LOOP;
 
-#if 0
-	/* OZH: Backport */
-	/* Enable flow control and MII mode and terminate received CRC */
-	val |= (EMAC_RCNTRL_FCE | EMAC_RCNTRL_MII_MODE | EMAC_RCNTRL_CRC_FWD);
-#else
 	/* Enable flow control and MII mode.PFE firmware always expects
        CRC should be forwarded by MAC to validate CRC in software.*/
 	val |= (EMAC_RCNTRL_FCE | EMAC_RCNTRL_MII_MODE);
-#endif
 
 	writel(val, base + EMAC_RCNTRL_REG);
 }

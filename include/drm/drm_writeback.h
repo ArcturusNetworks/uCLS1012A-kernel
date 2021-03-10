@@ -1,3 +1,4 @@
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
  * (C) COPYRIGHT 2016 ARM Limited. All rights reserved.
  * Author: Brian Starkey <brian.starkey@arm.com>
@@ -79,23 +80,39 @@ struct drm_writeback_connector {
 
 struct drm_writeback_job {
 	/**
+	 * @connector:
+	 *
+	 * Back-pointer to the writeback connector associated with the job
+	 */
+	struct drm_writeback_connector *connector;
+
+	/**
+	 * @prepared:
+	 *
+	 * Set when the job has been prepared with drm_writeback_prepare_job()
+	 */
+	bool prepared;
+
+	/**
 	 * @cleanup_work:
 	 *
 	 * Used to allow drm_writeback_signal_completion to defer dropping the
-	 * framebuffer reference to a workqueue.
+	 * framebuffer reference to a workqueue
 	 */
 	struct work_struct cleanup_work;
+
 	/**
 	 * @list_entry:
 	 *
-	 * List item for the connector's @job_queue
+	 * List item for the writeback connector's @job_queue
 	 */
 	struct list_head list_entry;
+
 	/**
 	 * @fb:
 	 *
 	 * Framebuffer to be written to by the writeback connector. Do not set
-	 * directly, use drm_atomic_set_writeback_fb_for_connector()
+	 * directly, use drm_writeback_set_fb()
 	 */
 	struct drm_framebuffer *fb;
 
@@ -105,7 +122,20 @@ struct drm_writeback_job {
 	 * Fence which will signal once the writeback has completed
 	 */
 	struct dma_fence *out_fence;
+
+	/**
+	 * @priv:
+	 *
+	 * Driver-private data
+	 */
+	void *priv;
 };
+
+static inline struct drm_writeback_connector *
+drm_connector_to_writeback(struct drm_connector *connector)
+{
+	return container_of(connector, struct drm_writeback_connector, base);
+}
 
 int drm_writeback_connector_init(struct drm_device *dev,
 				 struct drm_writeback_connector *wb_connector,
@@ -113,8 +143,13 @@ int drm_writeback_connector_init(struct drm_device *dev,
 				 const struct drm_encoder_helper_funcs *enc_helper_funcs,
 				 const u32 *formats, int n_formats);
 
+int drm_writeback_set_fb(struct drm_connector_state *conn_state,
+			 struct drm_framebuffer *fb);
+
+int drm_writeback_prepare_job(struct drm_writeback_job *job);
+
 void drm_writeback_queue_job(struct drm_writeback_connector *wb_connector,
-			     struct drm_writeback_job *job);
+			     struct drm_connector_state *conn_state);
 
 void drm_writeback_cleanup_job(struct drm_writeback_job *job);
 

@@ -12,6 +12,7 @@
 #include <linux/types.h>
 #include <linux/bitops.h>
 #include <linux/io.h>
+#include <linux/io-64-nonatomic-hi-lo.h>
 
 /*
  * Architecture-specific register access methods
@@ -70,6 +71,7 @@
 
 extern bool caam_little_end;
 extern bool caam_imx;
+extern size_t caam_ptr_sz;
 
 #define caam_to_cpu(len)						\
 static inline u##len caam##len ## _to_cpu(u##len val)			\
@@ -137,51 +139,48 @@ static inline void clrsetbits_32(void __iomem *reg, u32 clear, u32 set)
  *    base + 0x0000 : least-significant 32 bits
  *    base + 0x0004 : most-significant 32 bits
  */
-#ifdef CONFIG_64BIT
 static inline void wr_reg64(void __iomem *reg, u64 data)
 {
-	if (caam_little_end)
-		iowrite64(data, reg);
-	else
-		iowrite64be(data, reg);
-}
-
-static inline u64 rd_reg64(void __iomem *reg)
-{
-	if (caam_little_end)
-		return ioread64(reg);
-	else
-		return ioread64be(reg);
-}
-
-#else /* CONFIG_64BIT */
-static inline void wr_reg64(void __iomem *reg, u64 data)
-{
-	if (!caam_imx && caam_little_end) {
-		wr_reg32((u32 __iomem *)(reg) + 1, data >> 32);
-		wr_reg32((u32 __iomem *)(reg), data);
+	if (caam_little_end) {
+		if (caam_imx) {
+			iowrite32(data >> 32, (u32 __iomem *)(reg));
+			iowrite32(data, (u32 __iomem *)(reg) + 1);
+		} else {
+			iowrite64(data, reg);
+		}
 	} else {
-		wr_reg32((u32 __iomem *)(reg), data >> 32);
-		wr_reg32((u32 __iomem *)(reg) + 1, data);
+		iowrite64be(data, reg);
 	}
 }
 
 static inline u64 rd_reg64(void __iomem *reg)
 {
-	if (!caam_imx && caam_little_end)
-		return ((u64)rd_reg32((u32 __iomem *)(reg) + 1) << 32 |
-			(u64)rd_reg32((u32 __iomem *)(reg)));
+	if (caam_little_end) {
+		if (caam_imx) {
+			u32 low, high;
 
-	return ((u64)rd_reg32((u32 __iomem *)(reg)) << 32 |
-		(u64)rd_reg32((u32 __iomem *)(reg) + 1));
+			high = ioread32(reg);
+			low  = ioread32(reg + sizeof(u32));
+
+			return low + ((u64)high << 32);
+		} else {
+			return ioread64(reg);
+		}
+	} else {
+		return ioread64be(reg);
+	}
 }
-#endif /* CONFIG_64BIT  */
 
 static inline u64 cpu_to_caam_dma64(dma_addr_t value)
 {
-	if (caam_imx)
-		return (((u64)cpu_to_caam32(lower_32_bits(value)) << 32) |
-			 (u64)cpu_to_caam32(upper_32_bits(value)));
+	if (caam_imx) {
+		u64 ret_val = (u64)cpu_to_caam32(lower_32_bits(value)) << 32;
+
+		if (IS_ENABLED(CONFIG_ARCH_DMA_ADDR_T_64BIT))
+			ret_val |= (u64)cpu_to_caam32(upper_32_bits(value));
+
+		return ret_val;
+	}
 
 	return cpu_to_caam64(value);
 }
@@ -195,22 +194,89 @@ static inline u64 caam_dma64_to_cpu(u64 value)
 	return caam64_to_cpu(value);
 }
 
-#ifdef CONFIG_ARCH_DMA_ADDR_T_64BIT
-#define cpu_to_caam_dma(value) cpu_to_caam_dma64(value)
-#define caam_dma_to_cpu(value) caam_dma64_to_cpu(value)
-#else
-#define cpu_to_caam_dma(value) cpu_to_caam32(value)
-#define caam_dma_to_cpu(value) caam32_to_cpu(value)
-#endif /* CONFIG_ARCH_DMA_ADDR_T_64BIT */
+static inline u64 cpu_to_caam_dma(u64 value)
+{
+	if (IS_ENABLED(CONFIG_ARCH_DMA_ADDR_T_64BIT) &&
+	    caam_ptr_sz == sizeof(u64))
+		return cpu_to_caam_dma64(value);
+	else
+		return cpu_to_caam32(value);
+}
+
+static inline u64 caam_dma_to_cpu(u64 value)
+{
+	if (IS_ENABLED(CONFIG_ARCH_DMA_ADDR_T_64BIT) &&
+	    caam_ptr_sz == sizeof(u64))
+		return caam_dma64_to_cpu(value);
+	else
+		return caam32_to_cpu(value);
+}
 
 /*
  * jr_outentry
  * Represents each entry in a JobR output ring
  */
-struct jr_outentry {
-	dma_addr_t desc;/* Pointer to completed descriptor */
-	u32 jrstatus;	/* Status for completed descriptor */
-} __packed;
+
+static inline void jr_outentry_get(void *outring, int hw_idx, dma_addr_t *desc,
+				   u32 *jrstatus)
+{
+
+	if (caam_ptr_sz == sizeof(u32)) {
+		struct {
+			u32 desc;
+			u32 jrstatus;
+		} __packed *outentry = outring;
+
+		*desc = outentry[hw_idx].desc;
+		*jrstatus = outentry[hw_idx].jrstatus;
+	} else {
+		struct {
+			dma_addr_t desc;/* Pointer to completed descriptor */
+			u32 jrstatus;	/* Status for completed descriptor */
+		} __packed *outentry = outring;
+
+		*desc = outentry[hw_idx].desc;
+		*jrstatus = outentry[hw_idx].jrstatus;
+	}
+}
+
+#define SIZEOF_JR_OUTENTRY	(caam_ptr_sz + sizeof(u32))
+
+static inline dma_addr_t jr_outentry_desc(void *outring, int hw_idx)
+{
+	dma_addr_t desc;
+	u32 unused;
+
+	jr_outentry_get(outring, hw_idx, &desc, &unused);
+
+	return desc;
+}
+
+static inline u32 jr_outentry_jrstatus(void *outring, int hw_idx)
+{
+	dma_addr_t unused;
+	u32 jrstatus;
+
+	jr_outentry_get(outring, hw_idx, &unused, &jrstatus);
+
+	return jrstatus;
+}
+
+static inline void jr_inpentry_set(void *inpring, int hw_idx, dma_addr_t val)
+{
+	if (caam_ptr_sz == sizeof(u32)) {
+		u32 *inpentry = inpring;
+
+		inpentry[hw_idx] = val;
+	} else {
+		dma_addr_t *inpentry = inpring;
+
+		inpentry[hw_idx] = val;
+	}
+}
+
+#define SIZEOF_JR_INPENTRY	caam_ptr_sz
+
 
 /* Version registers (Era 10+)	e80-eff */
 struct version_regs {
@@ -252,6 +318,9 @@ struct version_regs {
 /* CHA Version ID */
 #define CHA_VER_VID_SHIFT	24
 #define CHA_VER_VID_MASK	(0xffull << CHA_VER_VID_SHIFT)
+
+/* CHA Miscellaneous Information - AESA_MISC specific */
+#define CHA_VER_MISC_AES_GCM	BIT(1 + CHA_VER_MISC_SHIFT)
 
 /*
  * caam_perfmon - Performance Monitor/Secure Memory Status/
@@ -313,6 +382,12 @@ struct version_regs {
 #define CHA_VER_VID_MD_LP512	0x1ull
 #define CHA_VER_VID_MD_HP	0x2ull
 
+/*
+ * caam_perfmon - Performance Monitor/Secure Memory Status/
+ *                CAAM Global Status/Component Version IDs
+ *
+ * Spans f00-fff wherever instantiated
+ */
 struct sec_vid {
 	u16 ip_id;
 	u8 maj_rev;
@@ -335,6 +410,7 @@ struct caam_perfmon {
 	u32 cha_rev_ls;		/* CRNR - CHA Rev No. Least significant half*/
 #define CTPR_MS_QI_SHIFT	25
 #define CTPR_MS_QI_MASK		(0x1ull << CTPR_MS_QI_SHIFT)
+#define CTPR_MS_PS		BIT(17)
 #define CTPR_MS_DPAA2		BIT(13)
 #define CTPR_MS_VIRT_EN_INCL	0x00000001
 #define CTPR_MS_VIRT_EN_POR	0x00000002
@@ -342,28 +418,95 @@ struct caam_perfmon {
 #define CTPR_MS_PG_SZ_SHIFT	4
 	u32 comp_parms_ms;	/* CTPR - Compile Parameters Register	*/
 	u32 comp_parms_ls;	/* CTPR - Compile Parameters Register	*/
-	u64 rsvd1[2];
+	/* Secure Memory State Visibility */
+	u32 rsvd1;
+	u32 smstatus;	/* Secure memory status */
+	u32 rsvd2;
+	u32 smpartown;	/* Secure memory partition owner */
 
 	/* CAAM Global Status					fc0-fdf */
 	u64 faultaddr;	/* FAR  - Fault Address		*/
 	u32 faultliodn;	/* FALR - Fault Address LIODN	*/
 	u32 faultdetail;	/* FADR - Fault Addr Detail	*/
-	u32 rsvd2;
 #define CSTA_PLEND		BIT(10)
 #define CSTA_ALT_PLEND		BIT(18)
+	u32 rsvd3;
 	u32 status;		/* CSTA - CAAM Status */
-	u64 rsvd3;
+	u32 smpart;		/* Secure Memory Partition Parameters */
+	u32 smvid;		/* Secure Memory Version ID */
 
 	/* Component Instantiation Parameters			fe0-fff */
 	u32 rtic_id;		/* RVID - RTIC Version ID	*/
+#define CCBVID_ERA_MASK		0xff000000
+#define CCBVID_ERA_SHIFT	24
 	u32 ccb_id;		/* CCBVID - CCB Version ID	*/
 	u32 cha_id_ms;		/* CHAVID - CHA Version ID Most Significant*/
 	u32 cha_id_ls;		/* CHAVID - CHA Version ID Least Significant*/
 	u32 cha_num_ms;		/* CHANUM - CHA Number Most Significant	*/
 	u32 cha_num_ls;		/* CHANUM - CHA Number Least Significant*/
+#define SECVID_MS_IPID_MASK	0xffff0000
+#define SECVID_MS_IPID_SHIFT	16
+#define SECVID_MS_MAJ_REV_MASK	0x0000ff00
+#define SECVID_MS_MAJ_REV_SHIFT	8
 	u32 caam_id_ms;		/* CAAMVID - CAAM Version ID MS	*/
 	u32 caam_id_ls;		/* CAAMVID - CAAM Version ID LS	*/
 };
+
+#define SMSTATUS_PART_SHIFT	28
+#define SMSTATUS_PART_MASK	(0xf << SMSTATUS_PART_SHIFT)
+#define SMSTATUS_PAGE_SHIFT	16
+#define SMSTATUS_PAGE_MASK	(0x7ff << SMSTATUS_PAGE_SHIFT)
+#define SMSTATUS_MID_SHIFT	8
+#define SMSTATUS_MID_MASK	(0x3f << SMSTATUS_MID_SHIFT)
+#define SMSTATUS_ACCERR_SHIFT	4
+#define SMSTATUS_ACCERR_MASK	(0xf << SMSTATUS_ACCERR_SHIFT)
+#define SMSTATUS_ACCERR_NONE	0
+#define SMSTATUS_ACCERR_ALLOC	1	/* Page not allocated */
+#define SMSTATUS_ACCESS_ID	2	/* Not granted by ID */
+#define SMSTATUS_ACCESS_WRITE	3	/* Writes not allowed */
+#define SMSTATUS_ACCESS_READ	4	/* Reads not allowed */
+#define SMSTATUS_ACCESS_NONKEY	6	/* Non-key reads not allowed */
+#define SMSTATUS_ACCESS_BLOB	9	/* Blob access not allowed */
+#define SMSTATUS_ACCESS_DESCB	10	/* Descriptor Blob access spans pages */
+#define SMSTATUS_ACCESS_NON_SM	11	/* Outside Secure Memory range */
+#define SMSTATUS_ACCESS_XPAGE	12	/* Access crosses pages */
+#define SMSTATUS_ACCESS_INITPG	13	/* Page still initializing */
+#define SMSTATUS_STATE_SHIFT	0
+#define SMSTATUS_STATE_MASK	(0xf << SMSTATUS_STATE_SHIFT)
+#define SMSTATUS_STATE_RESET	0
+#define SMSTATUS_STATE_INIT	1
+#define SMSTATUS_STATE_NORMAL	2
+#define SMSTATUS_STATE_FAIL	3
+
+/* up to 15 rings, 2 bits shifted by ring number */
+#define SMPARTOWN_RING_SHIFT	2
+#define SMPARTOWN_RING_MASK	3
+#define SMPARTOWN_AVAILABLE	0
+#define SMPARTOWN_NOEXIST	1
+#define SMPARTOWN_UNAVAILABLE	2
+#define SMPARTOWN_OURS		3
+
+/* Maximum number of pages possible */
+#define SMPART_MAX_NUMPG_SHIFT	16
+#define SMPART_MAX_NUMPG_MASK	(0x3f << SMPART_MAX_NUMPG_SHIFT)
+
+/* Maximum partition number */
+#define SMPART_MAX_PNUM_SHIFT	12
+#define SMPART_MAX_PNUM_MASK	(0xf << SMPART_MAX_PNUM_SHIFT)
+
+/* Highest possible page number */
+#define SMPART_MAX_PG_SHIFT	0
+#define SMPART_MAX_PG_MASK	(0x3f << SMPART_MAX_PG_SHIFT)
+
+/* Max size of a page */
+#define SMVID_PG_SIZE_SHIFT	16
+#define SMVID_PG_SIZE_MASK	(0x7 << SMVID_PG_SIZE_SHIFT)
+
+/* Major/Minor Version ID */
+#define SMVID_MAJ_VERS_SHIFT	8
+#define SMVID_MAJ_VERS		(0xf << SMVID_MAJ_VERS_SHIFT)
+#define SMVID_MIN_VERS_SHIFT	0
+#define SMVID_MIN_VERS		(0xf << SMVID_MIN_VERS_SHIFT)
 
 /* LIODN programming for DMA configuration */
 #define MSTRID_LOCK_LIODN	0x80000000
@@ -373,12 +516,6 @@ struct caam_perfmon {
 struct masterid {
 	u32 liodn_ms;	/* lock and make-trusted control bits */
 	u32 liodn_ls;	/* LIODN for non-sequence and seq access */
-};
-
-/* Partition ID for DMA configuration */
-struct partid {
-	u32 rsvd1;
-	u32 pidr;	/* partition ID, DECO */
 };
 
 /* RNGB test mode (replicated twice in some configurations) */
@@ -416,7 +553,8 @@ struct rngtst {
 
 /* RNG4 TRNG test registers */
 struct rng4tst {
-#define RTMCTL_PRGM	0x00010000	/* 1 -> program mode, 0 -> run mode */
+#define RTMCTL_ACC  BIT(5)  /* TRNG access mode */
+#define RTMCTL_PRGM BIT(16) /* 1 -> program mode, 0 -> run mode */
 #define RTMCTL_SAMP_MODE_VON_NEUMANN_ES_SC	0 /* use von Neumann data in
 						     both entropy shifter and
 						     statistical checker */
@@ -493,8 +631,7 @@ struct caam_ctrl {
 	u32 deco_rsr;			/* DECORSR - Deco Request Source */
 	u32 rsvd11;
 	u32 deco_rq;			/* DECORR - DECO Request */
-	struct partid deco_mid[5];	/* DECOxLIODNR - 1 per DECO */
-	u32 rsvd5[22];
+	struct masterid deco_mid[16];	/* DECOxLIODNR - 1 per DECO */
 
 	/* DECO Availability/Reset Section			120-3ff */
 	u32 deco_avail;		/* DAR - DECO availability */
@@ -568,6 +705,35 @@ struct caam_ctrl {
 #define JRSTART_JR2_START       0x00000004 /* Start Job ring 2 */
 #define JRSTART_JR3_START       0x00000008 /* Start Job ring 3 */
 
+/* Secure Memory Configuration - if you have it */
+/* Secure Memory Register Offset from JR Base Reg*/
+#define SM_V1_OFFSET 0x0f4
+#define SM_V2_OFFSET 0xa00
+
+/* Minimum SM Version ID requiring v2 SM register mapping */
+#define SMVID_V2 0x20105
+
+struct caam_secure_mem_v1 {
+	u32 sm_cmd;	/* SMCJRx - Secure memory command */
+	u32 rsvd1;
+	u32 sm_status;	/* SMCSJRx - Secure memory status */
+	u32 rsvd2;
+
+	u32 sm_perm;	/* SMAPJRx - Secure memory access perms */
+	u32 sm_group2;	/* SMAP2JRx - Secure memory access group 2 */
+	u32 sm_group1;	/* SMAP1JRx - Secure memory access group 1 */
+};
+
+struct caam_secure_mem_v2 {
+	u32 sm_perm;	/* SMAPJRx - Secure memory access perms */
+	u32 sm_group2;	/* SMAP2JRx - Secure memory access group 2 */
+	u32 sm_group1;	/* SMAP1JRx - Secure memory access group 1 */
+	u32 rsvd1[118];
+	u32 sm_cmd;	/* SMCJRx - Secure memory command */
+	u32 rsvd2;
+	u32 sm_status;	/* SMCSJRx - Secure memory status */
+};
+
 /*
  * caam_job_ring - direct job ring setup
  * 1-4 possible per instantiation, base + 1000/2000/3000/4000
@@ -632,6 +798,7 @@ struct caam_job_ring {
 #define JRSTA_SSRC_CCB_ERROR        0x20000000
 #define JRSTA_SSRC_JUMP_HALT_USER   0x30000000
 #define JRSTA_SSRC_DECO             0x40000000
+#define JRSTA_SSRC_QI               0x50000000
 #define JRSTA_SSRC_JRERROR          0x60000000
 #define JRSTA_SSRC_JUMP_HALT_CC     0x70000000
 
@@ -736,6 +903,62 @@ struct caam_job_ring {
 #define JRCFG_ICTT_SHIFT	16
 
 #define JRCR_RESET                  0x01
+
+/* secure memory command */
+#define SMC_PAGE_SHIFT	16
+#define SMC_PAGE_MASK	(0xffff << SMC_PAGE_SHIFT)
+#define SMC_PART_SHIFT	8
+#define SMC_PART_MASK	(0x0f << SMC_PART_SHIFT)
+#define SMC_CMD_SHIFT	0
+#define SMC_CMD_MASK	(0x0f << SMC_CMD_SHIFT)
+
+#define SMC_CMD_ALLOC_PAGE	0x01	/* allocate page to this partition */
+#define SMC_CMD_DEALLOC_PAGE	0x02	/* deallocate page from partition */
+#define SMC_CMD_DEALLOC_PART	0x03	/* deallocate partition */
+#define SMC_CMD_PAGE_INQUIRY	0x05	/* find partition associate with page */
+
+/* secure memory (command) status */
+#define SMCS_PAGE_SHIFT		16
+#define SMCS_PAGE_MASK		(0x0fff << SMCS_PAGE_SHIFT)
+#define SMCS_CMDERR_SHIFT	14
+#define SMCS_CMDERR_MASK	(3 << SMCS_CMDERR_SHIFT)
+#define SMCS_ALCERR_SHIFT	12
+#define SMCS_ALCERR_MASK	(3 << SMCS_ALCERR_SHIFT)
+#define SMCS_PGOWN_SHIFT	6
+#define SMCS_PGWON_MASK		(3 << SMCS_PGOWN_SHIFT)
+#define SMCS_PART_SHIFT		0
+#define SMCS_PART_MASK		(0xf << SMCS_PART_SHIFT)
+
+#define SMCS_CMDERR_NONE	0
+#define SMCS_CMDERR_INCOMP	1	/* Command not yet complete */
+#define SMCS_CMDERR_SECFAIL	2	/* Security failure occurred */
+#define SMCS_CMDERR_OVERFLOW	3	/* Command overflow */
+
+#define SMCS_ALCERR_NONE	0
+#define SMCS_ALCERR_PSPERR	1	/* Partion marked PSP (dealloc only) */
+#define SMCS_ALCERR_PAGEAVAIL	2	/* Page not available */
+#define SMCS_ALCERR_PARTOWN	3	/* Partition ownership error */
+
+#define SMCS_PGOWN_AVAIL	0	/* Page is available */
+#define SMCS_PGOWN_NOEXIST	1	/* Page initializing or nonexistent */
+#define SMCS_PGOWN_NOOWN	2	/* Page owned by another processor */
+#define SMCS_PGOWN_OWNED	3	/* Page belongs to this processor */
+
+/* secure memory access permissions */
+#define SMCS_PERM_KEYMOD_SHIFT	16
+#define SMCA_PERM_KEYMOD_MASK	(0xff << SMCS_PERM_KEYMOD_SHIFT)
+#define SMCA_PERM_CSP_ZERO	0x8000	/* Zero when deallocated or released */
+#define SMCA_PERM_PSP_LOCK	0x4000	/* Part./pages can't be deallocated */
+#define SMCA_PERM_PERM_LOCK	0x2000	/* Lock permissions */
+#define SMCA_PERM_GRP_LOCK	0x1000	/* Lock access groups */
+#define SMCA_PERM_RINGID_SHIFT	10
+#define SMCA_PERM_RINGID_MASK	(3 << SMCA_PERM_RINGID_SHIFT)
+#define SMCA_PERM_G2_BLOB	0x0080	/* Group 2 blob import/export */
+#define SMCA_PERM_G2_WRITE	0x0020	/* Group 2 write */
+#define SMCA_PERM_G2_READ	0x0010	/* Group 2 read */
+#define SMCA_PERM_G1_BLOB	0x0008	/* Group 1... */
+#define SMCA_PERM_G1_WRITE	0x0002
+#define SMCA_PERM_G1_READ	0x0001
 
 /*
  * caam_assurance - Assurance Controller View

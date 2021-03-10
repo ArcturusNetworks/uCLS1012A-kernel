@@ -374,7 +374,8 @@ static inline int evb_port_fdb_prep(struct nlattr *tb[],
 
 static int evb_port_fdb_add(struct ndmsg *ndm, struct nlattr *tb[],
 			    struct net_device *netdev,
-			    const unsigned char *addr, u16 vid, u16 flags)
+			    const unsigned char *addr, u16 vid, u16 flags,
+			    struct netlink_ext_ack *extack)
 {
 	u16 _vid;
 	int err;
@@ -512,7 +513,8 @@ static int evb_setlink_af_spec(struct net_device *netdev,
 
 static int evb_setlink(struct net_device *netdev,
 		       struct nlmsghdr *nlh,
-		       u16 flags)
+		       u16 flags,
+		       struct netlink_ext_ack *extack)
 {
 	struct evb_port_priv	*port_priv = netdev_priv(netdev);
 	struct evb_priv		*evb_priv = port_priv->evb_priv;
@@ -530,8 +532,8 @@ static int evb_setlink(struct net_device *netdev,
 
 	attr = nlmsg_find_attr(nlh, sizeof(struct ifinfomsg), IFLA_AF_SPEC);
 	if (attr) {
-		err = nla_parse_nested(tb, IFLA_BRIDGE_MAX, attr,
-				       ifla_br_policy, NULL);
+		err = nla_parse_nested_deprecated(tb, IFLA_BRIDGE_MAX, attr,
+						  ifla_br_policy, NULL);
 		if (unlikely(err)) {
 			netdev_err(netdev,
 				   "nla_parse_nested for br_policy err %d\n",
@@ -594,7 +596,7 @@ static int __nla_put_port(struct sk_buff *skb, struct net_device *netdev)
 	struct nlattr	*nest;
 	int		err;
 
-	nest = nla_nest_start(skb, IFLA_PROTINFO | NLA_F_NESTED);
+	nest = nla_nest_start_noflag(skb, IFLA_PROTINFO | NLA_F_NESTED);
 	if (!nest) {
 		netdev_err(netdev, "nla_nest_start failed\n");
 		return -ENOMEM;
@@ -646,7 +648,7 @@ static int __nla_put_vlan(struct sk_buff *skb,  struct net_device *netdev)
 	u16			i;
 	int			err;
 
-	nest = nla_nest_start(skb, IFLA_AF_SPEC);
+	nest = nla_nest_start_noflag(skb, IFLA_AF_SPEC);
 	if (!nest) {
 		netdev_err(netdev, "nla_nest_start failed");
 		return -ENOMEM;
@@ -737,7 +739,8 @@ static int evb_dellink(struct net_device *netdev,
 	if (!spec)
 		return 0;
 
-	err = nla_parse_nested(tb, IFLA_BRIDGE_MAX, spec, ifla_br_policy, NULL);
+	err = nla_parse_nested_deprecated(tb, IFLA_BRIDGE_MAX, spec,
+					  ifla_br_policy, NULL);
 	if (unlikely(err))
 		return err;
 
@@ -878,8 +881,8 @@ static void evb_get_drvinfo(struct net_device *netdev,
 		sizeof(drvinfo->bus_info));
 }
 
-static int evb_get_settings(struct net_device *netdev,
-			    struct ethtool_cmd *cmd)
+static int evb_get_link_ksettings(struct net_device *netdev,
+				  struct ethtool_link_ksettings *link_settings)
 {
 	struct evb_port_priv *port_priv = netdev_priv(netdev);
 	struct dpdmux_link_state state = {0};
@@ -899,17 +902,17 @@ static int evb_get_settings(struct net_device *netdev,
 	 * Report only autoneg state, duplexity and speed.
 	 */
 	if (state.options & DPDMUX_LINK_OPT_AUTONEG)
-		cmd->autoneg = AUTONEG_ENABLE;
+		link_settings->base.autoneg = AUTONEG_ENABLE;
 	if (!(state.options & DPDMUX_LINK_OPT_HALF_DUPLEX))
-		cmd->duplex = DUPLEX_FULL;
-	ethtool_cmd_speed_set(cmd, state.rate);
+		link_settings->base.duplex = DUPLEX_FULL;
+	link_settings->base.speed = state.rate;
 
 out:
 	return err;
 }
 
-static int evb_set_settings(struct net_device *netdev,
-			    struct ethtool_cmd *cmd)
+static int evb_set_link_ksettings(struct net_device *netdev,
+				  const struct ethtool_link_ksettings *link_settings)
 {
 	struct evb_port_priv *port_priv = netdev_priv(netdev);
 	struct dpdmux_link_state state = {0};
@@ -938,12 +941,12 @@ static int evb_set_settings(struct net_device *netdev,
 	}
 
 	cfg.options = state.options;
-	cfg.rate = ethtool_cmd_speed(cmd);
-	if (cmd->autoneg == AUTONEG_ENABLE)
+	cfg.rate = link_settings->base.speed;
+	if (link_settings->base.autoneg == AUTONEG_ENABLE)
 		cfg.options |= DPDMUX_LINK_OPT_AUTONEG;
 	else
 		cfg.options &= ~DPDMUX_LINK_OPT_AUTONEG;
-	if (cmd->duplex == DUPLEX_HALF)
+	if (link_settings->base.duplex == DUPLEX_HALF)
 		cfg.options |= DPDMUX_LINK_OPT_HALF_DUPLEX;
 	else
 		cfg.options &= ~DPDMUX_LINK_OPT_HALF_DUPLEX;
@@ -1027,8 +1030,8 @@ static void evb_ethtool_get_stats(struct net_device *netdev,
 static const struct ethtool_ops evb_port_ethtool_ops = {
 	.get_drvinfo		= &evb_get_drvinfo,
 	.get_link		= &ethtool_op_get_link,
-	.get_settings		= &evb_get_settings,
-	.set_settings		= &evb_set_settings,
+	.get_link_ksettings	= &evb_get_link_ksettings,
+	.set_link_ksettings	= &evb_set_link_ksettings,
 	.get_strings		= &evb_ethtool_get_strings,
 	.get_ethtool_stats	= &evb_ethtool_get_stats,
 	.get_sset_count		= &evb_ethtool_get_sset_count,
@@ -1304,7 +1307,7 @@ static int evb_probe(struct fsl_mc_device *evb_dev)
 
 		/* ports are up from init */
 		rtnl_lock();
-		err = dev_open(port_netdev);
+		err = dev_open(port_netdev, NULL);
 		rtnl_unlock();
 		if (unlikely(err))
 			dev_warn(dev, "dev_open err %d\n", err);

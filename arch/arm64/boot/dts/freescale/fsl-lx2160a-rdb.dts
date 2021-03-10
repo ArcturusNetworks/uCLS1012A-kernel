@@ -74,6 +74,32 @@
 	status = "okay";
 };
 
+&fspi {
+	status = "okay";
+
+	mt35xu512aba0: flash@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spansion,m25p80";
+		m25p,fast-read;
+		spi-max-frequency = <50000000>;
+		reg = <0>;
+		spi-rx-bus-width = <8>;
+		spi-tx-bus-width = <8>;
+	};
+
+	mt35xu512aba1: flash@1 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spansion,m25p80";
+		m25p,fast-read;
+		spi-max-frequency = <50000000>;
+		reg = <1>;
+		spi-rx-bus-width = <8>;
+		spi-tx-bus-width = <8>;
+	};
+};
+
 &i2c0 {
 	status = "okay";
 
@@ -126,32 +152,20 @@
 	};
 };
 
-&fspi {
+&sata0 {
 	status = "okay";
-	nxp,fspi-has-second-chip;
-	flash0: mt35xu512aba@0 {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		compatible = "micron,m25p80";
-		m25p,fast-read;
-		spi-max-frequency = <50000000>;
-		reg = <0>;
-		/* The following setting enables 1-1-8 (CMD-ADDR-DATA) mode */
-		spi-rx-bus-width = <8>;
-		spi-tx-bus-width = <1>;
-	};
+};
 
-	flash1: mt35xu512aba@1 {
-		#address-cells = <1>;
-		#size-cells = <1>;
-		compatible = "micron,m25p80";
-		m25p,fast-read;
-		spi-max-frequency = <50000000>;
-		reg = <1>;
-		/* The following setting enables 1-1-8 (CMD-ADDR-DATA) mode */
-		spi-rx-bus-width = <8>;
-		spi-tx-bus-width = <1>;
-	};
+&sata1 {
+	status = "okay";
+};
+
+&sata2 {
+	status = "okay";
+};
+
+&sata3 {
+	status = "okay";
 };
 
 &uart0 {
@@ -206,12 +220,12 @@
 
 &dpmac3 {
 	phy-handle = <&aquantia_phy1>;
-	phy-connection-type = "xgmii";
+	phy-connection-type = "usxgmii";
 };
 
 &dpmac4 {
 	phy-handle = <&aquantia_phy2>;
-	phy-connection-type = "xgmii";
+	phy-connection-type = "usxgmii";
 };
 
 &dpmac5 {
@@ -230,20 +244,4 @@
 &dpmac18 {
 	phy-handle = <&rgmii_phy2>;
 	phy-connection-type = "rgmii-id";
-};
-
-&sata0 {
-	status = "okay";
-};
-
-&sata1 {
-	status = "okay";
-};
-
-&sata2 {
-	status = "okay";
-};
-
-&sata3 {
-	status = "okay";
 };

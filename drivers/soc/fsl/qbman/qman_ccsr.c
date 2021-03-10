@@ -385,7 +385,6 @@ static int qm_set_memory(enum qm_memory memory, u64 ba, u32 size)
 	 */
 	flush_dcache_range((unsigned long) ptr, (unsigned long) ptr+size);
 #endif
-
 	memunmap(ptr);
 
 	qm_ccsr_out(offset, upper_32_bits(ba));
@@ -452,13 +451,13 @@ static size_t fqd_sz, pfdr_sz;
 
 #ifdef CONFIG_PPC
 /*
- * Support for PPC Device Tree backward compatibility when compatiable
+ * Support for PPC Device Tree backward compatibility when compatible
  * string is set to fsl-qman-fqd and fsl-qman-pfdr
  */
 static int zero_priv_mem(phys_addr_t addr, size_t sz)
 {
 	/* map as cacheable, non-guarded */
-	void __iomem *tmpp = ioremap_prot(addr, sz, 0);
+	void __iomem *tmpp = ioremap_cache(addr, sz);
 
 	if (!tmpp)
 		return -ENOMEM;
@@ -642,7 +641,7 @@ static int qman_init_ccsr(struct device *dev)
 }
 
 #define LIO_CFG_LIODN_MASK 0x0fff0000
-void qman_liodn_fixup(u16 channel)
+void __qman_liodn_fixup(u16 channel)
 {
 #ifdef CONFIG_PPC
 	static int done;
@@ -809,7 +808,7 @@ static int fsl_qman_probe(struct platform_device *pdev)
 		 */
 		zero_priv_mem(fqd_a, fqd_sz);
 #else
-		WARN(1, "Unexpected archiceture using non shared-dma-mem reservations");
+		WARN(1, "Unexpected architecture using non shared-dma-mem reservations");
 #endif
 	} else {
 		/*
@@ -831,11 +830,11 @@ static int fsl_qman_probe(struct platform_device *pdev)
 		ret = qbman_init_private_mem(dev, 1, &pfdr_a, &pfdr_sz);
 		if (ret) {
 			dev_err(dev, "qbman_init_private_mem() for PFDR failed 0x%x\n",
-			ret);
+				ret);
 			return -ENODEV;
 		}
 	}
-	dev_info(dev, "Allocated PFDR 0x%llx 0x%zx\n", pfdr_a, pfdr_sz);
+	dev_dbg(dev, "Allocated PFDR 0x%llx 0x%zx\n", pfdr_a, pfdr_sz);
 
 	/* Create an 1-to-1 iommu mapping for fqd and pfdr areas */
 	domain = iommu_get_domain_for_dev(dev);

@@ -821,7 +821,7 @@ static bool a050385_check_skb(struct sk_buff *skb, struct dpa_priv_s *priv)
 			return true;
 
 		/* Check if the fragment is 16 byte aligned */
-		if (frag->page_offset % 16)
+		if (skb_frag_off(frag) % 16)
 			return true;
 
 		/* Check if the fragment crosses a 4K address boundary. Since
@@ -829,7 +829,7 @@ static bool a050385_check_skb(struct sk_buff *skb, struct dpa_priv_s *priv)
 		 * current fragment, checking for the 256 byte alignment
 		 * isn't relevant.
 		 */
-		if (CROSS_4K(frag->page_offset, skb_frag_size(frag)))
+		if (CROSS_4K(skb_frag_off(frag), skb_frag_size(frag)))
 			return true;
 	}
 
@@ -882,7 +882,7 @@ static struct sk_buff *a050385_realign_skb(struct sk_buff *skb,
 		WARN_ONCE(1, "skb parsing failure\n");
 		goto err;
 	}
-	copy_skb_header(nskb, skb);
+	skb_copy_header(nskb, skb);
 
 #ifdef CONFIG_FSL_DPAA_TS
 	/* Copy relevant timestamp info from the old skb to the new */
@@ -996,7 +996,7 @@ int __hot skb_to_sg_fd(struct dpa_priv_s *priv,
 		frag = &skb_shinfo(skb)->frags[i - 1];
 		qm_sg_entry_set_bpid(&sgt[i], 0xff);
 		qm_sg_entry_set_offset(&sgt[i], 0);
-		qm_sg_entry_set_len(&sgt[i], frag->size);
+		qm_sg_entry_set_len(&sgt[i], frag->bv_len);
 		qm_sg_entry_set_ext(&sgt[i], 0);
 
 		if (i == nr_frags)
@@ -1005,7 +1005,7 @@ int __hot skb_to_sg_fd(struct dpa_priv_s *priv,
 			qm_sg_entry_set_final(&sgt[i], 0);
 
 		DPA_BUG_ON(!skb_frag_page(frag));
-		addr = skb_frag_dma_map(dpa_bp->dev, frag, 0, frag->size,
+		addr = skb_frag_dma_map(dpa_bp->dev, frag, 0, frag->bv_len,
 					dma_dir);
 		if (unlikely(dma_mapping_error(dpa_bp->dev, addr))) {
 			dev_err(dpa_bp->dev, "DMA mapping failed");

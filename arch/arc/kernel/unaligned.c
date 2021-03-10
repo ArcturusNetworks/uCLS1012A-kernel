@@ -1,14 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (C) 2011-2012 Synopsys (www.synopsys.com)
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
  *
  * vineetg : May 2011
  *  -Adapted (from .26 to .35)
  *  -original contribution by Tim.yao@amlogic.com
- *
  */
 
 #include <linux/types.h>
@@ -206,7 +202,7 @@ int misaligned_fixup(unsigned long address, struct pt_regs *regs,
 	char buf[TASK_COMM_LEN];
 
 	/* handle user mode only and only if enabled by sysadmin */
-	if (!user_mode(regs) || !unaligned_enabled)
+	if (!unaligned_enabled)
 		return 1;
 
 	if (no_unaligned_warning) {

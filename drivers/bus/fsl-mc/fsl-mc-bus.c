@@ -133,6 +133,16 @@ static int fsl_mc_bus_uevent(struct device *dev, struct kobj_uevent_env *env)
 	return 0;
 }
 
+static int fsl_mc_dma_configure(struct device *dev)
+{
+	struct device *dma_dev = dev;
+
+	while (dev_is_fsl_mc(dma_dev))
+		dma_dev = dma_dev->parent;
+
+	return of_dma_configure(dev, dma_dev->of_node, 1);
+}
+
 static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
 			     char *buf)
 {
@@ -142,33 +152,6 @@ static ssize_t modalias_show(struct device *dev, struct device_attribute *attr,
 		       mc_dev->obj_desc.type);
 }
 static DEVICE_ATTR_RO(modalias);
-
-static ssize_t rescan_store(struct device *dev,
-			    struct device_attribute *attr,
-			    const char *buf, size_t count)
-{
-	struct fsl_mc_device *root_mc_dev;
-	struct fsl_mc_bus *root_mc_bus;
-	unsigned long val;
-
-	if (!fsl_mc_is_root_dprc(dev))
-		return -EINVAL;
-
-	root_mc_dev = to_fsl_mc_device(dev);
-	root_mc_bus = to_fsl_mc_bus(root_mc_dev);
-
-	if (kstrtoul(buf, 0, &val) < 0)
-		return -EINVAL;
-
-	if (val) {
-		mutex_lock(&root_mc_bus->scan_mutex);
-		dprc_scan_objects(root_mc_dev, NULL, NULL);
-		mutex_unlock(&root_mc_bus->scan_mutex);
-	}
-
-	return count;
-}
-static DEVICE_ATTR_WO(rescan);
 
 static ssize_t driver_override_store(struct device *dev,
 				     struct device_attribute *attr,
@@ -215,7 +198,6 @@ static DEVICE_ATTR_RW(driver_override);
 
 static struct attribute *fsl_mc_dev_attrs[] = {
 	&dev_attr_modalias.attr,
-	&dev_attr_rescan.attr,
 	&dev_attr_driver_override.attr,
 	NULL,
 };
@@ -233,15 +215,15 @@ static int scan_fsl_mc_bus(struct device *dev, void *data)
 	root_mc_dev = to_fsl_mc_device(dev);
 	root_mc_bus = to_fsl_mc_bus(root_mc_dev);
 	mutex_lock(&root_mc_bus->scan_mutex);
-	dprc_scan_objects(root_mc_dev, NULL, NULL);
+	dprc_scan_objects(root_mc_dev, NULL, true, NULL);
 	mutex_unlock(&root_mc_bus->scan_mutex);
 
 exit:
 	return 0;
 }
 
-static ssize_t bus_rescan_store(struct bus_type *bus,
-				const char *buf, size_t count)
+static ssize_t rescan_store(struct bus_type *bus,
+			    const char *buf, size_t count)
 {
 	unsigned long val;
 
@@ -253,7 +235,7 @@ static ssize_t bus_rescan_store(struct bus_type *bus,
 
 	return count;
 }
-static BUS_ATTR(rescan, 0220, NULL, bus_rescan_store);
+static BUS_ATTR_WO(rescan);
 
 static int fsl_mc_bus_set_autorescan(struct device *dev, void *data)
 {
@@ -315,19 +297,13 @@ static struct attribute *fsl_mc_bus_attrs[] = {
 	NULL,
 };
 
-static const struct attribute_group fsl_mc_bus_group = {
-	.attrs = fsl_mc_bus_attrs,
-};
-
-static const struct attribute_group *fsl_mc_bus_groups[] = {
-	&fsl_mc_bus_group,
-	NULL,
-};
+ATTRIBUTE_GROUPS(fsl_mc_bus);
 
 struct bus_type fsl_mc_bus_type = {
 	.name = "fsl-mc",
 	.match = fsl_mc_bus_match,
 	.uevent = fsl_mc_bus_uevent,
+	.dma_configure  = fsl_mc_dma_configure,
 	.dev_groups = fsl_mc_dev_groups,
 	.bus_groups = fsl_mc_bus_groups,
 };
@@ -393,6 +369,10 @@ struct device_type fsl_mc_bus_dpdmai_type = {
 	.name = "fsl_mc_bus_dpdmai"
 };
 
+struct device_type fsl_mc_bus_dpdbg_type = {
+	.name = "fsl_mc_bus_dpdbg"
+};
+
 static struct device_type *fsl_mc_get_device_type(const char *type)
 {
 	static const struct {
@@ -414,6 +394,7 @@ static struct device_type *fsl_mc_get_device_type(const char *type)
 		{ &fsl_mc_bus_dpaiop_type, "dpaiop" },
 		{ &fsl_mc_bus_dpci_type, "dpci" },
 		{ &fsl_mc_bus_dpdmai_type, "dpdmai" },
+		{ &fsl_mc_bus_dpdbg_type, "dpdbg" },
 		{ NULL, NULL }
 	};
 	int i;
@@ -683,17 +664,19 @@ static int fsl_mc_device_get_mmio_regions(struct fsl_mc_device *mc_dev,
 				"dprc_get_obj_region() failed: %d\n", error);
 			goto error_cleanup_regions;
 		}
-		/* Older MC only returned region offset and no base address
+		/*
+		 * Older MC only returned region offset and no base address
 		 * If base address is in the region_desc use it otherwise
 		 * revert to old mechanism
 		 */
 		if (region_desc.base_address)
 			regions[i].start = region_desc.base_address +
-					   region_desc.base_offset;
+						region_desc.base_offset;
 		else
 			error = translate_mc_addr(mc_dev, mc_region_type,
-						  region_desc.base_offset,
-						  &regions[i].start);
+					  region_desc.base_offset,
+					  &regions[i].start);
+
 		if (error < 0) {
 			dev_err(parent_dev,
 				"Invalid MC offset: %#x (for %s.%d\'s region %d)\n",
@@ -704,11 +687,8 @@ static int fsl_mc_device_get_mmio_regions(struct fsl_mc_device *mc_dev,
 
 		regions[i].end = regions[i].start + region_desc.size - 1;
 		regions[i].name = "fsl-mc object MMIO region";
-		regions[i].flags = IORESOURCE_IO;
-		if (region_desc.flags & DPRC_REGION_CACHEABLE)
-			regions[i].flags |= IORESOURCE_CACHEABLE;
-		if (region_desc.flags & DPRC_REGION_SHAREABLE)
-			regions[i].flags |= IORESOURCE_MEM;
+		regions[i].flags = region_desc.flags & IORESOURCE_BITS;
+		regions[i].flags |= IORESOURCE_MEM;
 	}
 
 	mc_dev->regions = regions;
@@ -928,8 +908,8 @@ static int parse_mc_ranges(struct device *dev,
 	*ranges_start = of_get_property(mc_node, "ranges", &ranges_len);
 	if (!(*ranges_start) || !ranges_len) {
 		dev_warn(dev,
-			 "missing or empty ranges property for device tree node '%s'\n",
-			 mc_node->name);
+			 "missing or empty ranges property for device tree node '%pOFn'\n",
+			 mc_node);
 		return 0;
 	}
 
@@ -952,7 +932,7 @@ static int parse_mc_ranges(struct device *dev,
 
 	tuple_len = range_tuple_cell_count * sizeof(__be32);
 	if (ranges_len % tuple_len != 0) {
-		dev_err(dev, "malformed ranges property '%s'\n", mc_node->name);
+		dev_err(dev, "malformed ranges property '%pOFn'\n", mc_node);
 		return -EINVAL;
 	}
 
@@ -1027,7 +1007,6 @@ static int fsl_mc_bus_probe(struct platform_device *pdev)
 	struct fsl_mc *mc;
 	struct fsl_mc_device *mc_bus_dev = NULL;
 	struct fsl_mc_io *mc_io = NULL;
-	struct fsl_mc_bus *mc_bus = NULL;
 	int container_id;
 	phys_addr_t mc_portal_phys_addr;
 	u32 mc_portal_size;
@@ -1100,17 +1079,8 @@ static int fsl_mc_bus_probe(struct platform_device *pdev)
 	if (error < 0)
 		goto error_cleanup_mc_io;
 
-	mc_bus = to_fsl_mc_bus(mc_bus_dev);
-	error = fsl_mc_restool_create_device_file(mc_bus);
-	if (error < 0)
-		goto error_cleanup_device;
-
 	mc->root_mc_bus_dev = mc_bus_dev;
-
 	return 0;
-
-error_cleanup_device:
-	fsl_mc_device_remove(mc_bus_dev);
 
 error_cleanup_mc_io:
 	fsl_destroy_mc_io(mc_io);
@@ -1124,12 +1094,10 @@ error_cleanup_mc_io:
 static int fsl_mc_bus_remove(struct platform_device *pdev)
 {
 	struct fsl_mc *mc = platform_get_drvdata(pdev);
-	struct fsl_mc_bus *mc_bus = to_fsl_mc_bus(mc->root_mc_bus_dev);
 
 	if (!fsl_mc_is_root_dprc(&mc->root_mc_bus_dev->dev))
 		return -EINVAL;
 
-	fsl_mc_restool_remove_device_file(mc_bus);
 	fsl_mc_device_remove(mc->root_mc_bus_dev);
 
 	fsl_destroy_mc_io(mc->root_mc_bus_dev->mc_io);
@@ -1179,14 +1147,7 @@ static int __init fsl_mc_bus_driver_init(void)
 	if (error < 0)
 		goto error_cleanup_dprc_driver;
 
-	error = fsl_mc_restool_init();
-	if (error < 0)
-		goto error_cleanup_mc_allocator;
-
 	return 0;
-
-error_cleanup_mc_allocator:
-	fsl_mc_allocator_driver_exit();
 
 error_cleanup_dprc_driver:
 	dprc_driver_exit();

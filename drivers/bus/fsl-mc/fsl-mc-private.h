@@ -10,8 +10,6 @@
 
 #include <linux/fsl/mc.h>
 #include <linux/mutex.h>
-#include <linux/cdev.h>
-#include <linux/ioctl.h>
 
 /*
  * Data Path Management Complex (DPMNG) General API
@@ -184,38 +182,23 @@ int fsl_mc_msi_domain_alloc_irqs(struct device *dev,
 
 void fsl_mc_msi_domain_free_irqs(struct device *dev);
 
-int __must_check fsl_create_mc_io(struct device *dev,
-				  phys_addr_t mc_portal_phys_addr,
-				  u32 mc_portal_size,
-				  struct fsl_mc_device *dpmcp_dev,
-				  u32 flags, struct fsl_mc_io **new_mc_io);
-
-void fsl_destroy_mc_io(struct fsl_mc_io *mc_io);
-
 bool fsl_mc_is_root_dprc(struct device *dev);
 
-#ifdef CONFIG_FSL_MC_RESTOOL
+#ifdef CONFIG_FSL_MC_UAPI_SUPPORT
 
-int fsl_mc_restool_create_device_file(struct fsl_mc_bus *mc_bus);
+int fsl_mc_uapi_create_device_file(struct fsl_mc_bus *mc_bus);
 
-void fsl_mc_restool_remove_device_file(struct fsl_mc_bus *mc_bus);
-
-int fsl_mc_restool_init(void);
+void fsl_mc_uapi_remove_device_file(struct fsl_mc_bus *mc_bus);
 
 #else
 
-static inline int fsl_mc_restool_create_device_file(struct fsl_mc_bus *mc_bus)
+static inline int fsl_mc_uapi_create_device_file(struct fsl_mc_bus *mc_bus)
 {
 	return 0;
 }
 
-static inline void fsl_mc_restool_remove_device_file(struct fsl_mc_bus *mc_bus)
+static inline void fsl_mc_uapi_remove_device_file(struct fsl_mc_bus *mc_bus)
 {
-}
-
-static inline int fsl_mc_restool_init(void)
-{
-	return 0;
 }
 
 #endif

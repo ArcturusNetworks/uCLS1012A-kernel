@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/* Copyright 2018 NXP
+/* Copyright (C) 2018 NXP
  * Secure key is generated using NXP CAAM hardware block. CAAM generates the
  * random number (used as a key) and creates its blob for the user.
  */

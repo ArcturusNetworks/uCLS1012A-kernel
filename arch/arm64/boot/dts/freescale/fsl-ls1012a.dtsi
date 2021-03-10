@@ -18,11 +18,11 @@
 
 	aliases {
 		crypto = &crypto;
-		rtic_a = &rtic_a;
-		rtic_b = &rtic_b;
-		rtic_c = &rtic_c;
-		rtic_d = &rtic_d;
-		sec_mon = &sec_mon;
+		rtic-a = &rtic_a;
+		rtic-b = &rtic_b;
+		rtic-c = &rtic_c;
+		rtic-d = &rtic_d;
+		sec-mon = &sec_mon;
 		rtc1 = &ftm_alarm0;
 	};
 
@@ -45,7 +45,7 @@
 		 * PSCI node is not added default, U-boot will add missing
 		 * parts if it determines to use PSCI.
 		 */
-		entry-method = "arm,psci";
+		entry-method = "psci";
 
 		CPU_PH20: cpu-ph20 {
 			compatible = "arm,idle-state";
@@ -101,6 +101,8 @@
 		offset = <0xb0>;
 		mask = <0x02>;
 	};
+
+	#include "fsl-tmu.dtsi"
 
 	soc {
 		compatible = "simple-bus";
@@ -288,8 +290,6 @@
 			#thermal-sensor-cells = <1>;
 		};
 
-		#include "fsl-tmu.dtsi"
-
 		rcpm: rcpm@1ee2140 {
 			compatible = "fsl,ls1012a-rcpm", "fsl,qoriq-rcpm-2.1+";
 			reg = <0x0 0x1ee2140 0x0 0x4>;
@@ -303,6 +303,7 @@
 			interrupts = <0 86 0x4>;
 			big-endian;
 		};
+
 
 		i2c0: i2c@2180000 {
 			compatible = "fsl,vf610-i2c", "fsl,ls1012a-vf610-i2c";
@@ -325,7 +326,7 @@
 			status = "disabled";
 		};
 
-		dspi: dspi@2100000 {
+		dspi: spi@2100000 {
 			compatible = "fsl,ls1012a-dspi", "fsl,ls1021a-v1.0-dspi";
 			#address-cells = <1>;
 			#size-cells = <0>;
@@ -383,17 +384,16 @@
 			big-endian;
 		};
 
-		qspi: quadspi@1550000 {
-			compatible = "fsl,ls1012a-qspi", "fsl,ls1021a-qspi";
+		qspi: spi@1550000 {
+			compatible = "fsl,ls1021a-qspi";
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0x0 0x1550000 0x0 0x10000>,
 				<0x0 0x40000000 0x0 0x10000000>;
 			reg-names = "QuadSPI", "QuadSPI-memory";
-			interrupts = <0 99 IRQ_TYPE_LEVEL_HIGH>;
+			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
 			clock-names = "qspi_en", "qspi";
 			clocks = <&clockgen 4 0>, <&clockgen 4 0>;
-			big-endian;
 			status = "disabled";
 		};
 
@@ -403,8 +403,9 @@
 			reg = <0x0 0x2b50000 0x0 0x10000>;
 			interrupts = <0 148 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clockgen 4 3>, <&clockgen 4 3>,
-				 <&clockgen 4 3>, <&clockgen 4 3>;
-			clock-names = "bus", "mclk1", "mclk2", "mclk3";
+				 <&clockgen 4 3>, <&clockgen 4 3>,
+				 <&clockgen 4 3>;
+			clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
 			dma-names = "tx", "rx";
 			dmas = <&edma0 1 47>,
 			       <&edma0 1 46>;
@@ -417,8 +418,9 @@
 			reg = <0x0 0x2b60000 0x0 0x10000>;
 			interrupts = <0 149 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clockgen 4 3>, <&clockgen 4 3>,
-				 <&clockgen 4 3>, <&clockgen 4 3>;
-			clock-names = "bus", "mclk1", "mclk2", "mclk3";
+				 <&clockgen 4 3>, <&clockgen 4 3>,
+				 <&clockgen 4 3>;
+			clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
 			dma-names = "tx", "rx";
 			dmas = <&edma0 1 45>,
 			       <&edma0 1 44>;
@@ -442,7 +444,7 @@
 		};
 
 		usb0: usb3@2f00000 {
-			compatible = "snps,dwc3";
+			compatible = "fsl,ls1012a-dwc3", "snps,dwc3";
 			reg = <0x0 0x2f00000 0x0 0x10000>;
 			interrupts = <0 60 0x4>;
 			dr_mode = "host";
@@ -450,6 +452,7 @@
 			snps,dis_rxdet_inp3_quirk;
 			snps,incr-burst-type-adjustment = <1>, <4>, <8>, <16>;
 			snps,host-vbus-glitches;
+			dma-coherent;
 		};
 
 		sata: sata@3200000 {
@@ -479,16 +482,17 @@
 		};
 
 		pcie: pcie@3400000 {
-			compatible = "fsl,ls1012a-pcie", "snps,dw-pcie";
+			compatible = "fsl,ls1012a-pcie";
 			reg = <0x00 0x03400000 0x0 0x00100000   /* controller registers */
 			       0x40 0x00000000 0x0 0x00002000>; /* configuration space */
 			reg-names = "regs", "config";
-			interrupts = <0 118 0x4>, /* AER interrupt */
+			interrupts = <0 118 0x4>, /* controller interrupt */
 				     <0 117 0x4>; /* PME interrupt */
 			interrupt-names = "aer", "pme";
 			#address-cells = <3>;
 			#size-cells = <2>;
 			device_type = "pci";
+			num-viewport = <2>;
 			bus-range = <0x0 0xff>;
 			ranges = <0x81000000 0x0 0x00000000 0x40 0x00010000 0x0 0x00010000   /* downstream I/O */
 				  0x82000000 0x0 0x40000000 0x40 0x40000000 0x0 0x40000000>; /* non-prefetchable memory */

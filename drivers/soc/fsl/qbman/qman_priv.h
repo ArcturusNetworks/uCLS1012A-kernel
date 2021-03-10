@@ -153,11 +153,9 @@ static inline void qman_cgrs_xor(struct qman_cgrs *dest,
 void qman_init_cgr_all(void);
 
 struct qm_portal_config {
-	/*
-	 * Corenet portal addresses;
-	 * [0]==cache-enabled, [1]==cache-inhibited.
-	 */
-	void __iomem *addr_virt[2];
+	/* Portal addresses */
+	void *addr_virt_ce;
+	void __iomem *addr_virt_ci;
 	struct device *dev;
 	struct iommu_domain *iommu_domain;
 	/* Allow these to be joined in lists */
@@ -195,7 +193,14 @@ extern struct gen_pool *qm_cgralloc; /* CGR ID allocator */
 u32 qm_get_pools_sdqcr(void);
 
 int qman_wq_alloc(void);
-void qman_liodn_fixup(u16 channel);
+#ifdef CONFIG_FSL_PAMU
+#define qman_liodn_fixup __qman_liodn_fixup
+#else
+static inline void qman_liodn_fixup(u16 channel)
+{
+}
+#endif
+void __qman_liodn_fixup(u16 channel);
 void qman_set_sdest(u16 channel, unsigned int cpu_idx);
 
 struct qman_portal *qman_create_affine_portal(

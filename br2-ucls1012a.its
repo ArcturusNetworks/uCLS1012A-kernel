@@ -13,7 +13,7 @@
         #address-cells = <1>;
         images {
                kernel {
-                        description = "Linux kernel";
+                        description = "ARM64 Linux kernel";
                         data = /incbin/("Image");
                         type = "kernel";
                         arch = "arm64";
@@ -23,7 +23,7 @@
                         entry = <0x80080000>;
                 };
                 fdt {
-                        description = "Flattened Device Tree Blob";
+                        description = "Flattened Device Tree blob";
                         data = /incbin/("arc-ucls1012a.dtb");
                         type = "flat_dt";
                         arch = "arm64";
@@ -36,7 +36,7 @@
                         type = "ramdisk";
                         arch = "arm64";
                         os = "linux";
-                        compression = "gzip";
+                        compression = "none";
                 };
         };
         configurations {

@@ -93,7 +93,7 @@ struct vcap_data {
 	u32 counter_offset; /* Current counter offset */
 	u32 tg_value; /* Current type-group value */
 	u32 tg_mask; /* Current type-group mask */
-} vcap_data_t;
+};
 
 static u32 vcap_s2_read_update_ctrl(struct ocelot *oc)
 {
@@ -105,7 +105,6 @@ static void vcap_cmd(struct ocelot *oc, u16 ix, int cmd, int sel)
 	u32 value = (S2_CORE_UPDATE_CTRL_UPDATE_CMD(cmd) |
 		     S2_CORE_UPDATE_CTRL_UPDATE_ADDR(ix) |
 		     S2_CORE_UPDATE_CTRL_UPDATE_SHOT);
-	int rc;
 
 	if ((sel & VCAP_SEL_ENTRY) && ix >= vcap_is2.entry_count)
 		return;
@@ -120,7 +119,7 @@ static void vcap_cmd(struct ocelot *oc, u16 ix, int cmd, int sel)
 		value |= S2_CORE_UPDATE_CTRL_UPDATE_CNT_DIS;
 
 	ocelot_write(oc, value, S2_CORE_UPDATE_CTRL);
-	rc = readx_poll_timeout(vcap_s2_read_update_ctrl, oc, value,
+	readx_poll_timeout(vcap_s2_read_update_ctrl, oc, value,
 				(value & S2_CORE_UPDATE_CTRL_UPDATE_SHOT) == 0,
 				10, 100000);
 }
@@ -332,9 +331,12 @@ static void is2_entry_set(struct ocelot *ocelot, int ix,
 {
 	u32 val, msk, type, type_mask = 0xf, i, count;
 	struct ocelot_ace_vlan *tag = &ace->vlan;
-	struct ocelot_vcap_u64 payload = { 0 };
-	struct vcap_data data = { 0 };
+	struct ocelot_vcap_u64 payload;
+	struct vcap_data data;
 	int row = (ix / 2);
+
+	memset(&payload, 0, sizeof(payload));
+	memset(&data, 0, sizeof(data));
 
 	/* Read row */
 	vcap_row_cmd(ocelot, row, VCAP_CMD_READ, VCAP_SEL_ALL);
@@ -350,7 +352,7 @@ static void is2_entry_set(struct ocelot *ocelot, int ix,
 	data.type = IS2_ACTION_TYPE_NORMAL;
 
 	VCAP_KEY_ANY_SET(PAG);
-	VCAP_KEY_SET(IGR_PORT_MASK, 0, ~ace->ingress_port);
+	VCAP_KEY_SET(IGR_PORT_MASK, 0, ~ace->ingress_port_mask);
 	VCAP_KEY_BIT_SET(FIRST, OCELOT_VCAP_BIT_1);
 	VCAP_KEY_BIT_SET(HOST_MATCH, OCELOT_VCAP_BIT_ANY);
 	VCAP_KEY_BIT_SET(L2_MC, ace->dmac_mc);
@@ -680,9 +682,11 @@ static void ocelot_ace_rule_del(struct ocelot_acl_block *block,
 
 int ocelot_ace_rule_offload_del(struct ocelot_ace_rule *rule)
 {
-	struct ocelot_ace_rule del_ace = { 0 };
+	struct ocelot_ace_rule del_ace;
 	struct ocelot_ace_rule *ace;
 	int i, index;
+
+	memset(&del_ace, 0, sizeof(del_ace));
 
 	/* Gets index of the rule */
 	index = ocelot_ace_rule_get_index_id(acl_block, rule);
@@ -740,8 +744,9 @@ static void ocelot_acl_block_destroy(struct ocelot_acl_block *block)
 
 int ocelot_ace_init(struct ocelot *ocelot)
 {
-	struct vcap_data data = { 0 };
+	struct vcap_data data;
 
+	memset(&data, 0, sizeof(data));
 	vcap_entry2cache(ocelot, &data);
 	ocelot_write(ocelot, vcap_is2.entry_count, S2_CORE_MV_CFG);
 	vcap_cmd(ocelot, 0, VCAP_CMD_INITIALIZE, VCAP_SEL_ENTRY);

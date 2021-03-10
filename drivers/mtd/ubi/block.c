@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Copyright (c) 2014 Ezequiel Garcia
  * Copyright (c) 2011 Free Electrons
@@ -6,15 +7,6 @@
  *   Copyright (c) International Business Machines Corp., 2006
  *   Copyright (c) Nokia Corporation, 2007
  *   Authors: Artem Bityutskiy, Frank Haverkamp
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation, version 2.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
- * the GNU General Public License for more details.
  */
 
 /*
@@ -50,6 +42,7 @@
 #include <linux/scatterlist.h>
 #include <linux/idr.h>
 #include <asm/div64.h>
+#include <linux/root_dev.h>
 
 #include "ubi-media.h"
 #include "ubi.h"
@@ -353,15 +346,36 @@ static const struct blk_mq_ops ubiblock_mq_ops = {
 	.init_request	= ubiblock_init_request,
 };
 
+static int calc_disk_capacity(struct ubi_volume_info *vi, u64 *disk_capacity)
+{
+	u64 size = vi->used_bytes >> 9;
+
+	if (vi->used_bytes % 512) {
+		pr_warn("UBI: block: volume size is not a multiple of 512, "
+			"last %llu bytes are ignored!\n",
+			vi->used_bytes - (size << 9));
+	}
+
+	if ((sector_t)size != size)
+		return -EFBIG;
+
+	*disk_capacity = size;
+
+	return 0;
+}
+
 int ubiblock_create(struct ubi_volume_info *vi)
 {
 	struct ubiblock *dev;
 	struct gendisk *gd;
-	u64 disk_capacity = vi->used_bytes >> 9;
+	u64 disk_capacity;
 	int ret;
 
-	if ((sector_t)disk_capacity != disk_capacity)
-		return -EFBIG;
+	ret = calc_disk_capacity(vi, &disk_capacity);
+	if (ret) {
+		return ret;
+	}
+
 	/* Check that the volume isn't already handled */
 	mutex_lock(&devices_mutex);
 	if (find_dev_nolock(vi->ubi_num, vi->vol_id)) {
@@ -382,7 +396,7 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	dev->leb_size = vi->usable_leb_size;
 
 	/* Initialize the gendisk of this ubiblock device */
-	gd = alloc_disk(1);
+	gd = alloc_disk(0);
 	if (!gd) {
 		pr_err("UBI: block: alloc_disk failed\n");
 		ret = -ENODEV;
@@ -399,6 +413,7 @@ int ubiblock_create(struct ubi_volume_info *vi)
 		goto out_put_disk;
 	}
 	gd->private_data = dev;
+	gd->flags |= GENHD_FL_EXT_DEVT;
 	sprintf(gd->disk_name, "ubiblock%d_%d", dev->ubi_num, dev->vol_id);
 	set_capacity(gd, disk_capacity);
 	dev->gd = gd;
@@ -445,6 +460,15 @@ int ubiblock_create(struct ubi_volume_info *vi)
 	dev_info(disk_to_dev(dev->gd), "created from ubi%d:%d(%s)",
 		 dev->ubi_num, dev->vol_id, vi->name);
 	mutex_unlock(&devices_mutex);
+
+	if (!strcmp(vi->name, "rootfs") &&
+	    IS_ENABLED(CONFIG_MTD_ROOTFS_ROOT_DEV) &&
+	    ROOT_DEV == 0) {
+		pr_notice("ubiblock: device ubiblock%d_%d (%s) set to be root filesystem\n",
+			  dev->ubi_num, dev->vol_id, vi->name);
+		ROOT_DEV = MKDEV(gd->major, gd->first_minor);
+	}
+
 	return 0;
 
 out_free_queue:
@@ -515,7 +539,8 @@ out_unlock:
 static int ubiblock_resize(struct ubi_volume_info *vi)
 {
 	struct ubiblock *dev;
-	u64 disk_capacity = vi->used_bytes >> 9;
+	u64 disk_capacity;
+	int ret;
 
 	/*
 	 * Need to lock the device list until we stop using the device,
@@ -528,11 +553,16 @@ static int ubiblock_resize(struct ubi_volume_info *vi)
 		mutex_unlock(&devices_mutex);
 		return -ENODEV;
 	}
-	if ((sector_t)disk_capacity != disk_capacity) {
+
+	ret = calc_disk_capacity(vi, &disk_capacity);
+	if (ret) {
 		mutex_unlock(&devices_mutex);
-		dev_warn(disk_to_dev(dev->gd), "the volume is too big (%d LEBs), cannot resize",
-			 vi->size);
-		return -EFBIG;
+		if (ret == -EFBIG) {
+			dev_warn(disk_to_dev(dev->gd),
+				 "the volume is too big (%d LEBs), cannot resize",
+				 vi->size);
+		}
+		return ret;
 	}
 
 	mutex_lock(&dev->dev_mutex);
@@ -633,6 +663,47 @@ static void __init ubiblock_create_from_param(void)
 	}
 }
 
+#define UBIFS_NODE_MAGIC  0x06101831
+static inline int ubi_vol_is_ubifs(struct ubi_volume_desc *desc)
+{
+	int ret;
+	uint32_t magic_of, magic;
+	ret = ubi_read(desc, 0, (char *)&magic_of, 0, 4);
+	if (ret)
+		return 0;
+	magic = le32_to_cpu(magic_of);
+	return magic == UBIFS_NODE_MAGIC;
+}
+
+static void __init ubiblock_create_auto_rootfs(void)
+{
+	int ubi_num, ret, is_ubifs;
+	struct ubi_volume_desc *desc;
+	struct ubi_volume_info vi;
+
+	for (ubi_num = 0; ubi_num < UBI_MAX_DEVICES; ubi_num++) {
+		desc = ubi_open_volume_nm(ubi_num, "rootfs", UBI_READONLY);
+		if (IS_ERR(desc))
+			desc = ubi_open_volume_nm(ubi_num, "fit", UBI_READONLY);;
+
+		if (IS_ERR(desc))
+			continue;
+
+		ubi_get_volume_info(desc, &vi);
+		is_ubifs = ubi_vol_is_ubifs(desc);
+		ubi_close_volume(desc);
+		if (is_ubifs)
+			break;
+
+		ret = ubiblock_create(&vi);
+		if (ret)
+			pr_err("UBI error: block: can't add '%s' volume, err=%d\n",
+				vi.name, ret);
+		/* always break if we get here */
+		break;
+	}
+}
+
 static void ubiblock_remove_all(void)
 {
 	struct ubiblock *next;
@@ -664,6 +735,10 @@ int __init ubiblock_init(void)
 	 * still allow the module to load and leave any others up.
 	 */
 	ubiblock_create_from_param();
+
+	/* auto-attach "rootfs" volume if existing and non-ubifs */
+	if (IS_ENABLED(CONFIG_MTD_ROOTFS_ROOT_DEV))
+		ubiblock_create_auto_rootfs();
 
 	/*
 	 * Block devices are only created upon user requests, so we ignore

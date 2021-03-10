@@ -176,7 +176,8 @@ struct bm_mc {
 };
 
 struct bm_addr {
-	void __iomem *ce;	/* cache-enabled */
+	void *ce;		/* cache-enabled */
+	__be32 *ce_be;		/* Same as above but for direct access */
 	void __iomem *ci;	/* cache-inhibited */
 };
 
@@ -189,12 +190,12 @@ struct bm_portal {
 /* Cache-inhibited register access. */
 static inline u32 bm_in(struct bm_portal *p, u32 offset)
 {
-	return be32_to_cpu(__raw_readl(p->addr.ci + offset));
+	return ioread32be(p->addr.ci + offset);
 }
 
 static inline void bm_out(struct bm_portal *p, u32 offset, u32 val)
 {
-	__raw_writel(cpu_to_be32(val), p->addr.ci + offset);
+	iowrite32be(val, p->addr.ci + offset);
 }
 
 /* Cache Enabled Portal Access */
@@ -210,7 +211,7 @@ static inline void bm_cl_touch_ro(struct bm_portal *p, u32 offset)
 
 static inline u32 bm_ce_in(struct bm_portal *p, u32 offset)
 {
-	return be32_to_cpu(__raw_readl(p->addr.ce + offset));
+	return be32_to_cpu(*(p->addr.ce_be + (offset/4)));
 }
 
 struct bman_portal {
@@ -430,7 +431,7 @@ static int bm_mc_init(struct bm_portal *portal)
 
 	mc->cr = portal->addr.ce + BM_CL_CR;
 	mc->rr = portal->addr.ce + BM_CL_RR0;
-	mc->rridx = (__raw_readb(&mc->cr->_ncw_verb) & BM_MCC_VERB_VBIT) ?
+	mc->rridx = (mc->cr->_ncw_verb & BM_MCC_VERB_VBIT) ?
 		    0 : 1;
 	mc->vbit = mc->rridx ? BM_MCC_VERB_VBIT : 0;
 #ifdef CONFIG_FSL_DPAA_CHECKING
@@ -488,7 +489,7 @@ static inline union bm_mc_result *bm_mc_result(struct bm_portal *portal)
 	 * its command is submitted and completed. This includes the valid-bit,
 	 * in case you were wondering...
 	 */
-	if (!__raw_readb(&rr->verb)) {
+	if (!rr->verb) {
 		dpaa_invalidate_touch_ro(rr);
 		return NULL;
 	}
@@ -534,8 +535,9 @@ static int bman_create_portal(struct bman_portal *portal,
 	 * config, everything that follows depends on it and "config" is more
 	 * for (de)reference...
 	 */
-	p->addr.ce = c->addr_virt[DPAA_PORTAL_CE];
-	p->addr.ci = c->addr_virt[DPAA_PORTAL_CI];
+	p->addr.ce = c->addr_virt_ce;
+	p->addr.ce_be = c->addr_virt_ce;
+	p->addr.ci = c->addr_virt_ci;
 	if (bm_rcr_init(p, bm_rcr_pvb, bm_rcr_cce)) {
 		dev_err(c->dev, "RCR initialisation failed\n");
 		goto fail_rcr;
@@ -658,7 +660,7 @@ int bm_shutdown_pool(u32 bpid)
 	}
 done:
 	put_affine_portal();
-	return 0;
+	return err;
 }
 
 struct gen_pool *bm_bpalloc;

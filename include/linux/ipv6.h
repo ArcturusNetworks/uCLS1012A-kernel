@@ -73,6 +73,7 @@ struct ipv6_devconf {
 	__u32		enhanced_dad;
 	__u32		addr_gen_mode;
 	__s32		disable_policy;
+	__s32           ndisc_tclass;
 
 	struct ctl_table_header *sysctl_header;
 };
@@ -82,7 +83,6 @@ struct ipv6_params {
 	__s32 autoconf;
 };
 extern struct ipv6_params ipv6_defaults;
-#include <linux/icmpv6.h>
 #include <linux/tcp.h>
 #include <linux/udp.h>
 
@@ -101,6 +101,12 @@ static inline struct ipv6hdr *inner_ipv6_hdr(const struct sk_buff *skb)
 static inline struct ipv6hdr *ipipv6_hdr(const struct sk_buff *skb)
 {
 	return (struct ipv6hdr *)skb_transport_header(skb);
+}
+
+static inline unsigned int ipv6_transport_len(const struct sk_buff *skb)
+{
+	return ntohs(ipv6_hdr(skb)->payload_len) + sizeof(struct ipv6hdr) -
+	       skb_network_header_len(skb);
 }
 
 /* 
@@ -273,7 +279,9 @@ struct ipv6_pinfo {
 						 */
 				dontfrag:1,
 				autoflowlabel:1,
-				autoflowlabel_set:1;
+				autoflowlabel_set:1,
+				mc_all:1,
+				rtalert_isolate:1;
 	__u8			min_hopcount;
 	__u8			tclass;
 	__be32			rcv_flowinfo;

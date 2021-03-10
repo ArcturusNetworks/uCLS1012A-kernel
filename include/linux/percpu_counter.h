@@ -78,15 +78,15 @@ static inline s64 percpu_counter_read(struct percpu_counter *fbc)
  */
 static inline s64 percpu_counter_read_positive(struct percpu_counter *fbc)
 {
-	s64 ret = fbc->count;
+	/* Prevent reloads of fbc->count */
+	s64 ret = READ_ONCE(fbc->count);
 
-	barrier();		/* Prevent reloads of fbc->count */
 	if (ret >= 0)
 		return ret;
 	return 0;
 }
 
-static inline int percpu_counter_initialized(struct percpu_counter *fbc)
+static inline bool percpu_counter_initialized(struct percpu_counter *fbc)
 {
 	return (fbc->counters != NULL);
 }
@@ -167,9 +167,9 @@ static inline s64 percpu_counter_sum(struct percpu_counter *fbc)
 	return percpu_counter_read(fbc);
 }
 
-static inline int percpu_counter_initialized(struct percpu_counter *fbc)
+static inline bool percpu_counter_initialized(struct percpu_counter *fbc)
 {
-	return 1;
+	return true;
 }
 
 #endif	/* CONFIG_SMP */

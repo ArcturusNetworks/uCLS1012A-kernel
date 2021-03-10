@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-1.0+
 /*
  * $Id: synclinkmp.c,v 4.38 2005/07/15 13:29:44 paulkf Exp $
  *
@@ -10,7 +11,6 @@
  * Microgate and SyncLink are trademarks of Microgate Corporation
  *
  * Derived from serial.c written by Theodore Ts'o and Linus Torvalds
- * This code is released under the GNU General Public License (GPL)
  *
  * THIS SOFTWARE IS PROVIDED ``AS IS'' AND ANY EXPRESS OR IMPLIED
  * WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
@@ -615,8 +615,8 @@ static void free_tmp_rx_buf(SLMP_INFO *info);
 
 static void load_pci_memory(SLMP_INFO *info, char* dest, const char* src, unsigned short count);
 static void trace_block(SLMP_INFO *info, const char* data, int count, int xmit);
-static void tx_timeout(unsigned long context);
-static void status_timeout(unsigned long context);
+static void tx_timeout(struct timer_list *t);
+static void status_timeout(struct timer_list *t);
 
 static unsigned char read_reg(SLMP_INFO *info, unsigned char addr);
 static void write_reg(SLMP_INFO *info, unsigned char addr, unsigned char val);
@@ -1259,8 +1259,7 @@ static int ioctl(struct tty_struct *tty,
 	if (sanity_check(info, tty->name, "ioctl"))
 		return -ENODEV;
 
-	if ((cmd != TIOCGSERIAL) && (cmd != TIOCSSERIAL) &&
-	    (cmd != TIOCMIWAIT)) {
+	if (cmd != TIOCMIWAIT) {
 		if (tty_io_error(tty))
 		    return -EIO;
 	}
@@ -1421,19 +1420,6 @@ static int synclinkmp_proc_show(struct seq_file *m, void *v)
 	return 0;
 }
 
-static int synclinkmp_proc_open(struct inode *inode, struct file *file)
-{
-	return single_open(file, synclinkmp_proc_show, NULL);
-}
-
-static const struct file_operations synclinkmp_proc_fops = {
-	.owner		= THIS_MODULE,
-	.open		= synclinkmp_proc_open,
-	.read		= seq_read,
-	.llseek		= seq_lseek,
-	.release	= single_release,
-};
-
 /* Return the count of bytes in transmit buffer
  */
 static int chars_in_buffer(struct tty_struct *tty)
@@ -1467,10 +1453,10 @@ static void throttle(struct tty_struct * tty)
 	if (I_IXOFF(tty))
 		send_xchar(tty, STOP_CHAR(tty));
 
- 	if (C_CRTSCTS(tty)) {
+	if (C_CRTSCTS(tty)) {
 		spin_lock_irqsave(&info->lock,flags);
 		info->serial_signals &= ~SerialSignal_RTS;
-	 	set_signals(info);
+		set_signals(info);
 		spin_unlock_irqrestore(&info->lock,flags);
 	}
 }
@@ -1496,10 +1482,10 @@ static void unthrottle(struct tty_struct * tty)
 			send_xchar(tty, START_CHAR(tty));
 	}
 
- 	if (C_CRTSCTS(tty)) {
+	if (C_CRTSCTS(tty)) {
 		spin_lock_irqsave(&info->lock,flags);
 		info->serial_signals |= SerialSignal_RTS;
-	 	set_signals(info);
+		set_signals(info);
 		spin_unlock_irqrestore(&info->lock,flags);
 	}
 }
@@ -2484,7 +2470,7 @@ static void isr_io_pin( SLMP_INFO *info, u16 status )
 					if (status & SerialSignal_CTS) {
 						if ( debug_level >= DEBUG_LEVEL_ISR )
 							printk("CTS tx start...");
-			 			info->port.tty->hw_stopped = 0;
+						info->port.tty->hw_stopped = 0;
 						tx_start(info);
 						info->pending_bh |= BH_TRANSMIT;
 						return;
@@ -2493,7 +2479,7 @@ static void isr_io_pin( SLMP_INFO *info, u16 status )
 					if (!(status & SerialSignal_CTS)) {
 						if ( debug_level >= DEBUG_LEVEL_ISR )
 							printk("CTS tx stop...");
-			 			info->port.tty->hw_stopped = 1;
+						info->port.tty->hw_stopped = 1;
 						tx_stop(info);
 					}
 				}
@@ -2820,8 +2806,8 @@ static void change_params(SLMP_INFO *info)
 	info->read_status_mask2 = OVRN;
 	if (I_INPCK(info->port.tty))
 		info->read_status_mask2 |= PE | FRME;
- 	if (I_BRKINT(info->port.tty) || I_PARMRK(info->port.tty))
- 		info->read_status_mask1 |= BRKD;
+	if (I_BRKINT(info->port.tty) || I_PARMRK(info->port.tty))
+		info->read_status_mask1 |= BRKD;
 	if (I_IGNPAR(info->port.tty))
 		info->ignore_status_mask2 |= PE | FRME;
 	if (I_IGNBRK(info->port.tty)) {
@@ -3191,7 +3177,7 @@ static int tiocmget(struct tty_struct *tty)
  	unsigned long flags;
 
 	spin_lock_irqsave(&info->lock,flags);
- 	get_signals(info);
+	get_signals(info);
 	spin_unlock_irqrestore(&info->lock,flags);
 
 	result = ((info->serial_signals & SerialSignal_RTS) ? TIOCM_RTS : 0) |
@@ -3229,7 +3215,7 @@ static int tiocmset(struct tty_struct *tty,
 		info->serial_signals &= ~SerialSignal_DTR;
 
 	spin_lock_irqsave(&info->lock,flags);
- 	set_signals(info);
+	set_signals(info);
 	spin_unlock_irqrestore(&info->lock,flags);
 
 	return 0;
@@ -3241,7 +3227,7 @@ static int carrier_raised(struct tty_port *port)
 	unsigned long flags;
 
 	spin_lock_irqsave(&info->lock,flags);
- 	get_signals(info);
+	get_signals(info);
 	spin_unlock_irqrestore(&info->lock,flags);
 
 	return (info->serial_signals & SerialSignal_DCD) ? 1 : 0;
@@ -3257,7 +3243,7 @@ static void dtr_rts(struct tty_port *port, int on)
 		info->serial_signals |= SerialSignal_RTS | SerialSignal_DTR;
 	else
 		info->serial_signals &= ~(SerialSignal_RTS | SerialSignal_DTR);
- 	set_signals(info);
+	set_signals(info);
 	spin_unlock_irqrestore(&info->lock,flags);
 }
 
@@ -3782,9 +3768,8 @@ static SLMP_INFO *alloc_dev(int adapter_num, int port_num, struct pci_dev *pdev)
 		info->bus_type = MGSL_BUS_TYPE_PCI;
 		info->irq_flags = IRQF_SHARED;
 
-		setup_timer(&info->tx_timer, tx_timeout, (unsigned long)info);
-		setup_timer(&info->status_timer, status_timeout,
-				(unsigned long)info);
+		timer_setup(&info->tx_timer, tx_timeout, 0);
+		timer_setup(&info->status_timer, status_timeout, 0);
 
 		/* Store the PCI9050 misc control register value because a flaw
 		 * in the PCI9050 prevents LCR registers from being read if
@@ -3900,7 +3885,7 @@ static const struct tty_operations ops = {
 	.tiocmget = tiocmget,
 	.tiocmset = tiocmset,
 	.get_icount = get_icount,
-	.proc_fops = &synclinkmp_proc_fops,
+	.proc_show = synclinkmp_proc_show,
 };
 
 
@@ -5468,9 +5453,9 @@ static void trace_block(SLMP_INFO *info,const char* data, int count, int xmit)
 /* called when HDLC frame times out
  * update stats and do tx completion processing
  */
-static void tx_timeout(unsigned long context)
+static void tx_timeout(struct timer_list *t)
 {
-	SLMP_INFO *info = (SLMP_INFO*)context;
+	SLMP_INFO *info = from_timer(info, t, tx_timer);
 	unsigned long flags;
 
 	if ( debug_level >= DEBUG_LEVEL_INFO )
@@ -5495,10 +5480,10 @@ static void tx_timeout(unsigned long context)
 
 /* called to periodically check the DSR/RI modem signal input status
  */
-static void status_timeout(unsigned long context)
+static void status_timeout(struct timer_list *t)
 {
 	u16 status = 0;
-	SLMP_INFO *info = (SLMP_INFO*)context;
+	SLMP_INFO *info = from_timer(info, t, status_timer);
 	unsigned long flags;
 	unsigned char delta;
 

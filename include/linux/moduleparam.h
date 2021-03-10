@@ -10,30 +10,42 @@
    module name. */
 #ifdef MODULE
 #define MODULE_PARAM_PREFIX /* empty */
+#define __MODULE_INFO_PREFIX /* empty */
 #else
 #define MODULE_PARAM_PREFIX KBUILD_MODNAME "."
+/* We cannot use MODULE_PARAM_PREFIX because some modules override it. */
+#define __MODULE_INFO_PREFIX KBUILD_MODNAME "."
 #endif
 
 /* Chosen so that structs with an unsigned long line up. */
 #define MAX_PARAM_PREFIX_LEN (64 - sizeof(unsigned long))
 
+/* This struct is here for syntactic coherency, it is not used */
+#define __MODULE_INFO_DISABLED(name)					  \
+  struct __UNIQUE_ID(name) {}
+
+#ifdef CONFIG_MODULE_STRIPPED
+#define __MODULE_INFO_STRIP(tag, name, info) __MODULE_INFO_DISABLED(name)
+#else
+#define __MODULE_INFO_STRIP(tag, name, info) __MODULE_INFO(tag, name, info)
+#endif
+
 #ifdef MODULE
 #define __MODULE_INFO(tag, name, info)					  \
 static const char __UNIQUE_ID(name)[]					  \
   __used __attribute__((section(".modinfo"), unused, aligned(1)))	  \
-  = __stringify(tag) "=" info
-#else  /* !MODULE */
-/* This struct is here for syntactic coherency, it is not used */
-#define __MODULE_INFO(tag, name, info)					  \
-  struct __UNIQUE_ID(name) {}
+  = __MODULE_INFO_PREFIX __stringify(tag) "=" info
+#else
+#define __MODULE_INFO(tag, name, info) __MODULE_INFO_DISABLED(name)
 #endif
+
 #define __MODULE_PARM_TYPE(name, _type)					  \
   __MODULE_INFO(parmtype, name##type, #name ":" _type)
 
 /* One for each parameter, describing how to use it.  Some files do
    multiple of these per line, so can't just use MODULE_INFO. */
 #define MODULE_PARM_DESC(_parm, desc) \
-	__MODULE_INFO(parm, _parm, #_parm ":" desc)
+	__MODULE_INFO_STRIP(parm, _parm, #_parm ":" desc)
 
 struct kernel_param;
 
@@ -228,19 +240,11 @@ struct kparam_array
 	    VERIFY_OCTAL_PERMISSIONS(perm), level, flags, { arg } }
 
 /* Obsolete - use module_param_cb() */
-#define module_param_call(name, set, get, arg, perm)			\
-	static const struct kernel_param_ops __param_ops_##name =		\
-		{ .flags = 0, (void *)set, (void *)get };		\
+#define module_param_call(name, _set, _get, arg, perm)			\
+	static const struct kernel_param_ops __param_ops_##name =	\
+		{ .flags = 0, .set = _set, .get = _get };		\
 	__module_param_call(MODULE_PARAM_PREFIX,			\
-			    name, &__param_ops_##name, arg,		\
-			    (perm) + sizeof(__check_old_set_param(set))*0, -1, 0)
-
-/* We don't get oldget: it's often a new-style param_get_uint, etc. */
-static inline int
-__check_old_set_param(int (*oldset)(const char *, struct kernel_param *))
-{
-	return 0;
-}
+			    name, &__param_ops_##name, arg, perm, -1, 0)
 
 #ifdef CONFIG_SYSFS
 extern void kernel_param_lock(struct module *mod);

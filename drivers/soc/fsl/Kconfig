@@ -1,6 +1,9 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
-# Freescale SOC drivers
+# NXP/Freescale QorIQ series SOC drivers
 #
+
+menu "NXP/Freescale QorIQ SoC drivers"
 
 source "drivers/soc/fsl/qbman/Kconfig"
 source "drivers/soc/fsl/qe/Kconfig"
@@ -17,13 +20,33 @@ config FSL_GUTS
 	  Other guts accesses, such as reading RCW, should eventually be moved
 	  into this driver as well.
 
-config FSL_RCPM
-	bool "Freescale RCPM support"
-	depends on PM_SLEEP
+config FSL_MC_DPIO
+        tristate "QorIQ DPAA2 DPIO driver"
+        depends on FSL_MC_BUS
+        select SOC_BUS
+        help
+	  Driver for the DPAA2 DPIO object.  A DPIO provides queue and
+	  buffer management facilities for software to interact with
+	  other DPAA2 objects. This driver does not expose the DPIO
+	  objects individually, but groups them under a service layer
+	  API.
+
+config FSL_SLEEP_FSM
+	bool
 	help
-	  The NXP QorIQ Processors based on ARM Core have RCPM module
-	  (Run Control and Power Management), which performs all device-level
-	  tasks associated with power management, such as wakeup source control.
+	  This driver configures a hardware FSM (Finite State Machine) for deep sleep.
+	  The FSM is used to finish clean-ups at the last stage of system entering deep
+	  sleep, and also wakes up system when a wake up event happens.
+
+config DPAA2_CONSOLE
+	tristate "QorIQ DPAA2 console driver"
+	depends on OF && (ARCH_LAYERSCAPE || COMPILE_TEST)
+	default y
+	help
+	  Console driver for DPAA2 platforms. Exports 2 char devices,
+	  /dev/dpaa2_mc_console and /dev/dpaa2_aiop_console,
+	  which can be used to dump the Management Complex and AIOP
+	  firmware logs.
 
 config FSL_QIXIS
 	tristate "QIXIS system controller driver"
@@ -36,9 +59,13 @@ config FSL_QIXIS
 	  Say y here to enable QIXIS system controller api. The qixis driver
 	  provides FPGA functions to control system.
 
-config FSL_SLEEP_FSM
-	bool
+config FSL_RCPM
+	bool "Freescale RCPM support"
+	depends on PM_SLEEP && (ARM || ARM64)
 	help
-	  This driver configures a hardware FSM (Finite State Machine) for deep sleep.
-	  The FSM is used to finish clean-ups at the last stage of system entering deep
-	  sleep, and also wakes up system when a wake up event happens.
+	  The NXP QorIQ Processors based on ARM Core have RCPM module
+	  (Run Control and Power Management), which performs all device-level
+	  tasks associated with power management, such as wakeup source control.
+	  Note that currently this driver will not support PowerPC based
+	  QorIQ processor.
+endmenu

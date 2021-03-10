@@ -1,15 +1,10 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * bdc_core.c - BRCM BDC USB3.0 device controller core operations
  *
  * Copyright (C) 2014 Broadcom Corporation
  *
  * Author: Ashwini Pahuja
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms of the GNU General Public License as published by the
- * Free Software Foundation; either version 2 of the License, or (at your
- * option) any later version.
- *
  */
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -177,8 +172,9 @@ static int scratchpad_setup(struct bdc *bdc)
 	/* Refer to BDC spec, Table 4 for description of SPB */
 	sp_buff_size = 1 << (sp_buff_size + 5);
 	dev_dbg(bdc->dev, "Allocating %d bytes for scratchpad\n", sp_buff_size);
-	bdc->scratchpad.buff  =  dma_zalloc_coherent(bdc->dev, sp_buff_size,
-					&bdc->scratchpad.sp_dma, GFP_KERNEL);
+	bdc->scratchpad.buff  =  dma_alloc_coherent(bdc->dev, sp_buff_size,
+						    &bdc->scratchpad.sp_dma,
+						    GFP_KERNEL);
 
 	if (!bdc->scratchpad.buff)
 		goto fail;
@@ -207,11 +203,9 @@ static int setup_srr(struct bdc *bdc, int interrupter)
 	bdc_writel(bdc->regs, BDC_SRRINT(0), BDC_SRR_RWS | BDC_SRR_RST);
 	bdc->srr.dqp_index = 0;
 	/* allocate the status report descriptors */
-	bdc->srr.sr_bds = dma_zalloc_coherent(
-					bdc->dev,
-					NUM_SR_ENTRIES * sizeof(struct bdc_bd),
-					&bdc->srr.dma_addr,
-					GFP_KERNEL);
+	bdc->srr.sr_bds = dma_alloc_coherent(bdc->dev,
+					     NUM_SR_ENTRIES * sizeof(struct bdc_bd),
+					     &bdc->srr.dma_addr, GFP_KERNEL);
 	if (!bdc->srr.sr_bds)
 		return -ENOMEM;
 
@@ -288,6 +282,7 @@ static void bdc_mem_init(struct bdc *bdc, bool reinit)
 	 * in that case reinit is passed as 1
 	 */
 	if (reinit) {
+		int i;
 		/* Enable interrupts */
 		temp = bdc_readl(bdc->regs, BDC_BDCSC);
 		temp |= BDC_GIE;
@@ -297,6 +292,9 @@ static void bdc_mem_init(struct bdc *bdc, bool reinit)
 		/* Initialize SRR to 0 */
 		memset(bdc->srr.sr_bds, 0,
 					NUM_SR_ENTRIES * sizeof(struct bdc_bd));
+		/* clear ep flags to avoid post disconnect stops/deconfigs */
+		for (i = 1; i < bdc->num_eps; ++i)
+			bdc->bdc_ep_array[i]->flags = 0;
 	} else {
 		/* One time initiaization only */
 		/* Enable status report function pointers */
@@ -521,10 +519,8 @@ static int bdc_probe(struct platform_device *pdev)
 		return -ENOMEM;
 	}
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		dev_err(dev, "platform_get_irq failed:%d\n", irq);
+	if (irq < 0)
 		return irq;
-	}
 	spin_lock_init(&bdc->lock);
 	platform_set_drvdata(pdev, bdc);
 	bdc->irq = irq;
@@ -609,9 +605,14 @@ static int bdc_remove(struct platform_device *pdev)
 static int bdc_suspend(struct device *dev)
 {
 	struct bdc *bdc = dev_get_drvdata(dev);
+	int ret;
 
-	clk_disable_unprepare(bdc->clk);
-	return 0;
+	/* Halt the controller */
+	ret = bdc_stop(bdc);
+	if (!ret)
+		clk_disable_unprepare(bdc->clk);
+
+	return ret;
 }
 
 static int bdc_resume(struct device *dev)
@@ -647,7 +648,6 @@ static const struct of_device_id bdc_of_match[] = {
 static struct platform_driver bdc_driver = {
 	.driver		= {
 		.name	= BRCM_BDC_NAME,
-		.owner	= THIS_MODULE,
 		.pm = &bdc_pm_ops,
 		.of_match_table	= bdc_of_match,
 	},

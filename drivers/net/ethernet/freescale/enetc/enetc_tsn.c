@@ -121,10 +121,11 @@ int enetc_qci_fmi_counters_get(struct net_device *ndev, u32 index,
 
 u16 enetc_get_max_gcl_len(struct enetc_hw *hw)
 {
-	return (enetc_rd(hw, QBV_PTGCAPR_OFFSET) & QBV_MAX_GCL_LEN_MASK);
+	return (enetc_rd(hw, ENETC_QBV_PTGCAPR_OFFSET)
+		& ENETC_QBV_MAX_GCL_LEN_MASK);
 }
 
-void enetc_sched_speed_set(struct net_device *ndev)
+void enetc_pspeed_set(struct net_device *ndev)
 {
 	u32 speed, pspeed;
 	u32 difflag = 0;
@@ -197,19 +198,22 @@ int enetc_qbv_set(struct net_device *ndev, struct tsn_qbv_conf *admin_conf)
 		return -ENODEV;
 	}
 
-	enetc_sched_speed_set(ndev);
+	enetc_pspeed_set(ndev);
 
 	gcl_len = admin_basic->control_list_length;
 	if (gcl_len > enetc_get_max_gcl_len(&priv->si->hw))
 		return -EINVAL;
 
-	temp = enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET);
-	if (admin_conf->gate_enabled && !(temp & QBV_TGE)) {
-		enetc_wr(&priv->si->hw, QBV_PTGCR_OFFSET, temp & (~QBV_TGE));
+	temp = enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET);
+	if (admin_conf->gate_enabled && !(temp & ENETC_QBV_TGE)) {
+		enetc_wr(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET,
+			 temp & (~ENETC_QBV_TGE));
 		usleep_range(10, 20);
-		enetc_wr(&priv->si->hw, QBV_PTGCR_OFFSET, temp | QBV_TGE);
+		enetc_wr(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET,
+			 temp | ENETC_QBV_TGE);
 	} else if (!admin_conf->gate_enabled) {
-		enetc_wr(&priv->si->hw, QBV_PTGCR_OFFSET, temp & (~QBV_TGE));
+		enetc_wr(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET,
+			 temp & (~ENETC_QBV_TGE));
 		memcpy(&port->nd.ntdata, admin_conf, sizeof(*admin_conf));
 		call_tsn_notifiers(TSN_QBV_CONFIGCHANGETIME_ARRIVE,
 				   ndev, &port->nd);
@@ -239,13 +243,13 @@ int enetc_qbv_set(struct net_device *ndev, struct tsn_qbv_conf *admin_conf)
 
 	gcl_config = &cbdr->gcl_conf;
 
-	data_size = sizeof(struct tgs_gcl_data) + gcl_len * sizeof(struct gce);
+	data_size = struct_size(gcl_data, entry, gcl_len);
 
 	gcl_data = kzalloc(data_size, __GFP_DMA | GFP_KERNEL);
 	if (!gcl_data)
 		return -ENOMEM;
 
-	gce = (struct gce *)(gcl_data + 1);
+	gce = &gcl_data->entry[0];
 
 	gcl_config->atc = admin_basic->gate_states;
 	gcl_config->acl_len = cpu_to_le16(gcl_len);
@@ -334,7 +338,7 @@ int enetc_qbv_get(struct net_device *ndev, struct tsn_qbv_conf *admin_conf)
 	u64 temp;
 	int i;
 
-	if (enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET) & QBV_TGE) {
+	if (enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET) & ENETC_QBV_TGE) {
 		admin_conf->gate_enabled = true;
 	} else {
 		admin_conf->gate_enabled = false;
@@ -446,7 +450,7 @@ int enetc_qbv_get_status(struct net_device *ndev,
 	oper_basic = &status->oper;
 	priv = netdev_priv(ndev);
 
-	if (!(enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET) & QBV_TGE))
+	if (!(enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET) & ENETC_QBV_TGE))
 		return -EINVAL;
 
 	curr_cbd = alloc_cbdr(priv->si, &cbdr);
@@ -490,8 +494,8 @@ int enetc_qbv_get_status(struct net_device *ndev,
 	admin_len = le16_to_cpu(gcl_query->admin_list_len);
 	oper_len = le16_to_cpu(gcl_query->oper_list_len);
 
-	if (enetc_rd(&priv->si->hw, QBV_PTGAGLSR_OFFSET) &
-						QBV_CFG_PEND_MASK) {
+	if (enetc_rd(&priv->si->hw, ENETC_QBV_PTGAGLSR_OFFSET) &
+						ENETC_QBV_CFG_PEND_MASK) {
 		status->config_pending = true;
 		goto exit;
 	}
@@ -1627,9 +1631,10 @@ int enetc_qbu_set(struct net_device *ndev, u8 ptvector)
 	int i;
 	struct enetc_ndev_priv *priv = netdev_priv(ndev);
 
-	temp = enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET);
-	if (temp & QBV_TGE)
-		enetc_wr(&priv->si->hw, QBV_PTGCR_OFFSET, temp & (~QBV_TGPE));
+	temp = enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET);
+	if (temp & ENETC_QBV_TGE)
+		enetc_wr(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET,
+			 temp & (~ENETC_QBV_TGPE));
 
 	for (i = 0; i < 8; i++) {
 		/* 1 Enabled. Traffic is transmitted on the preemptive MAC. */
@@ -1656,7 +1661,8 @@ int enetc_qbu_get(struct net_device *ndev,
 
 	if (enetc_port_rd(&priv->si->hw, ENETC_PFPMR) & ENETC_PFPMR_PMACE) {
 		preemptstat->preemption_active = true;
-		if (enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET) & QBV_TGE)
+		if (enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET)
+							& ENETC_QBV_TGE)
 			preemptstat->hold_request = 1;
 		else
 			preemptstat->hold_request = 2;
@@ -1670,9 +1676,9 @@ int enetc_qbu_get(struct net_device *ndev,
 			preemptstat->admin_state |= 1 << i;
 
 	preemptstat->hold_advance =
-		enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET) & 0xFFFF;
+		enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET) & 0xFFFF;
 	preemptstat->release_advance =
-		enetc_rd(&priv->si->hw, QBV_PTGCR_OFFSET) & 0xFFFF;
+		enetc_rd(&priv->si->hw, ENETC_QBV_PTGCR_OFFSET) & 0xFFFF;
 
 	return 0;
 }

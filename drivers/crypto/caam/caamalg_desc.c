@@ -1,7 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
- * Shared descriptors for aead, ablkcipher algorithms
+ * Shared descriptors for aead, skcipher algorithms
  *
- * Copyright 2016 NXP
+ * Copyright 2016-2019 NXP
  */
 
 #include "compat.h"
@@ -32,12 +33,11 @@ static inline void append_dec_op1(u32 *desc, u32 type)
 	}
 
 	jump_cmd = append_jump(desc, JUMP_TEST_ALL | JUMP_COND_SHRD);
-	append_operation(desc, type | OP_ALG_AS_INITFINAL |
-			 OP_ALG_DECRYPT);
+	append_operation(desc, type | OP_ALG_AS_INIT | OP_ALG_DECRYPT);
 	uncond_jump_cmd = append_jump(desc, JUMP_TEST_ALL);
 	set_jump_tgt_here(desc, jump_cmd);
-	append_operation(desc, type | OP_ALG_AS_INITFINAL |
-			 OP_ALG_DECRYPT | OP_ALG_AAI_DK);
+	append_operation(desc, type | OP_ALG_AS_INIT | OP_ALG_DECRYPT |
+			 OP_ALG_AAI_DK);
 	set_jump_tgt_here(desc, uncond_jump_cmd);
 }
 
@@ -114,11 +114,9 @@ void cnstr_shdsc_aead_null_encap(u32 * const desc, struct alginfo *adata,
 	append_seq_store(desc, icvsize, LDST_CLASS_2_CCB |
 			 LDST_SRCDST_BYTE_CONTEXT);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "aead null enc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("aead null enc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_aead_null_encap);
 
@@ -203,11 +201,9 @@ void cnstr_shdsc_aead_null_decap(u32 * const desc, struct alginfo *adata,
 	append_seq_fifo_load(desc, icvsize, FIFOLD_CLASS_CLASS2 |
 			     FIFOLD_TYPE_LAST2 | FIFOLD_TYPE_ICV);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "aead null dec shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("aead null dec shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_aead_null_decap);
 
@@ -357,10 +353,9 @@ void cnstr_shdsc_aead_encap(u32 * const desc, struct alginfo *cdata,
 	append_seq_store(desc, icvsize, LDST_CLASS_2_CCB |
 			 LDST_SRCDST_BYTE_CONTEXT);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR, "aead enc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("aead enc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_aead_encap);
 
@@ -474,10 +469,9 @@ void cnstr_shdsc_aead_decap(u32 * const desc, struct alginfo *cdata,
 	append_seq_fifo_load(desc, icvsize, FIFOLD_CLASS_CLASS2 |
 			     FIFOLD_TYPE_LAST2 | FIFOLD_TYPE_ICV);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR, "aead dec shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("aead dec shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_aead_decap);
 
@@ -621,11 +615,9 @@ copy_iv:
 	append_seq_store(desc, icvsize, LDST_CLASS_2_CCB |
 			 LDST_SRCDST_BYTE_CONTEXT);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "aead givenc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("aead givenc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_aead_givencap);
 
@@ -816,7 +808,7 @@ void cnstr_shdsc_tls_decap(u32 * const desc, struct alginfo *cdata,
 	 * false - Pointers fit in one 32-bit word.
 	 * true - Pointers fit in two 32-bit words.
 	 */
-	static const bool ps = (CAAM_PTR_SZ != CAAM_CMD_SZ);
+	bool ps = (CAAM_PTR_SZ != CAAM_CMD_SZ);
 
 	stidx = 1 << HDR_START_IDX_SHIFT;
 	init_sh_desc(desc, HDR_SHARE_SERIAL | stidx);
@@ -1164,10 +1156,9 @@ void cnstr_shdsc_gcm_encap(u32 * const desc, struct alginfo *cdata,
 	append_seq_store(desc, icvsize, LDST_CLASS_1_CCB |
 			 LDST_SRCDST_BYTE_CONTEXT);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR, "gcm enc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("gcm enc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_gcm_encap);
 
@@ -1260,10 +1251,9 @@ void cnstr_shdsc_gcm_decap(u32 * const desc, struct alginfo *cdata,
 	append_seq_fifo_load(desc, icvsize, FIFOLD_CLASS_CLASS1 |
 			     FIFOLD_TYPE_ICV | FIFOLD_TYPE_LAST1);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR, "gcm dec shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("gcm dec shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_gcm_decap);
 
@@ -1276,13 +1266,16 @@ EXPORT_SYMBOL(cnstr_shdsc_gcm_decap);
  * @ivsize: initialization vector size
  * @icvsize: integrity check value (ICV) size (truncated or full)
  * @is_qi: true when called from caam/qi
+ *
+ * Input sequence: AAD | PTXT
+ * Output sequence: AAD | CTXT | ICV
+ * AAD length (assoclen), which includes the IV length, is available in Math3.
  */
 void cnstr_shdsc_rfc4106_encap(u32 * const desc, struct alginfo *cdata,
 			       unsigned int ivsize, unsigned int icvsize,
 			       const bool is_qi)
 {
-	u32 *key_jump_cmd;
-
+	u32 *key_jump_cmd, *zero_cryptlen_jump_cmd, *skip_instructions;
 	init_sh_desc(desc, HDR_SHARE_SERIAL);
 
 	/* Skip key loading if it is loaded due to sharing */
@@ -1325,24 +1318,26 @@ void cnstr_shdsc_rfc4106_encap(u32 * const desc, struct alginfo *cdata,
 	append_math_sub_imm_u32(desc, VARSEQINLEN, REG3, IMM, ivsize);
 	append_math_add(desc, VARSEQOUTLEN, ZERO, REG3, CAAM_CMD_SZ);
 
-	/* Read assoc data */
+	/* Skip AAD */
+	append_seq_fifo_store(desc, 0, FIFOST_TYPE_SKIP | FIFOLDST_VLF);
+
+	/* Read cryptlen and set this value into VARSEQOUTLEN */
+	append_math_sub(desc, VARSEQOUTLEN, SEQINLEN, REG3, CAAM_CMD_SZ);
+
+	/* If cryptlen is ZERO jump to AAD command */
+	zero_cryptlen_jump_cmd = append_jump(desc, JUMP_TEST_ALL |
+					    JUMP_COND_MATH_Z);
+
+	/* Read AAD data */
 	append_seq_fifo_load(desc, 0, FIFOLD_CLASS_CLASS1 | FIFOLDST_VLF |
 			     FIFOLD_TYPE_AAD | FIFOLD_TYPE_FLUSH1);
 
+	/* Workaround for erratum A-005473 (simultaneous SEQ FIFO skips) */
+	append_seq_fifo_store(desc, 0, FIFOST_TYPE_MESSAGE_DATA);
+
 	/* Skip IV */
 	append_seq_fifo_load(desc, ivsize, FIFOLD_CLASS_SKIP);
-
-	/* Will read cryptlen bytes */
-	append_math_sub(desc, VARSEQINLEN, SEQINLEN, REG0, CAAM_CMD_SZ);
-
-	/* Workaround for erratum A-005473 (simultaneous SEQ FIFO skips) */
-	append_seq_fifo_load(desc, 0, FIFOLD_CLASS_CLASS1 | FIFOLD_TYPE_MSG);
-
-	/* Skip assoc data */
-	append_seq_fifo_store(desc, 0, FIFOST_TYPE_SKIP | FIFOLDST_VLF);
-
-	/* cryptlen = seqoutlen - assoclen */
-	append_math_sub(desc, VARSEQOUTLEN, VARSEQINLEN, REG0, CAAM_CMD_SZ);
+	append_math_add(desc, VARSEQINLEN, VARSEQOUTLEN, REG0, CAAM_CMD_SZ);
 
 	/* Write encrypted data */
 	append_seq_fifo_store(desc, 0, FIFOST_TYPE_MESSAGE_DATA | FIFOLDST_VLF);
@@ -1351,15 +1346,25 @@ void cnstr_shdsc_rfc4106_encap(u32 * const desc, struct alginfo *cdata,
 	append_seq_fifo_load(desc, 0, FIFOLD_CLASS_CLASS1 | FIFOLDST_VLF |
 			     FIFOLD_TYPE_MSG | FIFOLD_TYPE_LAST1);
 
+	/* Jump instructions to avoid double reading of AAD */
+	skip_instructions = append_jump(desc, JUMP_TEST_ALL);
+
+	/* There is no input data, cryptlen = 0 */
+	set_jump_tgt_here(desc, zero_cryptlen_jump_cmd);
+
+	/* Read AAD */
+	append_seq_fifo_load(desc, 0, FIFOLD_CLASS_CLASS1 | FIFOLDST_VLF |
+			     FIFOLD_TYPE_AAD | FIFOLD_TYPE_LAST1);
+
+	set_jump_tgt_here(desc, skip_instructions);
+
 	/* Write ICV */
 	append_seq_store(desc, icvsize, LDST_CLASS_1_CCB |
 			 LDST_SRCDST_BYTE_CONTEXT);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "rfc4106 enc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("rfc4106 enc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_rfc4106_encap);
 
@@ -1452,11 +1457,9 @@ void cnstr_shdsc_rfc4106_decap(u32 * const desc, struct alginfo *cdata,
 	append_seq_fifo_load(desc, icvsize, FIFOLD_CLASS_CLASS1 |
 			     FIFOLD_TYPE_ICV | FIFOLD_TYPE_LAST1);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "rfc4106 dec shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("rfc4106 dec shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_rfc4106_decap);
 
@@ -1537,11 +1540,9 @@ void cnstr_shdsc_rfc4543_encap(u32 * const desc, struct alginfo *cdata,
 	append_seq_store(desc, icvsize, LDST_CLASS_1_CCB |
 			 LDST_SRCDST_BYTE_CONTEXT);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "rfc4543 enc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("rfc4543 enc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_rfc4543_encap);
 
@@ -1627,11 +1628,9 @@ void cnstr_shdsc_rfc4543_decap(u32 * const desc, struct alginfo *cdata,
 	append_seq_fifo_load(desc, icvsize, FIFOLD_CLASS_CLASS1 |
 			     FIFOLD_TYPE_ICV | FIFOLD_TYPE_LAST1);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "rfc4543 dec shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	print_hex_dump_debug("rfc4543 dec shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
 EXPORT_SYMBOL(cnstr_shdsc_rfc4543_decap);
 
@@ -1751,7 +1750,8 @@ void cnstr_shdsc_chachapoly(u32 * const desc, struct alginfo *cdata,
 				 LDST_SRCDST_BYTE_CONTEXT);
 	} else {
 		/* Read and write cryptlen bytes */
-		append_math_add(desc, VARSEQINLEN, SEQOUTLEN, REG0, CAAM_CMD_SZ);
+		append_math_add(desc, VARSEQINLEN, SEQOUTLEN, REG0,
+				CAAM_CMD_SZ);
 		append_math_add(desc, VARSEQOUTLEN, SEQOUTLEN, REG0,
 				CAAM_CMD_SZ);
 		aead_append_src_dst(desc, FIFOLD_TYPE_MSG);
@@ -1767,11 +1767,8 @@ void cnstr_shdsc_chachapoly(u32 * const desc, struct alginfo *cdata,
 }
 EXPORT_SYMBOL(cnstr_shdsc_chachapoly);
 
-/*
- * For ablkcipher encrypt and decrypt, read from req->src and
- * write to req->dst
- */
-static inline void ablkcipher_append_src_dst(u32 *desc)
+/* For skcipher encrypt and decrypt, read from req->src and write to req->dst */
+static inline void skcipher_append_src_dst(u32 *desc)
 {
 	append_math_add(desc, VARSEQOUTLEN, SEQINLEN, REG0, CAAM_CMD_SZ);
 	append_math_add(desc, VARSEQINLEN, SEQINLEN, REG0, CAAM_CMD_SZ);
@@ -1781,7 +1778,7 @@ static inline void ablkcipher_append_src_dst(u32 *desc)
 }
 
 /**
- * cnstr_shdsc_ablkcipher_encap - ablkcipher encapsulation shared descriptor
+ * cnstr_shdsc_skcipher_encap - skcipher encapsulation shared descriptor
  * @desc: pointer to buffer used for descriptor construction
  * @cdata: pointer to block cipher transform definitions
  *         Valid algorithm values - one of OP_ALG_ALGSEL_{AES, DES, 3DES} ANDed
@@ -1791,11 +1788,14 @@ static inline void ablkcipher_append_src_dst(u32 *desc)
  * @is_rfc3686: true when ctr(aes) is wrapped by rfc3686 template
  * @ctx1_iv_off: IV offset in CONTEXT1 register
  */
-void cnstr_shdsc_ablkcipher_encap(u32 * const desc, struct alginfo *cdata,
-				  unsigned int ivsize, const bool is_rfc3686,
-				  const u32 ctx1_iv_off)
+void cnstr_shdsc_skcipher_encap(u32 * const desc, struct alginfo *cdata,
+				unsigned int ivsize, const bool is_rfc3686,
+				const u32 ctx1_iv_off)
 {
 	u32 *key_jump_cmd;
+	u32 options = cdata->algtype | OP_ALG_AS_INIT | OP_ALG_ENCRYPT;
+	bool is_chacha20 = ((cdata->algtype & OP_ALG_ALGSEL_MASK) ==
+			    OP_ALG_ALGSEL_CHACHA20);
 
 	init_sh_desc(desc, HDR_SHARE_SERIAL | HDR_SAVECTX);
 	/* Skip if already shared */
@@ -1803,8 +1803,14 @@ void cnstr_shdsc_ablkcipher_encap(u32 * const desc, struct alginfo *cdata,
 				   JUMP_COND_SHRD);
 
 	/* Load class1 key only */
-	append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
-			  cdata->keylen, CLASS_1 | KEY_DEST_CLASS_REG);
+	if (IS_ENABLED(CONFIG_CRYPTO_DEV_FSL_CAAM_TK_API) &&
+	    cdata->key_cmd_opt)
+		append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
+				  cdata->key_real_len, CLASS_1 |
+				  KEY_DEST_CLASS_REG | cdata->key_cmd_opt);
+	else
+		append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
+				  cdata->keylen, CLASS_1 | KEY_DEST_CLASS_REG);
 
 	/* Load nonce into CONTEXT1 reg */
 	if (is_rfc3686) {
@@ -1820,9 +1826,11 @@ void cnstr_shdsc_ablkcipher_encap(u32 * const desc, struct alginfo *cdata,
 
 	set_jump_tgt_here(desc, key_jump_cmd);
 
-	/* Load iv */
-	append_seq_load(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
-			LDST_CLASS_1_CCB | (ctx1_iv_off << LDST_OFFSET_SHIFT));
+	/* Load IV, if there is one */
+	if (ivsize)
+		append_seq_load(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
+				LDST_CLASS_1_CCB | (ctx1_iv_off <<
+				LDST_OFFSET_SHIFT));
 
 	/* Load counter into CONTEXT1 reg */
 	if (is_rfc3686)
@@ -1832,22 +1840,27 @@ void cnstr_shdsc_ablkcipher_encap(u32 * const desc, struct alginfo *cdata,
 				      LDST_OFFSET_SHIFT));
 
 	/* Load operation */
-	append_operation(desc, cdata->algtype | OP_ALG_AS_INITFINAL |
-			 OP_ALG_ENCRYPT);
+	if (is_chacha20)
+		options |= OP_ALG_AS_FINALIZE;
+	append_operation(desc, options);
 
 	/* Perform operation */
-	ablkcipher_append_src_dst(desc);
+	skcipher_append_src_dst(desc);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "ablkcipher enc shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	/* Store IV */
+	if (!is_chacha20 && ivsize)
+		append_seq_store(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
+				 LDST_CLASS_1_CCB | (ctx1_iv_off <<
+				 LDST_OFFSET_SHIFT));
+
+	print_hex_dump_debug("skcipher enc shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
-EXPORT_SYMBOL(cnstr_shdsc_ablkcipher_encap);
+EXPORT_SYMBOL(cnstr_shdsc_skcipher_encap);
 
 /**
- * cnstr_shdsc_ablkcipher_decap - ablkcipher decapsulation shared descriptor
+ * cnstr_shdsc_skcipher_decap - skcipher decapsulation shared descriptor
  * @desc: pointer to buffer used for descriptor construction
  * @cdata: pointer to block cipher transform definitions
  *         Valid algorithm values - one of OP_ALG_ALGSEL_{AES, DES, 3DES} ANDed
@@ -1857,11 +1870,13 @@ EXPORT_SYMBOL(cnstr_shdsc_ablkcipher_encap);
  * @is_rfc3686: true when ctr(aes) is wrapped by rfc3686 template
  * @ctx1_iv_off: IV offset in CONTEXT1 register
  */
-void cnstr_shdsc_ablkcipher_decap(u32 * const desc, struct alginfo *cdata,
-				  unsigned int ivsize, const bool is_rfc3686,
-				  const u32 ctx1_iv_off)
+void cnstr_shdsc_skcipher_decap(u32 * const desc, struct alginfo *cdata,
+				unsigned int ivsize, const bool is_rfc3686,
+				const u32 ctx1_iv_off)
 {
 	u32 *key_jump_cmd;
+	bool is_chacha20 = ((cdata->algtype & OP_ALG_ALGSEL_MASK) ==
+			    OP_ALG_ALGSEL_CHACHA20);
 
 	init_sh_desc(desc, HDR_SHARE_SERIAL | HDR_SAVECTX);
 	/* Skip if already shared */
@@ -1869,8 +1884,14 @@ void cnstr_shdsc_ablkcipher_decap(u32 * const desc, struct alginfo *cdata,
 				   JUMP_COND_SHRD);
 
 	/* Load class1 key only */
-	append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
-			  cdata->keylen, CLASS_1 | KEY_DEST_CLASS_REG);
+	if (IS_ENABLED(CONFIG_CRYPTO_DEV_FSL_CAAM_TK_API) &&
+	    cdata->key_cmd_opt)
+		append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
+				  cdata->key_real_len, CLASS_1 |
+				  KEY_DEST_CLASS_REG | cdata->key_cmd_opt);
+	else
+		append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
+				  cdata->keylen, CLASS_1 | KEY_DEST_CLASS_REG);
 
 	/* Load nonce into CONTEXT1 reg */
 	if (is_rfc3686) {
@@ -1886,9 +1907,11 @@ void cnstr_shdsc_ablkcipher_decap(u32 * const desc, struct alginfo *cdata,
 
 	set_jump_tgt_here(desc, key_jump_cmd);
 
-	/* load IV */
-	append_seq_load(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
-			LDST_CLASS_1_CCB | (ctx1_iv_off << LDST_OFFSET_SHIFT));
+	/* Load IV, if there is one */
+	if (ivsize)
+		append_seq_load(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
+				LDST_CLASS_1_CCB | (ctx1_iv_off <<
+				LDST_OFFSET_SHIFT));
 
 	/* Load counter into CONTEXT1 reg */
 	if (is_rfc3686)
@@ -1899,113 +1922,41 @@ void cnstr_shdsc_ablkcipher_decap(u32 * const desc, struct alginfo *cdata,
 
 	/* Choose operation */
 	if (ctx1_iv_off)
-		append_operation(desc, cdata->algtype | OP_ALG_AS_INITFINAL |
+		append_operation(desc, cdata->algtype | OP_ALG_AS_INIT |
 				 OP_ALG_DECRYPT);
 	else
 		append_dec_op1(desc, cdata->algtype);
 
 	/* Perform operation */
-	ablkcipher_append_src_dst(desc);
+	skcipher_append_src_dst(desc);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "ablkcipher dec shdesc@" __stringify(__LINE__)": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	/* Store IV */
+	if (!is_chacha20 && ivsize)
+		append_seq_store(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
+				 LDST_CLASS_1_CCB | (ctx1_iv_off <<
+				 LDST_OFFSET_SHIFT));
+
+	print_hex_dump_debug("skcipher dec shdesc@" __stringify(__LINE__)": ",
+			     DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc),
+			     1);
 }
-EXPORT_SYMBOL(cnstr_shdsc_ablkcipher_decap);
+EXPORT_SYMBOL(cnstr_shdsc_skcipher_decap);
 
 /**
- * cnstr_shdsc_ablkcipher_givencap - ablkcipher encapsulation shared descriptor
- *                                   with HW-generated initialization vector.
- * @desc: pointer to buffer used for descriptor construction
- * @cdata: pointer to block cipher transform definitions
- *         Valid algorithm values - one of OP_ALG_ALGSEL_{AES, DES, 3DES} ANDed
- *         with OP_ALG_AAI_CBC.
- * @ivsize: initialization vector size
- * @is_rfc3686: true when ctr(aes) is wrapped by rfc3686 template
- * @ctx1_iv_off: IV offset in CONTEXT1 register
- */
-void cnstr_shdsc_ablkcipher_givencap(u32 * const desc, struct alginfo *cdata,
-				     unsigned int ivsize, const bool is_rfc3686,
-				     const u32 ctx1_iv_off)
-{
-	u32 *key_jump_cmd, geniv;
-
-	init_sh_desc(desc, HDR_SHARE_SERIAL | HDR_SAVECTX);
-	/* Skip if already shared */
-	key_jump_cmd = append_jump(desc, JUMP_JSL | JUMP_TEST_ALL |
-				   JUMP_COND_SHRD);
-
-	/* Load class1 key only */
-	append_key_as_imm(desc, cdata->key_virt, cdata->keylen,
-			  cdata->keylen, CLASS_1 | KEY_DEST_CLASS_REG);
-
-	/* Load Nonce into CONTEXT1 reg */
-	if (is_rfc3686) {
-		const u8 *nonce = cdata->key_virt + cdata->keylen;
-
-		append_load_as_imm(desc, nonce, CTR_RFC3686_NONCE_SIZE,
-				   LDST_CLASS_IND_CCB |
-				   LDST_SRCDST_BYTE_OUTFIFO | LDST_IMM);
-		append_move(desc, MOVE_WAITCOMP | MOVE_SRC_OUTFIFO |
-			    MOVE_DEST_CLASS1CTX | (16 << MOVE_OFFSET_SHIFT) |
-			    (CTR_RFC3686_NONCE_SIZE << MOVE_LEN_SHIFT));
-	}
-	set_jump_tgt_here(desc, key_jump_cmd);
-
-	/* Generate IV */
-	geniv = NFIFOENTRY_STYPE_PAD | NFIFOENTRY_DEST_DECO |
-		NFIFOENTRY_DTYPE_MSG | NFIFOENTRY_LC1 | NFIFOENTRY_PTYPE_RND |
-		(ivsize << NFIFOENTRY_DLEN_SHIFT);
-	append_load_imm_u32(desc, geniv, LDST_CLASS_IND_CCB |
-			    LDST_SRCDST_WORD_INFO_FIFO | LDST_IMM);
-	append_cmd(desc, CMD_LOAD | DISABLE_AUTO_INFO_FIFO);
-	append_move(desc, MOVE_WAITCOMP | MOVE_SRC_INFIFO |
-		    MOVE_DEST_CLASS1CTX | (ivsize << MOVE_LEN_SHIFT) |
-		    (ctx1_iv_off << MOVE_OFFSET_SHIFT));
-	append_cmd(desc, CMD_LOAD | ENABLE_AUTO_INFO_FIFO);
-
-	/* Copy generated IV to memory */
-	append_seq_store(desc, ivsize, LDST_SRCDST_BYTE_CONTEXT |
-			 LDST_CLASS_1_CCB | (ctx1_iv_off << LDST_OFFSET_SHIFT));
-
-	/* Load Counter into CONTEXT1 reg */
-	if (is_rfc3686)
-		append_load_imm_be32(desc, 1, LDST_IMM | LDST_CLASS_1_CCB |
-				     LDST_SRCDST_BYTE_CONTEXT |
-				     ((ctx1_iv_off + CTR_RFC3686_IV_SIZE) <<
-				      LDST_OFFSET_SHIFT));
-
-	if (ctx1_iv_off)
-		append_jump(desc, JUMP_JSL | JUMP_TEST_ALL | JUMP_COND_NCP |
-			    (1 << JUMP_OFFSET_SHIFT));
-
-	/* Load operation */
-	append_operation(desc, cdata->algtype | OP_ALG_AS_INITFINAL |
-			 OP_ALG_ENCRYPT);
-
-	/* Perform operation */
-	ablkcipher_append_src_dst(desc);
-
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "ablkcipher givenc shdesc@" __stringify(__LINE__) ": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
-}
-EXPORT_SYMBOL(cnstr_shdsc_ablkcipher_givencap);
-
-/**
- * cnstr_shdsc_xts_ablkcipher_encap - xts ablkcipher encapsulation shared
- *                                    descriptor
+ * cnstr_shdsc_xts_skcipher_encap - xts skcipher encapsulation shared descriptor
  * @desc: pointer to buffer used for descriptor construction
  * @cdata: pointer to block cipher transform definitions
  *         Valid algorithm values - OP_ALG_ALGSEL_AES ANDed with OP_ALG_AAI_XTS.
  */
-void cnstr_shdsc_xts_ablkcipher_encap(u32 * const desc, struct alginfo *cdata)
+void cnstr_shdsc_xts_skcipher_encap(u32 * const desc, struct alginfo *cdata)
 {
-	__be64 sector_size = cpu_to_be64(512);
+	/*
+	 * Set sector size to a big value, practically disabling
+	 * sector size segmentation in xts implementation. We cannot
+	 * take full advantage of this HW feature with existing
+	 * crypto API / dm-crypt SW architecture.
+	 */
+	__be64 sector_size = cpu_to_be64(BIT(15));
 	u32 *key_jump_cmd;
 
 	init_sh_desc(desc, HDR_SHARE_SERIAL | HDR_SAVECTX);
@@ -2038,26 +1989,33 @@ void cnstr_shdsc_xts_ablkcipher_encap(u32 * const desc, struct alginfo *cdata)
 			 OP_ALG_ENCRYPT);
 
 	/* Perform operation */
-	ablkcipher_append_src_dst(desc);
+	skcipher_append_src_dst(desc);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "xts ablkcipher enc shdesc@" __stringify(__LINE__) ": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	/* Store upper 8B of IV */
+	append_seq_store(desc, 8, LDST_SRCDST_BYTE_CONTEXT | LDST_CLASS_1_CCB |
+			 (0x20 << LDST_OFFSET_SHIFT));
+
+	print_hex_dump_debug("xts skcipher enc shdesc@" __stringify(__LINE__)
+			     ": ", DUMP_PREFIX_ADDRESS, 16, 4,
+			     desc, desc_bytes(desc), 1);
 }
-EXPORT_SYMBOL(cnstr_shdsc_xts_ablkcipher_encap);
+EXPORT_SYMBOL(cnstr_shdsc_xts_skcipher_encap);
 
 /**
- * cnstr_shdsc_xts_ablkcipher_decap - xts ablkcipher decapsulation shared
- *                                    descriptor
+ * cnstr_shdsc_xts_skcipher_decap - xts skcipher decapsulation shared descriptor
  * @desc: pointer to buffer used for descriptor construction
  * @cdata: pointer to block cipher transform definitions
  *         Valid algorithm values - OP_ALG_ALGSEL_AES ANDed with OP_ALG_AAI_XTS.
  */
-void cnstr_shdsc_xts_ablkcipher_decap(u32 * const desc, struct alginfo *cdata)
+void cnstr_shdsc_xts_skcipher_decap(u32 * const desc, struct alginfo *cdata)
 {
-	__be64 sector_size = cpu_to_be64(512);
+	/*
+	 * Set sector size to a big value, practically disabling
+	 * sector size segmentation in xts implementation. We cannot
+	 * take full advantage of this HW feature with existing
+	 * crypto API / dm-crypt SW architecture.
+	 */
+	__be64 sector_size = cpu_to_be64(BIT(15));
 	u32 *key_jump_cmd;
 
 	init_sh_desc(desc, HDR_SHARE_SERIAL | HDR_SAVECTX);
@@ -2089,15 +2047,17 @@ void cnstr_shdsc_xts_ablkcipher_decap(u32 * const desc, struct alginfo *cdata)
 	append_dec_op1(desc, cdata->algtype);
 
 	/* Perform operation */
-	ablkcipher_append_src_dst(desc);
+	skcipher_append_src_dst(desc);
 
-#ifdef DEBUG
-	print_hex_dump(KERN_ERR,
-		       "xts ablkcipher dec shdesc@" __stringify(__LINE__) ": ",
-		       DUMP_PREFIX_ADDRESS, 16, 4, desc, desc_bytes(desc), 1);
-#endif
+	/* Store upper 8B of IV */
+	append_seq_store(desc, 8, LDST_SRCDST_BYTE_CONTEXT | LDST_CLASS_1_CCB |
+			 (0x20 << LDST_OFFSET_SHIFT));
+
+	print_hex_dump_debug("xts skcipher dec shdesc@" __stringify(__LINE__)
+			     ": ", DUMP_PREFIX_ADDRESS, 16, 4, desc,
+			     desc_bytes(desc), 1);
 }
-EXPORT_SYMBOL(cnstr_shdsc_xts_ablkcipher_decap);
+EXPORT_SYMBOL(cnstr_shdsc_xts_skcipher_decap);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("FSL CAAM descriptor support");

@@ -4,7 +4,7 @@
  * Queue Interface backend functionality
  *
  * Copyright 2013-2016 Freescale Semiconductor, Inc.
- * Copyright 2016-2017 NXP
+ * Copyright 2016-2017, 2019 NXP
  */
 
 #include <linux/cpumask.h>
@@ -18,6 +18,7 @@
 #include "desc_constr.h"
 
 #define PREHDR_RSLS_SHIFT	31
+#define PREHDR_ABS		BIT(25)
 
 /*
  * Use a reasonable backlog of frames (per CPU) as congestion threshold,
@@ -80,13 +81,6 @@ EXPORT_SYMBOL(caam_congested);
  */
 static u64 times_congested;
 #endif
-
-/*
- * CPU from where the module initialised. This is required because QMan driver
- * requires CGRs to be removed from same CPU from where they were originally
- * allocated.
- */
-static int mod_init_cpu;
 
 /*
  * This is a a cache of buffers, from which the users of CAAM QI driver
@@ -167,7 +161,10 @@ static void caam_fq_ern_cb(struct qman_portal *qm, struct qman_fq *fq,
 	dma_unmap_single(drv_req->drv_ctx->qidev, qm_fd_addr(fd),
 			 sizeof(drv_req->fd_sgt), DMA_BIDIRECTIONAL);
 
-	drv_req->cbk(drv_req, -EIO);
+	if (fd->status)
+		drv_req->cbk(drv_req, be32_to_cpu(fd->status));
+	else
+		drv_req->cbk(drv_req, JRSTA_SSRC_QI);
 }
 
 static struct qman_fq *create_caam_req_fq(struct device *qidev,
@@ -334,7 +331,7 @@ int caam_drv_ctx_update(struct caam_drv_ctx *drv_ctx, u32 *sh_desc)
 	/* Create a new req FQ in parked state */
 	new_fq = create_caam_req_fq(drv_ctx->qidev, drv_ctx->rsp_fq,
 				    drv_ctx->context_a, 0);
-	if (unlikely(IS_ERR_OR_NULL(new_fq))) {
+	if (IS_ERR(new_fq)) {
 		dev_err(qidev, "FQ allocation for shdesc update failed\n");
 		return PTR_ERR(new_fq);
 	}
@@ -362,6 +359,7 @@ int caam_drv_ctx_update(struct caam_drv_ctx *drv_ctx, u32 *sh_desc)
 	 */
 	drv_ctx->prehdr[0] = cpu_to_caam32((1 << PREHDR_RSLS_SHIFT) |
 					   num_words);
+	drv_ctx->prehdr[1] = cpu_to_caam32(PREHDR_ABS);
 	memcpy(drv_ctx->sh_desc, sh_desc, desc_bytes(sh_desc));
 	dma_sync_single_for_device(qidev, drv_ctx->context_a,
 				   sizeof(drv_ctx->sh_desc) +
@@ -417,6 +415,7 @@ struct caam_drv_ctx *caam_drv_ctx_init(struct device *qidev,
 	 */
 	drv_ctx->prehdr[0] = cpu_to_caam32((1 << PREHDR_RSLS_SHIFT) |
 					   num_words);
+	drv_ctx->prehdr[1] = cpu_to_caam32(PREHDR_ABS);
 	memcpy(drv_ctx->sh_desc, sh_desc, desc_bytes(sh_desc));
 	size = sizeof(drv_ctx->prehdr) + sizeof(drv_ctx->sh_desc);
 	hwdesc = dma_map_single(qidev, drv_ctx->prehdr, size,
@@ -447,7 +446,7 @@ struct caam_drv_ctx *caam_drv_ctx_init(struct device *qidev,
 	/* Attach request FQ */
 	drv_ctx->req_fq = create_caam_req_fq(qidev, drv_ctx->rsp_fq, hwdesc,
 					     QMAN_INITFQ_FLAG_SCHED);
-	if (unlikely(IS_ERR_OR_NULL(drv_ctx->req_fq))) {
+	if (IS_ERR(drv_ctx->req_fq)) {
 		dev_err(qidev, "create_caam_req_fq failed\n");
 		dma_unmap_single(qidev, hwdesc, size, DMA_BIDIRECTIONAL);
 		kfree(drv_ctx);
@@ -501,12 +500,12 @@ void caam_drv_ctx_rel(struct caam_drv_ctx *drv_ctx)
 }
 EXPORT_SYMBOL(caam_drv_ctx_rel);
 
-int caam_qi_shutdown(struct device *qidev)
+static void caam_qi_shutdown(void *data)
 {
-	int i, ret;
+	int i;
+	struct device *qidev = data;
 	struct caam_qi_priv *priv = &qipriv;
 	const cpumask_t *cpus = qman_affine_cpus();
-	struct cpumask old_cpumask = current->cpus_allowed;
 
 	for_each_cpu(i, cpus) {
 		struct napi_struct *irqtask;
@@ -519,25 +518,10 @@ int caam_qi_shutdown(struct device *qidev)
 			dev_err(qidev, "Rsp FQ kill failed, cpu: %d\n", i);
 	}
 
-	/*
-	 * QMan driver requires CGRs to be deleted from same CPU from where they
-	 * were instantiated. Hence we get the module removal execute from the
-	 * same CPU from where it was originally inserted.
-	 */
-	set_cpus_allowed_ptr(current, get_cpu_mask(mod_init_cpu));
-
-	ret = qman_delete_cgr(&priv->cgr);
-	if (ret)
-		dev_err(qidev, "Deletion of CGR failed: %d\n", ret);
-	else
-		qman_release_cgrid(priv->cgr.cgrid);
+	qman_delete_cgr_safe(&priv->cgr);
+	qman_release_cgrid(priv->cgr.cgrid);
 
 	kmem_cache_destroy(qi_cache);
-
-	/* Now that we're done with the CGRs, restore the cpus allowed mask */
-	set_cpus_allowed_ptr(current, &old_cpumask);
-
-	return ret;
 }
 
 static void cgr_cb(struct qman_portal *qm, struct qman_cgr *cgr, int congested)
@@ -592,8 +576,9 @@ static enum qman_cb_dqrr_result caam_rsp_fq_dqrr_cb(struct qman_portal *p,
 
 		if (ssrc != JRSTA_SSRC_CCB_ERROR ||
 		    err_id != JRSTA_CCBERR_ERRID_ICVCHK)
-			dev_err(qidev, "Error: %#x in CAAM response FD\n",
-				fd->status);
+			dev_err_ratelimited(qidev,
+					    "Error: %#x in CAAM response FD\n",
+					    fd->status);
 	}
 
 	if (unlikely(fd->format != qm_fd_compound)) {
@@ -601,7 +586,7 @@ static enum qman_cb_dqrr_result caam_rsp_fq_dqrr_cb(struct qman_portal *p,
 		return qman_cb_dqrr_consume;
 	}
 
-	drv_req = caam_iova_to_virt(priv->domain, qm_fd_addr_get64(fd));
+	drv_req = caam_iova_to_virt(priv->domain, fd->addr);
 	if (unlikely(!drv_req)) {
 		dev_err(qidev,
 			"Can't find original request for caam response\n");
@@ -724,17 +709,6 @@ int caam_qi_init(struct platform_device *caam_pdev)
 	struct device *ctrldev = &caam_pdev->dev, *qidev;
 	struct caam_drv_private *ctrlpriv;
 	const cpumask_t *cpus = qman_affine_cpus();
-	struct cpumask old_cpumask = current->cpus_allowed;
-
-	/*
-	 * QMAN requires CGRs to be removed from same CPU+portal from where it
-	 * was originally allocated. Hence we need to note down the
-	 * initialisation CPU and use the same CPU for module exit.
-	 * We select the first CPU to from the list of portal owning CPUs.
-	 * Then we pin module init to this CPU.
-	 */
-	mod_init_cpu = cpumask_first(cpus);
-	set_cpus_allowed_ptr(current, get_cpu_mask(mod_init_cpu));
 
 	ctrlpriv = dev_get_drvdata(ctrldev);
 	qidev = ctrldev;
@@ -781,14 +755,15 @@ int caam_qi_init(struct platform_device *caam_pdev)
 		return -ENOMEM;
 	}
 
-	/* Done with the CGRs; restore the cpus allowed mask */
-	set_cpus_allowed_ptr(current, &old_cpumask);
 #ifdef CONFIG_DEBUG_FS
 	debugfs_create_file("qi_congested", 0444, ctrlpriv->ctl,
 			    &times_congested, &caam_fops_u64_ro);
 #endif
 
-	ctrlpriv->qi_init = 1;
+	err = devm_add_action_or_reset(qidev, caam_qi_shutdown, ctrlpriv);
+	if (err)
+		return err;
+
 	dev_info(qidev, "Linux CAAM Queue I/F driver initialised\n");
 	return 0;
 }

@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Freescale QorIQ Platforms GUTS Driver
  *
  * Copyright (C) 2016 Freescale Semiconductor, Inc.
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
  */
 
 #include <linux/io.h>
@@ -32,6 +28,7 @@ struct fsl_soc_die_attr {
 static struct guts *guts;
 static struct soc_device_attribute soc_dev_attr;
 static struct soc_device *soc_dev;
+static struct device_node *root;
 
 
 /* SoC die attribute definition for QorIQ platform */
@@ -105,6 +102,11 @@ static const struct fsl_soc_die_attr fsl_soc_die[] = {
 	  .svr          = 0x87360000,
 	  .mask         = 0xff3f0000,
 	},
+	/* Die: LS1028A, SoC: LS1028A */
+	{ .die          = "LS1028A",
+	  .svr          = 0x870b0000,
+	  .mask         = 0xff3f0000,
+	},
 	{ },
 };
 
@@ -135,9 +137,15 @@ u32 fsl_guts_get_svr(void)
 }
 EXPORT_SYMBOL(fsl_guts_get_svr);
 
+struct soc_device_attribute *fsl_guts_get_soc_dev_attr(void)
+{
+	return &soc_dev_attr;
+}
+EXPORT_SYMBOL(fsl_guts_get_soc_dev_attr);
+
 static int fsl_guts_probe(struct platform_device *pdev)
 {
-	struct device_node *root, *np = pdev->dev.of_node;
+	struct device_node *np = pdev->dev.of_node;
 	struct device *dev = &pdev->dev;
 	struct resource *res;
 	const struct fsl_soc_die_attr *soc_die;
@@ -160,22 +168,28 @@ static int fsl_guts_probe(struct platform_device *pdev)
 	root = of_find_node_by_path("/");
 	if (of_property_read_string(root, "model", &machine))
 		of_property_read_string_index(root, "compatible", 0, &machine);
-	of_node_put(root);
 	if (machine)
-		soc_dev_attr.machine = devm_kstrdup(dev, machine, GFP_KERNEL);
+		soc_dev_attr.machine = machine;
 
 	svr = fsl_guts_get_svr();
 	soc_die = fsl_soc_die_match(svr, fsl_soc_die);
 	if (soc_die) {
 		soc_dev_attr.family = devm_kasprintf(dev, GFP_KERNEL,
-						     "QorIQ %s", soc_die->die);
+						     "QorIQ %s%c", soc_die->die,
+						     ((svr >> 8) & 0x1) ? ' ' : 'E');
 	} else {
 		soc_dev_attr.family = devm_kasprintf(dev, GFP_KERNEL, "QorIQ");
 	}
+	if (!soc_dev_attr.family)
+		return -ENOMEM;
 	soc_dev_attr.soc_id = devm_kasprintf(dev, GFP_KERNEL,
 					     "svr:0x%08x", svr);
+	if (!soc_dev_attr.soc_id)
+		return -ENOMEM;
 	soc_dev_attr.revision = devm_kasprintf(dev, GFP_KERNEL, "%d.%d",
 					       (svr >>  4) & 0xf, svr & 0xf);
+	if (!soc_dev_attr.revision)
+		return -ENOMEM;
 
 	soc_dev = soc_device_register(&soc_dev_attr);
 	if (IS_ERR(soc_dev))
@@ -191,6 +205,7 @@ static int fsl_guts_probe(struct platform_device *pdev)
 static int fsl_guts_remove(struct platform_device *dev)
 {
 	soc_device_unregister(soc_dev);
+	of_node_put(root);
 	return 0;
 }
 
@@ -222,6 +237,7 @@ static const struct of_device_id fsl_guts_of_match[] = {
 	{ .compatible = "fsl,ls1012a-dcfg", },
 	{ .compatible = "fsl,ls1046a-dcfg", },
 	{ .compatible = "fsl,lx2160a-dcfg", },
+	{ .compatible = "fsl,ls1028a-dcfg", },
 	{}
 };
 MODULE_DEVICE_TABLE(of, fsl_guts_of_match);

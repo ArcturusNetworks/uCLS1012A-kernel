@@ -1,11 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0+
 /*
  * Copyright (C) 2004,2012 Freescale Semiconductor, Inc
  * All rights reserved.
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  *
  * Freescale USB device/endpoint management registers
  */
@@ -19,10 +15,6 @@
  */
 #define USB_MAX_CTRL_PAYLOAD		64
 #define USB_DR_SYS_OFFSET		0x400
-
-#ifdef CONFIG_SOC_LS1021A
-#undef CONFIG_ARCH_MXC
-#endif
 
  /* USB DR device mode registers (Little Endian) */
 struct usb_dr_device {
@@ -601,6 +593,18 @@ struct platform_device;
 int fsl_udc_clk_init(struct platform_device *pdev);
 int fsl_udc_clk_finalize(struct platform_device *pdev);
 void fsl_udc_clk_release(void);
+#else
+static inline int fsl_udc_clk_init(struct platform_device *pdev)
+{
+	return 0;
+}
+static inline int fsl_udc_clk_finalize(struct platform_device *pdev)
+{
+	return 0;
+}
+static inline void fsl_udc_clk_release(void)
+{
+}
 #endif
 
 #endif

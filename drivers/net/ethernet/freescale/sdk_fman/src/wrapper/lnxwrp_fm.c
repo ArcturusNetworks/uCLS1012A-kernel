@@ -173,7 +173,7 @@ int fm_get_rx_extra_headroom()
 EXPORT_SYMBOL(fm_get_rx_extra_headroom);
 
 #ifdef FM_ERRATUM_A050385
-bool fm_has_errata_a050385()
+bool fm_has_errata_a050385(void)
 {
 	return fm_has_err_a050385;
 }
@@ -2921,7 +2921,7 @@ static int __init __cold fm_load (void)
         return -ENODEV;
     }
 
-	printk(KERN_CRIT "Freescale FM module," \
+	printk(KERN_INFO "Freescale FM module," \
 		" FMD API version %d.%d.%d\n",
 		FMD_API_VERSION_MAJOR,
 		FMD_API_VERSION_MINOR,

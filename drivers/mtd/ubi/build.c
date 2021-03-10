@@ -1,20 +1,7 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) International Business Machines Corp., 2006
  * Copyright (c) Nokia Corporation, 2007
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
- * the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
  * Author: Artem Bityutskiy (Битюцкий Артём),
  *         Frank Haverkamp
@@ -536,8 +523,17 @@ static int get_bad_peb_limit(const struct ubi_device *ubi, int max_beb_per1024)
 	int limit, device_pebs;
 	uint64_t device_size;
 
-	if (!max_beb_per1024)
-		return 0;
+	if (!max_beb_per1024) {
+		/*
+		 * Since max_beb_per1024 has not been set by the user in either
+		 * the cmdline or Kconfig, use mtd_max_bad_blocks to set the
+		 * limit if it is supported by the device.
+		 */
+		limit = mtd_max_bad_blocks(ubi->mtd, 0, ubi->mtd->size);
+		if (limit < 0)
+			return 0;
+		return limit;
+	}
 
 	/*
 	 * Here we are using size of the entire flash chip and
@@ -580,7 +576,7 @@ static int io_init(struct ubi_device *ubi, int max_beb_per1024)
 	dbg_gen("sizeof(struct ubi_ainf_peb) %zu", sizeof(struct ubi_ainf_peb));
 	dbg_gen("sizeof(struct ubi_wl_entry) %zu", sizeof(struct ubi_wl_entry));
 
-	if (ubi->mtd->numeraseregions != 0) {
+	if (ubi->mtd->numeraseregions > 1) {
 		/*
 		 * Some flashes have several erase regions. Different regions
 		 * may have different eraseblock size and other
@@ -1092,10 +1088,10 @@ int ubi_detach_mtd_dev(int ubi_num, int anyway)
 	ubi_wl_close(ubi);
 	ubi_free_internal_volumes(ubi);
 	vfree(ubi->vtbl);
-	put_mtd_device(ubi->mtd);
 	vfree(ubi->peb_buf);
 	vfree(ubi->fm_buf);
 	ubi_msg(ubi, "mtd%d is detached", ubi->mtd->index);
+	put_mtd_device(ubi->mtd);
 	put_device(&ubi->dev);
 	return 0;
 }
@@ -1170,6 +1166,73 @@ static struct mtd_info * __init open_mtd_device(const char *mtd_dev)
 		mtd = get_mtd_device(NULL, mtd_num);
 
 	return mtd;
+}
+
+/*
+ * This function tries attaching mtd partitions named either "ubi" or "data"
+ * during boot.
+ */
+static void __init ubi_auto_attach(void)
+{
+	int err;
+	struct mtd_info *mtd;
+	loff_t offset = 0;
+	size_t len;
+	char magic[4];
+
+	/* try attaching mtd device named "ubi" or "data" */
+	mtd = open_mtd_device("ubi");
+	if (IS_ERR(mtd))
+		mtd = open_mtd_device("data");
+
+	if (IS_ERR(mtd))
+		return;
+
+	/* get the first not bad block */
+	if (mtd_can_have_bb(mtd))
+		while (mtd_block_isbad(mtd, offset)) {
+			offset += mtd->erasesize;
+
+			if (offset > mtd->size) {
+				pr_err("UBI error: Failed to find a non-bad "
+				       "block on mtd%d\n", mtd->index);
+				goto cleanup;
+			}
+		}
+
+	/* check if the read from flash was successful */
+	err = mtd_read(mtd, offset, 4, &len, (void *) magic);
+	if ((err && !mtd_is_bitflip(err)) || len != 4) {
+		pr_err("UBI error: unable to read from mtd%d\n", mtd->index);
+		goto cleanup;
+	}
+
+	/* check for a valid ubi magic */
+	if (strncmp(magic, "UBI#", 4)) {
+		pr_err("UBI error: no valid UBI magic found inside mtd%d\n", mtd->index);
+		goto cleanup;
+	}
+
+	/* don't auto-add media types where UBI doesn't makes sense */
+	if (mtd->type != MTD_NANDFLASH &&
+	    mtd->type != MTD_NORFLASH &&
+	    mtd->type != MTD_DATAFLASH &&
+	    mtd->type != MTD_MLCNANDFLASH)
+		goto cleanup;
+
+	mutex_lock(&ubi_devices_mutex);
+	pr_notice("UBI: auto-attach mtd%d\n", mtd->index);
+	err = ubi_attach_mtd_dev(mtd, UBI_DEV_NUM_AUTO, 0, 0);
+	mutex_unlock(&ubi_devices_mutex);
+	if (err < 0) {
+		pr_err("UBI error: cannot attach mtd%d\n", mtd->index);
+		goto cleanup;
+	}
+
+	return;
+
+cleanup:
+	put_mtd_device(mtd);
 }
 
 static int __init ubi_init(void)
@@ -1255,6 +1318,12 @@ static int __init ubi_init(void)
 		}
 	}
 
+	/* auto-attach mtd devices only if built-in to the kernel and no ubi.mtd
+	 * parameter was given */
+	if (IS_ENABLED(CONFIG_MTD_ROOTFS_ROOT_DEV) &&
+	    !ubi_is_module() && !mtd_devs)
+		ubi_auto_attach();
+
 	err = ubiblock_init();
 	if (err) {
 		pr_err("UBI error: block: cannot initialize, error %d\n", err);
@@ -1325,8 +1394,10 @@ static int bytes_str_to_int(const char *str)
 	switch (*endp) {
 	case 'G':
 		result *= 1024;
+		/* fall through */
 	case 'M':
 		result *= 1024;
+		/* fall through */
 	case 'K':
 		result *= 1024;
 		if (endp[1] == 'i' && endp[2] == 'B')
@@ -1349,7 +1420,7 @@ static int bytes_str_to_int(const char *str)
  * This function returns zero in case of success and a negative error code in
  * case of error.
  */
-static int ubi_mtd_param_parse(const char *val, struct kernel_param *kp)
+static int ubi_mtd_param_parse(const char *val, const struct kernel_param *kp)
 {
 	int i, len;
 	struct mtd_dev_param *p;

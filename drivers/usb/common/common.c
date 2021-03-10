@@ -1,9 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0
 /*
  * Provides code common for host and device side USB.
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of the GNU General Public License as
- * published by the Free Software Foundation, version 2.
  *
  * If either host side (ie. CONFIG_USB=y) or device side USB stack
  * (ie. CONFIG_USB_GADGET=y) is compiled in the kernel, this module is
@@ -18,6 +15,24 @@
 #include <linux/usb/of.h>
 #include <linux/usb/otg.h>
 #include <linux/of_platform.h>
+#include <linux/debugfs.h>
+#include "common.h"
+
+static const char *const ep_type_names[] = {
+	[USB_ENDPOINT_XFER_CONTROL] = "ctrl",
+	[USB_ENDPOINT_XFER_ISOC] = "isoc",
+	[USB_ENDPOINT_XFER_BULK] = "bulk",
+	[USB_ENDPOINT_XFER_INT] = "intr",
+};
+
+const char *usb_ep_type_string(int ep_type)
+{
+	if (ep_type < 0 || ep_type >= ARRAY_SIZE(ep_type_names))
+		return "unknown";
+
+	return ep_type_names[ep_type];
+}
+EXPORT_SYMBOL_GPL(usb_ep_type_string);
 
 const char *usb_otg_state_string(enum usb_otg_state state)
 {
@@ -104,56 +119,6 @@ static const char *const usb_dr_modes[] = {
 	[USB_DR_MODE_PERIPHERAL]	= "peripheral",
 	[USB_DR_MODE_OTG]		= "otg",
 };
-
-/**
- * of_usb_get_dr_mode - Get dual role mode for given device_node
- * @np:        Pointer to the given device_node
- *
- * The function gets phy interface string from property 'dr_mode',
- * and returns the correspondig enum usb_dr_mode
- */
-enum usb_dr_mode of_usb_get_dr_mode(struct device_node *np)
-{
-	const char *dr_mode;
-	int err, i;
-
-	err = of_property_read_string(np, "dr_mode", &dr_mode);
-	if (err < 0)
-		return USB_DR_MODE_UNKNOWN;
-
-	for (i = 0; i < ARRAY_SIZE(usb_dr_modes); i++)
-		if (!strcmp(dr_mode, usb_dr_modes[i]))
-			return i;
-
-	return USB_DR_MODE_UNKNOWN;
-}
-EXPORT_SYMBOL_GPL(of_usb_get_dr_mode);
-
-/**
- * of_usb_get_maximum_speed - Get maximum requested speed for a given USB
- * controller.
- * @np: Pointer to the given device_node
- *
- * The function gets the maximum speed string from property "maximum-speed",
- * and returns the corresponding enum usb_device_speed.
- */
-enum usb_device_speed of_usb_get_maximum_speed(struct device_node *np)
-{
-	const char *maximum_speed;
-	int err;
-	int i;
-
-	err = of_property_read_string(np, "maximum-speed", &maximum_speed);
-	if (err < 0)
-		return USB_SPEED_UNKNOWN;
-
-	for (i = 0; i < ARRAY_SIZE(speed_names); i++)
-		if (strcmp(maximum_speed, speed_names[i]) == 0)
-			return i;
-
-		return USB_SPEED_UNKNOWN;
-}
-EXPORT_SYMBOL_GPL(of_usb_get_maximum_speed);
 
 static enum usb_dr_mode usb_get_dr_mode_from_string(const char *str)
 {
@@ -301,6 +266,50 @@ int of_usb_update_otg_caps(struct device_node *np,
 }
 EXPORT_SYMBOL_GPL(of_usb_update_otg_caps);
 
+/**
+ * usb_of_get_companion_dev - Find the companion device
+ * @dev: the device pointer to find a companion
+ *
+ * Find the companion device from platform bus.
+ *
+ * Takes a reference to the returned struct device which needs to be dropped
+ * after use.
+ *
+ * Return: On success, a pointer to the companion device, %NULL on failure.
+ */
+struct device *usb_of_get_companion_dev(struct device *dev)
+{
+	struct device_node *node;
+	struct platform_device *pdev = NULL;
+
+	node = of_parse_phandle(dev->of_node, "companion", 0);
+	if (node)
+		pdev = of_find_device_by_node(node);
+
+	of_node_put(node);
+
+	return pdev ? &pdev->dev : NULL;
+}
+EXPORT_SYMBOL_GPL(usb_of_get_companion_dev);
 #endif
+
+struct dentry *usb_debug_root;
+EXPORT_SYMBOL_GPL(usb_debug_root);
+
+static int __init usb_common_init(void)
+{
+	usb_debug_root = debugfs_create_dir("usb", NULL);
+	ledtrig_usb_init();
+	return 0;
+}
+
+static void __exit usb_common_exit(void)
+{
+	ledtrig_usb_exit();
+	debugfs_remove_recursive(usb_debug_root);
+}
+
+subsys_initcall(usb_common_init);
+module_exit(usb_common_exit);
 
 MODULE_LICENSE("GPL");

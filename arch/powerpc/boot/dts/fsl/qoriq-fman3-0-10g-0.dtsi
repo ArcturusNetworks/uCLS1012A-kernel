@@ -35,14 +35,14 @@
 fman@400000 {
 	fman0_rx_0x10: port@90000 {
 		cell-index = <0x10>;
-		compatible = "fsl,fman-v3-port-rx", "fsl,fman-port-10g-rx";
+		compatible = "fsl,fman-v3-port-rx";
 		reg = <0x90000 0x1000>;
 		fsl,fman-10g-port;
 	};
 
 	fman0_tx_0x30: port@b0000 {
 		cell-index = <0x30>;
-		compatible = "fsl,fman-v3-port-tx", "fsl,fman-port-10g-tx";
+		compatible = "fsl,fman-v3-port-tx";
 		reg = <0xb0000 0x1000>;
 		fsl,fman-10g-port;
 	};
@@ -60,6 +60,7 @@ fman@400000 {
 		#size-cells = <0>;
 		compatible = "fsl,fman-memac-mdio", "fsl,fman-xmdio";
 		reg = <0xf1000 0x1000>;
+		fsl,erratum-a011043; /* must ignore read errors */
 
 		pcsphy6: ethernet-phy@0 {
 			reg = <0x0>;

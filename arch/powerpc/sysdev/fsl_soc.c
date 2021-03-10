@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * FSL SoC setup code
  *
@@ -5,11 +6,6 @@
  *
  * 2006 (c) MontaVista Software, Inc.
  * Vitaly Bordug <vbordug@ru.mvista.com>
- *
- * This program is free software; you can redistribute  it and/or modify it
- * under  the terms of  the GNU General  Public License as published by the
- * Free Software Foundation;  either version 2 of the  License, or (at your
- * option) any later version.
  */
 
 #include <linux/stddef.h>
@@ -46,37 +42,6 @@ extern void init_fcc_ioports(struct fs_platform_info*);
 extern void init_fec_ioports(struct fs_platform_info*);
 extern void init_smc_ioports(struct fs_uart_platform_info*);
 static phys_addr_t immrbase = -1;
-static phys_addr_t dcsrbase = -1;
-
-phys_addr_t get_dcsrbase(void)
-{
-	struct device_node *np;
-	const __be32 *prop;
-	int size;
-	u32 naddr;
-
-	if (dcsrbase != -1)
-		return dcsrbase;
-
-	np = of_find_compatible_node(NULL, NULL, "fsl,dcsr");
-	if (!np)
-		return -1;
-
-	prop = of_get_property(np, "#address-cells", &size);
-	if (prop && size == 4)
-		naddr = be32_to_cpup(prop);
-	else
-		naddr = 2;
-
-	prop = of_get_property(np, "ranges", NULL);
-	if (prop)
-		dcsrbase = of_translate_address(np, prop + naddr);
-
-	of_node_put(np);
-
-	return dcsrbase;
-}
-EXPORT_SYMBOL(get_dcsrbase);
 
 phys_addr_t get_immrbase(void)
 {

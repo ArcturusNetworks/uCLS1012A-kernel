@@ -1,19 +1,6 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
 /*
  * Copyright (c) International Business Machines Corp., 2006
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License as published by
- * the Free Software Foundation; either version 2 of the License, or
- * (at your option) any later version.
- *
- * This program is distributed in the hope that it will be useful,
- * but WITHOUT ANY WARRANTY; without even the implied warranty of
- * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See
- * the GNU General Public License for more details.
- *
- * You should have received a copy of the GNU General Public License
- * along with this program; if not, write to the Free Software
- * Foundation, Inc., 59 Temple Place, Suite 330, Boston, MA 02111-1307 USA
  *
  * Author: Artem Bityutskiy (Битюцкий Артём)
  */
@@ -939,6 +926,13 @@ static bool vol_ignored(int vol_id)
 #endif
 }
 
+static bool ec_hdr_has_eof(struct ubi_ec_hdr *ech)
+{
+	return ech->padding1[0] == 'E' &&
+	       ech->padding1[1] == 'O' &&
+	       ech->padding1[2] == 'F';
+}
+
 /**
  * scan_peb - scan and process UBI headers of a PEB.
  * @ubi: UBI device description object
@@ -971,9 +965,21 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return 0;
 	}
 
-	err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
-	if (err < 0)
-		return err;
+	if (!ai->eof_found) {
+		err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
+		if (err < 0)
+			return err;
+
+		if (ec_hdr_has_eof(ech)) {
+			pr_notice("UBI: EOF marker found, PEBs from %d will be erased\n",
+				pnum);
+			ai->eof_found = true;
+		}
+	}
+
+	if (ai->eof_found)
+		err = UBI_IO_FF_BITFLIPS;
+
 	switch (err) {
 	case 0:
 		break;
@@ -1072,6 +1078,7 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			 * be a result of power cut during erasure.
 			 */
 			ai->maybe_bad_peb_count += 1;
+		/* fall through */
 	case UBI_IO_BAD_HDR:
 			/*
 			 * If we're facing a bad VID header we have to drop *all*

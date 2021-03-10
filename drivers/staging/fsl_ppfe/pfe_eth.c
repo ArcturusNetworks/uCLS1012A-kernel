@@ -35,7 +35,7 @@
 #include <linux/delay.h>
 #include <linux/regmap.h>
 #include <linux/i2c.h>
-#include <linux/fsl/guts.h>
+#include <linux/sys_soc.h>
 
 #if defined(CONFIG_NF_CONNTRACK_MARK)
 #include <net/netfilter/nf_conntrack.h>
@@ -102,6 +102,14 @@ unsigned int gemac_regs[] = {
 	0x0190, /* Receive FIFO Section Full Threshold */
 	0x01A0, /* Transmit FIFO Section Empty Threshold */
 	0x01B0, /* Frame Truncation Length */
+};
+
+const struct soc_device_attribute ls1012a_rev1_soc_attr[] = {
+	{ .family = "QorIQ LS1012A",
+	  .soc_id = "svr:0x87040010",
+	  .revision = "1.0",
+	  .data = NULL },
+	{ },
 };
 
 /********************************************************************/
@@ -701,10 +709,14 @@ static int pfe_eth_set_pauseparam(struct net_device *ndev,
 					EGPI_PAUSE_ENABLE),
 				priv->GPI_baseaddr + GPI_TX_PAUSE_TIME);
 		if (priv->phydev) {
-			priv->phydev->supported |= ADVERTISED_Pause |
-							ADVERTISED_Asym_Pause;
-			priv->phydev->advertising |= ADVERTISED_Pause |
-							ADVERTISED_Asym_Pause;
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT,
+					 priv->phydev->supported);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
+					 priv->phydev->supported);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT,
+					 priv->phydev->advertising);
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
+					 priv->phydev->advertising);
 		}
 	} else {
 		gemac_disable_pause_rx(priv->EMAC_baseaddr);
@@ -712,10 +724,14 @@ static int pfe_eth_set_pauseparam(struct net_device *ndev,
 					~EGPI_PAUSE_ENABLE),
 				priv->GPI_baseaddr + GPI_TX_PAUSE_TIME);
 		if (priv->phydev) {
-			priv->phydev->supported &= ~(ADVERTISED_Pause |
-							ADVERTISED_Asym_Pause);
-			priv->phydev->advertising &= ~(ADVERTISED_Pause |
-							ADVERTISED_Asym_Pause);
+			linkmode_clear_bit(ETHTOOL_LINK_MODE_Pause_BIT,
+					   priv->phydev->supported);
+			linkmode_clear_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
+					   priv->phydev->supported);
+			linkmode_clear_bit(ETHTOOL_LINK_MODE_Pause_BIT,
+					   priv->phydev->advertising);
+			linkmode_clear_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT,
+					   priv->phydev->advertising);
 		}
 	}
 
@@ -1863,8 +1879,7 @@ static int pfe_eth_send_packet(struct sk_buff *skb, struct net_device *ndev)
  *
  */
 static u16 pfe_eth_select_queue(struct net_device *ndev, struct sk_buff *skb,
-				void *accel_priv,
-				select_queue_fallback_t fallback)
+				struct net_device *sb_dev)
 {
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 
@@ -2489,7 +2504,7 @@ int pfe_eth_init(struct pfe *pfe)
 		}
 	}
 
-	if (fsl_guts_get_svr() == LS1012A_REV_1_0)
+	if (soc_device_match(ls1012a_rev1_soc_attr))
 		pfe_errata_a010897 = true;
 	else
 		pfe_errata_a010897 = false;

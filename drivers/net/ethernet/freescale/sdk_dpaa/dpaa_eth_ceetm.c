@@ -1,4 +1,5 @@
 /* Copyright 2008-2016 Freescale Semiconductor Inc.
+ * Copyright 2019 NXP
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -32,16 +33,13 @@
 #include <linux/init.h>
 #include "dpaa_eth_ceetm.h"
 
-#define DPA_CEETM_DESCRIPTION "FSL DPAA CEETM qdisc"
-MODULE_LICENSE("Dual BSD/GPL");
-MODULE_DESCRIPTION(DPA_CEETM_DESCRIPTION);
-
 const struct nla_policy ceetm_policy[TCA_CEETM_MAX + 1] = {
 	[TCA_CEETM_COPT] = { .len = sizeof(struct tc_ceetm_copt) },
 	[TCA_CEETM_QOPS] = { .len = sizeof(struct tc_ceetm_qopt) },
 };
 
 struct Qdisc_ops ceetm_qdisc_ops;
+EXPORT_SYMBOL(ceetm_qdisc_ops);
 
 /* Obtain the DCP and the SP ids from the FMan port */
 static void get_dcp_and_sp(struct net_device *dev, enum qm_dc_portal *dcp_id,
@@ -438,7 +436,7 @@ static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 	switch (cl->type) {
 	case CEETM_ROOT:
 		if (cl->root.child) {
-			qdisc_destroy(cl->root.child);
+			qdisc_put(cl->root.child);
 			cl->root.child = NULL;
 		}
 
@@ -451,7 +449,7 @@ static void ceetm_cls_destroy(struct Qdisc *sch, struct ceetm_class *cl)
 
 	case CEETM_PRIO:
 		if (cl->prio.child) {
-			qdisc_destroy(cl->prio.child);
+			qdisc_put(cl->prio.child);
 			cl->prio.child = NULL;
 		}
 
@@ -573,7 +571,7 @@ static void ceetm_destroy(struct Qdisc *sch)
 		 */
 		for (ntx = 0; ntx < dev->num_tx_queues; ntx++)
 			if (priv->root.qdiscs[ntx])
-				qdisc_destroy(priv->root.qdiscs[ntx]);
+				qdisc_put(priv->root.qdiscs[ntx]);
 
 		kfree(priv->root.qdiscs);
 		break;
@@ -656,7 +654,7 @@ static int ceetm_dump(struct Qdisc *sch, struct sk_buff *skb)
 		return -EINVAL;
 	}
 
-	nest = nla_nest_start(skb, TCA_OPTIONS);
+	nest = nla_nest_start_noflag(skb, TCA_OPTIONS);
 	if (!nest)
 		goto nla_put_failure;
 	if (nla_put(skb, TCA_CEETM_QOPS, sizeof(qopt), &qopt))
@@ -674,7 +672,8 @@ nla_put_failure:
 
 /* Configure a root ceetm qdisc */
 static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
-			   struct tc_ceetm_qopt *qopt)
+			   struct tc_ceetm_qopt *qopt,
+			   struct netlink_ext_ack *extack)
 {
 	struct net_device *dev = qdisc_dev(sch);
 	unsigned int i, sp_id, parent_id;
@@ -726,7 +725,7 @@ static int ceetm_init_root(struct Qdisc *sch, struct ceetm_qdisc *priv,
 				      TC_H_MIN(i + PFIFO_MIN_OFFSET));
 
 		qdisc = qdisc_create_dflt(dev_queue, &pfifo_qdisc_ops,
-					  parent_id);
+					  parent_id, extack);
 		if (!qdisc)
 			return -ENOMEM;
 
@@ -1134,7 +1133,8 @@ err_init_wbfs_cls:
 }
 
 /* Configure a generic ceetm qdisc */
-static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
+static int ceetm_init(struct Qdisc *sch, struct nlattr *opt,
+		      struct netlink_ext_ack *extack)
 {
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct net_device *dev = qdisc_dev(sch);
@@ -1152,11 +1152,12 @@ static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
 		return -EINVAL;
 	}
 
-	ret = tcf_block_get(&priv->block, &priv->filter_list);
+	ret = tcf_block_get(&priv->block, &priv->filter_list, sch, extack);
 	if (ret)
 		return ret;
 
-	ret = nla_parse_nested(tb, TCA_CEETM_QOPS, opt, ceetm_policy, NULL);
+	ret = nla_parse_nested_deprecated(tb, TCA_CEETM_QOPS, opt,
+					  ceetm_policy, NULL);
 	if (ret < 0) {
 		pr_err(KBUILD_BASENAME " : %s : tc error\n", __func__);
 		return ret;
@@ -1188,7 +1189,7 @@ static int ceetm_init(struct Qdisc *sch, struct nlattr *opt)
 	case CEETM_ROOT:
 		netif_tx_stop_all_queues(dev);
 		dpaa_drain_fqs(dev);
-		ret = ceetm_init_root(sch, priv, qopt);
+		ret = ceetm_init_root(sch, priv, qopt, extack);
 		netif_tx_wake_all_queues(dev);
 		break;
 	case CEETM_PRIO:
@@ -1319,7 +1320,8 @@ change_err:
 }
 
 /* Edit a ceetm qdisc */
-static int ceetm_change(struct Qdisc *sch, struct nlattr *opt)
+static int ceetm_change(struct Qdisc *sch, struct nlattr *opt,
+			struct netlink_ext_ack *extack)
 {
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
 	struct net_device *dev = qdisc_dev(sch);
@@ -1329,7 +1331,8 @@ static int ceetm_change(struct Qdisc *sch, struct nlattr *opt)
 
 	pr_debug(KBUILD_BASENAME " : %s : qdisc %X\n", __func__, sch->handle);
 
-	ret = nla_parse_nested(tb, TCA_CEETM_QOPS, opt, ceetm_policy, NULL);
+	ret = nla_parse_nested_deprecated(tb, TCA_CEETM_QOPS, opt,
+					  ceetm_policy, NULL);
 	if (ret < 0) {
 		pr_err(KBUILD_BASENAME " : %s : tc error\n", __func__);
 		return ret;
@@ -1389,7 +1392,7 @@ static void ceetm_attach(struct Qdisc *sch)
 		qdisc = priv->root.qdiscs[i];
 		old_qdisc = dev_graft_qdisc(qdisc->dev_queue, qdisc);
 		if (old_qdisc)
-			qdisc_destroy(old_qdisc);
+			qdisc_put(old_qdisc);
 	}
 
 	kfree(priv->root.qdiscs);
@@ -1511,7 +1514,8 @@ static int ceetm_cls_change_wbfs(struct ceetm_class *cl,
 
 /* Add a ceetm root class or configure a ceetm root/prio/wbfs class */
 static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
-			    struct nlattr **tca, unsigned long *arg)
+			    struct nlattr **tca, unsigned long *arg,
+			    struct netlink_ext_ack *extack)
 {
 	struct ceetm_class *cl = (struct ceetm_class *)*arg;
 	struct net_device *dev = qdisc_dev(sch);
@@ -1548,7 +1552,8 @@ static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 		return -EINVAL;
 	}
 
-	err = nla_parse_nested(tb, TCA_CEETM_COPT, opt, ceetm_policy, NULL);
+	err = nla_parse_nested_deprecated(tb, TCA_CEETM_COPT, opt,
+					  ceetm_policy, NULL);
 	if (err < 0) {
 		pr_err(KBUILD_BASENAME " : %s : tc error\n", __func__);
 		return -EINVAL;
@@ -1606,7 +1611,7 @@ static int ceetm_cls_change(struct Qdisc *sch, u32 classid, u32 parentid,
 	if (!cl)
 		return -ENOMEM;
 
-	err = tcf_block_get(&cl->block, &cl->filter_list);
+	err = tcf_block_get(&cl->block, &cl->filter_list, sch, extack);
 	if (err) {
 		kfree(cl);
 		return err;
@@ -1749,7 +1754,7 @@ static int ceetm_cls_dump(struct Qdisc *sch, unsigned long arg,
 		break;
 	}
 
-	nest = nla_nest_start(skb, TCA_OPTIONS);
+	nest = nla_nest_start_noflag(skb, TCA_OPTIONS);
 	if (!nest)
 		goto nla_put_failure;
 	if (nla_put(skb, TCA_CEETM_COPT, sizeof(copt), &copt))
@@ -1800,7 +1805,8 @@ static struct Qdisc *ceetm_cls_leaf(struct Qdisc *sch, unsigned long arg)
 }
 
 static int ceetm_cls_graft(struct Qdisc *sch, unsigned long arg,
-			   struct Qdisc *new, struct Qdisc **old)
+			   struct Qdisc *new, struct Qdisc **old,
+			   struct netlink_ext_ack *extack)
 {
 	if (new && strcmp(new->ops->id, ceetm_qdisc_ops.id)) {
 		pr_err("CEETM: only ceetm qdiscs can be attached to ceetm classes\n");
@@ -1864,7 +1870,8 @@ static int ceetm_cls_dump_stats(struct Qdisc *sch, unsigned long arg,
 	return gnet_stats_copy_app(d, &xstats, sizeof(xstats));
 }
 
-static struct tcf_block *ceetm_tcf_block(struct Qdisc *sch, unsigned long arg)
+static struct tcf_block *ceetm_tcf_block(struct Qdisc *sch, unsigned long arg,
+					 struct netlink_ext_ack *extack)
 {
 	struct ceetm_class *cl = (struct ceetm_class *)arg;
 	struct ceetm_qdisc *priv = qdisc_priv(sch);
@@ -1941,6 +1948,7 @@ static struct ceetm_class *ceetm_classify(struct sk_buff *skb,
 		case TC_ACT_STOLEN:
 		case TC_ACT_TRAP:
 			*qerr = NET_XMIT_SUCCESS | __NET_XMIT_STOLEN;
+			/* fall through */
 		case TC_ACT_SHOT:
 			/* No valid class found due to action */
 			*act_drop = true;
@@ -2075,30 +2083,3 @@ drop:
 	dev_kfree_skb_any(skb);
 	return NET_XMIT_SUCCESS;
 }
-EXPORT_SYMBOL(ceetm_tx);
-
-static int __init ceetm_register(void)
-{
-	int _errno = 0;
-
-	pr_info(KBUILD_MODNAME ": " DPA_CEETM_DESCRIPTION "\n");
-
-	_errno = register_qdisc(&ceetm_qdisc_ops);
-	if (unlikely(_errno))
-		pr_err(KBUILD_MODNAME
-		       ": %s:%hu:%s(): register_qdisc() = %d\n",
-		       KBUILD_BASENAME ".c", __LINE__, __func__, _errno);
-
-	return _errno;
-}
-
-static void __exit ceetm_unregister(void)
-{
-	pr_debug(KBUILD_MODNAME ": %s:%s() ->\n",
-		 KBUILD_BASENAME ".c", __func__);
-
-	unregister_qdisc(&ceetm_qdisc_ops);
-}
-
-module_init(ceetm_register);
-module_exit(ceetm_unregister);

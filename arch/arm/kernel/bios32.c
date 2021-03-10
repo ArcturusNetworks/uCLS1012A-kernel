@@ -13,11 +13,12 @@
 #include <linux/init.h>
 #include <linux/io.h>
 #include <linux/of_irq.h>
-#include <linux/pcieport_if.h>
 
 #include <asm/mach-types.h>
 #include <asm/mach/map.h>
 #include <asm/mach/pci.h>
+
+#include "../../../drivers/pci/pcie/portdrv.h"
 
 static int debug_pci;
 
@@ -570,7 +571,7 @@ void pci_common_init_dev(struct device *parent, struct hw_pci *hw)
 	struct pci_sys_data *sys;
 	LIST_HEAD(head);
 
-	pci_add_flags(PCI_REASSIGN_ALL_RSRC);
+	pci_add_flags(PCI_REASSIGN_ALL_BUS);
 	if (hw->preinit)
 		hw->preinit();
 	pcibios_init_hw(parent, hw, &head);

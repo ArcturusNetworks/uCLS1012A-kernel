@@ -1,8 +1,5 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /* Copyright (c) 2016 Facebook
- *
- * This program is free software; you can redistribute it and/or
- * modify it under the terms of version 2 of the GNU General Public
- * License as published by the Free Software Foundation.
  */
 #define _GNU_SOURCE
 #include <sched.h>
@@ -21,7 +18,7 @@
 #include <arpa/inet.h>
 #include <errno.h>
 
-#include "libbpf.h"
+#include <bpf/bpf.h>
 #include "bpf_load.h"
 
 #define TEST_BIT(t) (1U << (t))
@@ -137,6 +134,7 @@ static void do_test_lru(enum test_type test, int cpu)
 
 			inner_lru_map_fds[cpu] =
 				bpf_create_map_node(BPF_MAP_TYPE_LRU_HASH,
+						    test_map_names[INNER_LRU_HASH_PREALLOC],
 						    sizeof(uint32_t),
 						    sizeof(long),
 						    inner_lru_hash_size, 0,

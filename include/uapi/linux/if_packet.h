@@ -4,7 +4,7 @@
 
 #include <linux/types.h>
 
-#ifndef __aligned_u64
+#ifndef __aligned_u64  /* Added as a hack (buildsystem has to be fixed. OZH. */
 #define __aligned_u64 __u64 __attribute__((aligned(8)))
 #endif
 
@@ -36,6 +36,8 @@ struct sockaddr_ll {
 #define PACKET_KERNEL		7		/* To kernel space	*/
 /* Unused, PACKET_FASTROUTE and PACKET_LOOPBACK are invisible to user space */
 #define PACKET_FASTROUTE	6		/* Fastrouted frame	*/
+#define PACKET_MASK_ANY		0xffffffff	/* mask for packet type bits */
+
 
 /* Packet socket options */
 
@@ -61,6 +63,8 @@ struct sockaddr_ll {
 #define PACKET_QDISC_BYPASS		20
 #define PACKET_ROLLOVER_STATS		21
 #define PACKET_FANOUT_DATA		22
+#define PACKET_IGNORE_OUTGOING		23
+#define PACKET_RECV_TYPE		24
 
 #define PACKET_FANOUT_HASH		0
 #define PACKET_FANOUT_LB		1
@@ -126,7 +130,7 @@ struct tpacket_auxdata {
 /* Rx and Tx ring - header status */
 #define TP_STATUS_TS_SOFTWARE		(1 << 29)
 #define TP_STATUS_TS_SYS_HARDWARE	(1 << 30) /* deprecated, never set */
-#define TP_STATUS_TS_RAW_HARDWARE	(1 << 31)
+#define TP_STATUS_TS_RAW_HARDWARE	(1U << 31)
 
 /* Rx ring - feature request bits */
 #define TP_FT_REQ_FILL_RXHASH	0x1

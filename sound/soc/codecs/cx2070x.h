@@ -2,7 +2,7 @@
 * ALSA SoC CX2070X codec driver
 *
 * Copyright:   (C) 2009/2010 Conexant Systems
-* Copyright:   (C) 2017-2019 Arcturus Networks Inc.
+* Copyright:   (C) 2017-2021 Arcturus Networks Inc.
 *                  by Oleksandr Zhadan
 *
 * This program is free software; you can redistribute it and/or modify
@@ -141,11 +141,11 @@ struct cx2070x_priv {
 	int is_clk_gated[NUM_OF_DAI];
 	int master[NUM_OF_DAI];
 	struct device *dev;
-	const struct snd_soc_codec_driver *codec_drv;
+	const struct snd_soc_component_driver *codec_drv;
 	struct snd_soc_dai_driver *dai_drv;
 	int num_dai;
 	struct mutex update_lock;
-	struct snd_soc_codec *codec;
+	struct snd_soc_component *codec;
 	struct i2c_client *cx_i2c;
 	int version;
 	struct clk *mclk;

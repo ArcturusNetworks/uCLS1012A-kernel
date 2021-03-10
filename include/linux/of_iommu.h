@@ -15,9 +15,6 @@ extern int of_get_dma_window(struct device_node *dn, const char *prefix,
 extern const struct iommu_ops *of_iommu_configure(struct device *dev,
 					struct device_node *master_np);
 
-int of_map_rid(struct device_node *np, u32 rid,
-	       const char *map_name, const char *map_mask_name,
-	       struct device_node **target, u32 *id_out);
 #else
 
 static inline int of_get_dma_window(struct device_node *dn, const char *prefix,
@@ -33,20 +30,6 @@ static inline const struct iommu_ops *of_iommu_configure(struct device *dev,
 	return NULL;
 }
 
-static inline int of_map_rid(struct device_node *np, u32 rid,
-			const char *map_name, const char *map_mask_name,
-			struct device_node **target, u32 *id_out)
-{
-	return -EINVAL;
-}
-
 #endif	/* CONFIG_OF_IOMMU */
-
-extern struct of_device_id __iommu_of_table;
-
-typedef int (*of_iommu_init_fn)(struct device_node *);
-
-#define IOMMU_OF_DECLARE(name, compat, fn) \
-	_OF_DECLARE(iommu, name, compat, fn, of_iommu_init_fn)
 
 #endif /* __OF_IOMMU_H */

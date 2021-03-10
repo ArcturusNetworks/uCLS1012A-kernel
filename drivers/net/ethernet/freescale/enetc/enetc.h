@@ -1,9 +1,6 @@
 /* SPDX-License-Identifier: (GPL-2.0+ OR BSD-3-Clause) */
 /* Copyright 2017-2019 NXP */
 
-#ifndef _FSL_ENETC_H
-#define _FSL_ENETC_H
-
 #include <linux/timer.h>
 #include <linux/pci.h>
 #include <linux/netdevice.h>
@@ -20,7 +17,6 @@
 #define ENETC_MAC_MAXFRM_SIZE	9600
 #define ENETC_MAX_MTU		(ENETC_MAC_MAXFRM_SIZE - \
 				(ETH_FCS_LEN + ETH_HLEN + VLAN_HLEN))
-#define ENETC_CLK  400000000
 
 struct enetc_tx_swbd {
 	struct sk_buff *skb;
@@ -147,6 +143,9 @@ enum enetc_errata {
 	ENETC_ERR_UCMCSWP	= BIT(2),
 };
 
+#define ENETC_SI_F_QBV BIT(0)
+#define ENETC_SI_F_QBU BIT(1)
+
 /* PCI IEP device data */
 struct enetc_si {
 	struct pci_dev *pdev;
@@ -162,11 +161,11 @@ struct enetc_si {
 	int num_fs_entries;
 	int num_rss; /* number of RSS buckets */
 	unsigned short pad;
-#define ENETC_SI_F_QBV	BIT(0)
 	int hw_features;
 #ifdef CONFIG_ENETC_TSN
 	struct enetc_cbs *ecbs;
 #endif
+
 };
 
 #define ENETC_SI_ALIGN	32
@@ -207,7 +206,8 @@ struct enetc_cls_rule {
 enum enetc_active_offloads {
 	ENETC_F_RX_TSTAMP	= BIT(0),
 	ENETC_F_TX_TSTAMP	= BIT(1),
-	ENETC_F_QBV		= BIT(2),
+	ENETC_F_QBV             = BIT(2),
+	ENETC_F_QBU             = BIT(3),
 };
 
 struct enetc_ndev_priv {
@@ -222,6 +222,8 @@ struct enetc_ndev_priv {
 
 	u16 msg_enable;
 	int active_offloads;
+
+	u32 speed; /* store speed for compare update pspeed */
 
 	struct enetc_bdr *tx_ring[16];
 	struct enetc_bdr *rx_ring[16];
@@ -279,13 +281,21 @@ int enetc_set_fs_entry(struct enetc_si *si, struct enetc_cmd_rfse *rfse,
 void enetc_set_rss_key(struct enetc_hw *hw, const u8 *bytes);
 int enetc_get_rss_table(struct enetc_si *si, u32 *table, int count);
 int enetc_set_rss_table(struct enetc_si *si, const u32 *table, int count);
+int enetc_send_cmd(struct enetc_si *si, struct enetc_cbd *cbd);
 
+#ifdef CONFIG_FSL_ENETC_QOS
+int enetc_setup_tc_taprio(struct net_device *ndev, void *type_data);
+void enetc_sched_speed_set(struct net_device *ndev);
+int enetc_setup_tc_cbs(struct net_device *ndev, void *type_data);
+#else
+#define enetc_setup_tc_taprio(ndev, type_data) -EOPNOTSUPP
+#define enetc_sched_speed_set(ndev) (void)0
+#define enetc_setup_tc_cbs(ndev, type_data) -EOPNOTSUPP
+#endif
 #ifdef CONFIG_ENETC_TSN
 void enetc_tsn_pf_init(struct net_device *netdev, struct pci_dev *pdev);
 void enetc_tsn_pf_deinit(struct net_device *netdev);
 #else
 #define enetc_tsn_pf_init(netdev, pdev) (void)0
 #define enetc_tsn_pf_deinit(netdev) (void)0
-#endif
-
 #endif

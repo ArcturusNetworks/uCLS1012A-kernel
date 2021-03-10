@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0-only
 #
 # Freescale device configuration
 #
@@ -23,7 +24,7 @@ if NET_VENDOR_FREESCALE
 config FEC
 	tristate "FEC ethernet controller (of ColdFire and some i.MX CPUs)"
 	depends on (M523x || M527x || M5272 || M528x || M520x || M532x || \
-		   ARCH_MXC || SOC_IMX28)
+		   ARCH_MXC || SOC_IMX28 || COMPILE_TEST)
 	default ARCH_MXC || SOC_IMX28 if ARM
 	select PHYLIB
 	imply PTP_1588_CLOCK
@@ -77,6 +78,7 @@ config UCC_GETH
 	depends on QUICC_ENGINE && FSL_SOC && PPC32
 	select FSL_PQ_MDIO
 	select PHYLIB
+	select FIXED_PHY
 	---help---
 	  This driver supports the Gigabit Ethernet mode of the QUICC Engine,
 	  which is available on some Freescale SOCs.
@@ -90,15 +92,16 @@ config GIANFAR
 	depends on HAS_DMA
 	select FSL_PQ_MDIO
 	select PHYLIB
+	select FIXED_PHY
 	select CRC32
 	---help---
 	  This driver supports the Gigabit TSEC on the MPC83xx, MPC85xx,
 	  and MPC86xx family of chips, the eTSEC on LS1021A and the FEC
 	  on the 8540.
-
 source "drivers/net/ethernet/freescale/sdk_fman/Kconfig"
 source "drivers/net/ethernet/freescale/sdk_dpaa/Kconfig"
 source "drivers/net/ethernet/freescale/dpaa/Kconfig"
+source "drivers/net/ethernet/freescale/dpaa2/Kconfig"
 source "drivers/net/ethernet/freescale/enetc/Kconfig"
 
 endif # NET_VENDOR_FREESCALE

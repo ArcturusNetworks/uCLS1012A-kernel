@@ -1,6 +1,6 @@
-// SPDX-License-Identifier: GPL-2.0
+/* SPDX-License-Identifier: GPL-2.0 */
 /*
- * Copyright 2013-2016 Freescale Semiconductor, Inc.
+ * Copyright 2014-2016 Freescale Semiconductor Inc.
  * Copyright 2017-2018 NXP
  *
  */
@@ -106,9 +106,9 @@ int dpsw_reset(struct fsl_mc_io *mc_io,
  * @irq_num: A user defined number associated with this IRQ
  */
 struct dpsw_irq_cfg {
-	     u64 addr;
-	     u32 val;
-	     int irq_num;
+	u64 addr;
+	u32 val;
+	int irq_num;
 };
 
 int dpsw_set_irq_enable(struct fsl_mc_io *mc_io,

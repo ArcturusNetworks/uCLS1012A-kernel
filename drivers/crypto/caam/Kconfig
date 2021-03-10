@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-2.0
 config CRYPTO_DEV_FSL_CAAM_COMMON
 	tristate
 
@@ -30,7 +31,7 @@ config CRYPTO_DEV_FSL_CAAM_DEBUG
 	  Selecting this will enable printing of various debug
 	  information in the CAAM driver.
 
-config CRYPTO_DEV_FSL_CAAM_JR
+menuconfig CRYPTO_DEV_FSL_CAAM_JR
 	tristate "Freescale CAAM Job Ring driver backend"
 	default y
 	help
@@ -97,6 +98,7 @@ config CRYPTO_DEV_FSL_CAAM_CRYPTO_API
 	select CRYPTO_AEAD
 	select CRYPTO_AUTHENC
 	select CRYPTO_BLKCIPHER
+	select CRYPTO_LIB_DES
 	help
 	  Selecting this will offload crypto for users of the
 	  scatterlist crypto API (such as the linux native IPSec
@@ -109,6 +111,8 @@ config CRYPTO_DEV_FSL_CAAM_CRYPTO_API_QI
 	select CRYPTO_DEV_FSL_CAAM_CRYPTO_API_DESC
 	select CRYPTO_AUTHENC
 	select CRYPTO_BLKCIPHER
+	select CRYPTO_DES
+	select CRYPTO_XTS
 	help
 	  Selecting this will use CAAM Queue Interface (QI) for sending
 	  & receiving crypto jobs to/from CAAM. This gives better performance
@@ -144,6 +148,73 @@ config CRYPTO_DEV_FSL_CAAM_RNG_API
 	  Selecting this will register the SEC4 hardware rng to
 	  the hw_random API for suppying the kernel entropy pool.
 
+config CRYPTO_DEV_FSL_CAAM_TK_API
+	bool "Register tagged key cryptography implementations with Crypto API"
+	depends on CRYPTO_DEV_FSL_CAAM_CRYPTO_API
+	help
+	  Selecting this will register algorithms supporting tagged
+	  key.
+
+	  Tagged key are keys that contains metadata indicating what
+	  they are and how to handle them.
+
+config CRYPTO_DEV_FSL_CAAM_RNG_TEST
+	bool "Test caam rng"
+	depends on CRYPTO_DEV_FSL_CAAM_RNG_API
+	help
+	  Selecting this will enable a self-test to run for the
+	  caam RNG. This test is several minutes long and executes
+	  just before the RNG is registered with the hw_random API.
+
+config CRYPTO_DEV_FSL_CAAM_SM
+	bool "CAAM Secure Memory / Keystore API (EXPERIMENTAL)"
+	help
+	  Enables use of a prototype kernel-level Keystore API with CAAM
+	  Secure Memory for insertion/extraction of bus-protected secrets.
+
+config CRYPTO_DEV_FSL_CAAM_SM_SLOTSIZE
+	int "Size of each keystore slot in Secure Memory"
+	depends on CRYPTO_DEV_FSL_CAAM_SM
+	range 5 9
+	default 7
+	help
+	  Select size of allocation units to divide Secure Memory pages into
+	  (the size of a "slot" as referenced inside the API code).
+	  Established as powers of two.
+	  Examples:
+		5 => 32 bytes
+		6 => 64 bytes
+		7 => 128 bytes
+		8 => 256 bytes
+		9 => 512 bytes
+
+config CRYPTO_DEV_FSL_CAAM_SM_TEST
+	tristate "CAAM Secure Memory - Keystore Test/Example (EXPERIMENTAL)"
+	depends on CRYPTO_DEV_FSL_CAAM_SM
+	depends on m
+	help
+	  Example thread to exercise the Keystore API and to verify that
+	  stored and recovered secrets can be used for general purpose
+	  encryption/decryption.
+
+config CRYPTO_DEV_FSL_CAAM_SECVIO
+	tristate "CAAM/SNVS Security Violation Handler (EXPERIMENTAL)"
+	help
+	  Enables installation of an interrupt handler with registrable
+          handler functions which can be specified to act on the consequences
+          of a security violation.
+
+config CRYPTO_DEV_FSL_CAAM_JR_UIO
+	tristate "Freescale Job Ring UIO support"
+	depends on UIO
+	default y
+	help
+	  Selecting this will allow job ring UIO support for
+	  Userspace drivers
+
+	  To compile this as a module, choose M here: the module
+	  will be called fsl_jr_uio.
+
 endif # CRYPTO_DEV_FSL_CAAM_JR
 
 endif # CRYPTO_DEV_FSL_CAAM
@@ -151,6 +222,7 @@ endif # CRYPTO_DEV_FSL_CAAM
 config CRYPTO_DEV_FSL_DPAA2_CAAM
 	tristate "QorIQ DPAA2 CAAM (DPSECI) driver"
 	depends on FSL_MC_DPIO
+	depends on NETDEVICES
 	select CRYPTO_DEV_FSL_CAAM_COMMON
 	select CRYPTO_DEV_FSL_CAAM_CRYPTO_API_DESC
 	select CRYPTO_DEV_FSL_CAAM_AHASH_API_DESC
@@ -158,7 +230,8 @@ config CRYPTO_DEV_FSL_DPAA2_CAAM
 	select CRYPTO_AUTHENC
 	select CRYPTO_AEAD
 	select CRYPTO_HASH
-	---help---
+	select CRYPTO_DES
+	help
 	  CAAM driver for QorIQ Data Path Acceleration Architecture 2.
 	  It handles DPSECI DPAA2 objects that sit on the Management Complex
 	  (MC) fsl-mc bus.

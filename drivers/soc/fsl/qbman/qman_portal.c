@@ -235,7 +235,6 @@ static int qman_portal_probe(struct platform_device *pdev)
 	struct iommu_domain *domain;
 	struct qm_portal_config *pcfg;
 	struct resource *addr_phys[2];
-	void __iomem *va;
 	int irq, cpu, err, i;
 	u32 val;
 
@@ -278,34 +277,24 @@ static int qman_portal_probe(struct platform_device *pdev)
 	pcfg->channel = val;
 	pcfg->cpu = -1;
 	irq = platform_get_irq(pdev, 0);
-	if (irq <= 0) {
-		dev_err(dev, "Can't get %pOF IRQ\n", node);
+	if (irq <= 0)
 		goto err_ioremap1;
-	}
 	pcfg->irq = irq;
 
-#ifdef CONFIG_PPC
-	/* PPC requires a cacheable/non-coherent mapping of the portal */
-	va = ioremap_prot(addr_phys[0]->start, resource_size(addr_phys[0]),
-			  (pgprot_val(PAGE_KERNEL) & ~_PAGE_COHERENT));
-#else
-	/* For ARM we can use write combine mapping. */
-	va = ioremap_wc(addr_phys[0]->start, resource_size(addr_phys[0]));
-#endif
-	if (!va) {
-		dev_err(dev, "ioremap::CE failed\n");
+	pcfg->addr_virt_ce = memremap(addr_phys[0]->start,
+					resource_size(addr_phys[0]),
+					QBMAN_MEMREMAP_ATTR);
+	if (!pcfg->addr_virt_ce) {
+		dev_err(dev, "memremap::CE failed\n");
 		goto err_ioremap1;
 	}
 
-	pcfg->addr_virt[DPAA_PORTAL_CE] = va;
-
-	va = ioremap(addr_phys[1]->start, resource_size(addr_phys[1]));
-	if (!va) {
+	pcfg->addr_virt_ci = ioremap(addr_phys[1]->start,
+				resource_size(addr_phys[1]));
+	if (!pcfg->addr_virt_ci) {
 		dev_err(dev, "ioremap::CI failed\n");
 		goto err_ioremap2;
 	}
-
-	pcfg->addr_virt[DPAA_PORTAL_CI] = va;
 
 	/* Create an 1-to-1 iommu mapping for cena portal area */
 	domain = iommu_get_domain_for_dev(dev);
@@ -327,6 +316,7 @@ static int qman_portal_probe(struct platform_device *pdev)
 	spin_lock(&qman_lock);
 	cpu = cpumask_next_zero(-1, &portal_cpus);
 	if (cpu >= nr_cpu_ids) {
+		__qman_portals_probed = 1;
 		/* unassigned portal, skip init */
 		spin_unlock(&qman_lock);
 		return 0;
@@ -372,9 +362,9 @@ static int qman_portal_probe(struct platform_device *pdev)
 	return 0;
 
 err_portal_init:
-	iounmap(pcfg->addr_virt[DPAA_PORTAL_CI]);
+	iounmap(pcfg->addr_virt_ci);
 err_ioremap2:
-	iounmap(pcfg->addr_virt[DPAA_PORTAL_CE]);
+	memunmap(pcfg->addr_virt_ce);
 err_ioremap1:
 	__qman_portals_probed = -1;
 

@@ -25,7 +25,6 @@
 #define VCAP_IS2_CNT 64
 #define VCAP_IS2_ENTRY_WIDTH 376
 #define VCAP_IS2_ACTION_WIDTH 99
-/* TODO: Support different VCAP_PORT_CNT values */
 #define VCAP_PORT_CNT 6
 
 /* IS2 half key types */

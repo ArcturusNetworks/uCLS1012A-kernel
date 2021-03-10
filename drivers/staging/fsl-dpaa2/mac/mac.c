@@ -1,5 +1,5 @@
 /* Copyright 2015 Freescale Semiconductor Inc.
- * Copyright 2018 NXP
+ * Copyright 2018-2019 NXP
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions are met:
@@ -77,11 +77,11 @@ static phy_interface_t dpaa2_mac_iface_mode[] =  {
 	PHY_INTERFACE_MODE_RGMII,	/* DPMAC_ETH_IF_RGMII */
 	PHY_INTERFACE_MODE_SGMII,	/* DPMAC_ETH_IF_SGMII */
 	PHY_INTERFACE_MODE_QSGMII,	/* DPMAC_ETH_IF_QSGMII */
-	PHY_INTERFACE_MODE_XGMII,	/* DPMAC_ETH_IF_XAUI */
+	PHY_INTERFACE_MODE_XAUI,	/* DPMAC_ETH_IF_XAUI */
 	PHY_INTERFACE_MODE_XGMII,	/* DPMAC_ETH_IF_XFI */
 	PHY_INTERFACE_MODE_XGMII,        /* DPMAC_ETH_IF_CAUI */
-	PHY_INTERFACE_MODE_XGMII,       /* DPMAC_ETH_IF_1000BASEX */
-	PHY_INTERFACE_MODE_XGMII,       /* DPMAC_ETH_IF_USXGMII */
+	PHY_INTERFACE_MODE_1000BASEX,   /* DPMAC_ETH_IF_1000BASEX */
+	PHY_INTERFACE_MODE_USXGMII,     /* DPMAC_ETH_IF_USXGMII */
 };
 
 static int cmp_dpmac_ver(struct dpaa2_mac_priv *priv,
@@ -105,32 +105,26 @@ static const struct dpaa2_mac_link_mode_map dpaa2_mac_lm_map[] = {
 	{DPMAC_ADVERTISED_100BASET_FULL, ETHTOOL_LINK_MODE_100baseT_Full_BIT},
 	{DPMAC_ADVERTISED_1000BASET_FULL, ETHTOOL_LINK_MODE_1000baseT_Full_BIT},
 	{DPMAC_ADVERTISED_10000BASET_FULL, ETHTOOL_LINK_MODE_10000baseT_Full_BIT},
-	{DPMAC_ADVERTISED_2500BASEX_FULL, ETHTOOL_LINK_MODE_2500baseX_Full_BIT},
+	{DPMAC_ADVERTISED_2500BASEX_FULL, ETHTOOL_LINK_MODE_2500baseT_Full_BIT},
 	{DPMAC_ADVERTISED_AUTONEG, ETHTOOL_LINK_MODE_Autoneg_BIT},
 };
 
-static void link_mode_dpmac2phydev(u64 dpmac_lm, u32 *phydev_lm)
+static void link_mode_dpmac2phydev(u64 dpmac_lm, unsigned long *phydev_lm)
 {
-	__ETHTOOL_DECLARE_LINK_MODE_MASK(mask) = { 0, };
 	int i;
 
 	for (i = 0; i < ARRAY_SIZE(dpaa2_mac_lm_map); i++) {
 		if (dpmac_lm & dpaa2_mac_lm_map[i].dpmac_lm)
-			__set_bit(dpaa2_mac_lm_map[i].ethtool_lm, mask);
+			linkmode_set_bit(dpaa2_mac_lm_map[i].ethtool_lm, phydev_lm);
 	}
-
-	ethtool_convert_link_mode_to_legacy_u32(phydev_lm, mask);
 }
 
-static void link_mode_phydev2dpmac(u32 phydev_lm, u64 *dpni_lm)
+static void link_mode_phydev2dpmac(unsigned long *phydev_lm, u64 *dpni_lm)
 {
-	unsigned long lm;
 	int i;
 
-	ethtool_convert_legacy_u32_to_link_mode(&lm, phydev_lm);
-
 	for (i = 0; i < ARRAY_SIZE(dpaa2_mac_lm_map); i++) {
-		if (test_bit(dpaa2_mac_lm_map[i].ethtool_lm, &lm))
+		if (linkmode_test_bit(dpaa2_mac_lm_map[i].ethtool_lm, phydev_lm))
 			*dpni_lm |= dpaa2_mac_lm_map[i].dpmac_lm;
 	}
 }
@@ -154,10 +148,9 @@ static void dpaa2_mac_link_changed(struct net_device *netdev)
 		if (phydev->autoneg)
 			state.options |= DPMAC_LINK_OPT_AUTONEG;
 
-		if (phydev->pause && (phydev->advertising & ADVERTISED_Pause))
+		if (phydev->pause && linkmode_test_bit(ETHTOOL_LINK_MODE_Pause_BIT, phydev->advertising))
 			state.options |= DPMAC_LINK_OPT_PAUSE;
-		if (phydev->pause &&
-		    (phydev->advertising & ADVERTISED_Asym_Pause))
+		if (phydev->pause && linkmode_test_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phydev->advertising))
 			state.options |= DPMAC_LINK_OPT_ASYM_PAUSE;
 
 		netif_carrier_on(netdev);
@@ -165,12 +158,16 @@ static void dpaa2_mac_link_changed(struct net_device *netdev)
 		netif_carrier_off(netdev);
 	}
 
-	if (priv->old_state.up != state.up ||
-	    priv->old_state.rate != state.rate ||
-	    priv->old_state.options != state.options) {
-		priv->old_state = state;
-		phy_print_status(phydev);
-	}
+	/* Call the dpmac_set_link_state() only if there is a change in the
+	 * link configuration
+	 */
+	if (priv->old_state.up == state.up &&
+	    priv->old_state.rate == state.rate &&
+	    priv->old_state.options == state.options)
+		return;
+
+	priv->old_state = state;
+	phy_print_status(phydev);
 
 	if (cmp_dpmac_ver(priv, DPMAC_LINK_AUTONEG_VER_MAJOR,
 			  DPMAC_LINK_AUTONEG_VER_MINOR) < 0) {
@@ -188,6 +185,7 @@ static void dpaa2_mac_link_changed(struct net_device *netdev)
 		dev_err(&priv->mc_dev->dev, "dpmac_set_link_state: %d\n", err);
 }
 
+#ifdef CONFIG_FSL_DPAA2_MAC_NETDEVS
 static int dpaa2_mac_open(struct net_device *netdev)
 {
 	/* start PHY state machine */
@@ -195,6 +193,7 @@ static int dpaa2_mac_open(struct net_device *netdev)
 
 	return 0;
 }
+#endif
 
 static int dpaa2_mac_stop(struct net_device *netdev)
 {
@@ -423,30 +422,30 @@ static void configure_link(struct dpaa2_mac_priv *priv,
 	phydev->duplex  = !!(cfg->options & DPMAC_LINK_OPT_HALF_DUPLEX);
 
 	if (cfg->advertising != 0) {
-		phydev->advertising = 0;
-		link_mode_dpmac2phydev(cfg->advertising, &phydev->advertising);
+		linkmode_zero(phydev->advertising);
+		link_mode_dpmac2phydev(cfg->advertising, phydev->advertising);
 	}
 
-	if (phydev->supported & SUPPORTED_Pause) {
+	if (linkmode_test_bit(ETHTOOL_LINK_MODE_Pause_BIT, phydev->supported)) {
 		if (cfg->options & DPMAC_LINK_OPT_PAUSE)
-			phydev->advertising |= ADVERTISED_Pause;
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Pause_BIT, phydev->advertising);
 		else
-			phydev->advertising &= ~ADVERTISED_Pause;
+			linkmode_clear_bit(ETHTOOL_LINK_MODE_Pause_BIT, phydev->advertising);
 	}
 
-	if (phydev->supported & SUPPORTED_Asym_Pause) {
+	if (linkmode_test_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phydev->supported)) {
 		if (cfg->options & DPMAC_LINK_OPT_ASYM_PAUSE)
-			phydev->advertising |= ADVERTISED_Asym_Pause;
+			linkmode_set_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phydev->advertising);
 		else
-			phydev->advertising &= ~ADVERTISED_Asym_Pause;
+			linkmode_clear_bit(ETHTOOL_LINK_MODE_Asym_Pause_BIT, phydev->advertising);
 	}
 
 	if (cfg->options & DPMAC_LINK_OPT_AUTONEG) {
 		phydev->autoneg = AUTONEG_ENABLE;
-		phydev->advertising |= ADVERTISED_Autoneg;
+		linkmode_set_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, phydev->advertising);
 	} else {
 		phydev->autoneg = AUTONEG_DISABLE;
-		phydev->advertising &= ~ADVERTISED_Autoneg;
+		linkmode_clear_bit(ETHTOOL_LINK_MODE_Autoneg_BIT, phydev->advertising);
 	}
 
 	phy_start_aneg(phydev);
@@ -457,6 +456,7 @@ static irqreturn_t dpaa2_mac_irq_handler(int irq_num, void *arg)
 	struct device *dev = (struct device *)arg;
 	struct fsl_mc_device *mc_dev = to_fsl_mc_device(dev);
 	struct dpaa2_mac_priv *priv = dev_get_drvdata(dev);
+	struct net_device *ndev = priv->netdev;
 	struct dpmac_link_cfg link_cfg = { 0 };
 	u32 status;
 	int err;
@@ -482,6 +482,11 @@ static irqreturn_t dpaa2_mac_irq_handler(int irq_num, void *arg)
 		configure_link(priv, &link_cfg);
 	}
 
+	if (status & DPMAC_IRQ_EVENT_LINK_DOWN_REQ)
+		phy_stop(ndev->phydev);
+
+	if (status & DPMAC_IRQ_EVENT_LINK_UP_REQ)
+		phy_start(ndev->phydev);
 out:
 	dpmac_clear_irq_status(mc_dev->mc_io, 0, mc_dev->mc_handle,
 			       DPMAC_IRQ_INDEX, status);
@@ -512,7 +517,9 @@ static int setup_irqs(struct fsl_mc_device *mc_dev)
 	}
 
 	err = dpmac_set_irq_mask(mc_dev->mc_io, 0, mc_dev->mc_handle,
-				 DPMAC_IRQ_INDEX, DPMAC_IRQ_EVENT_LINK_CFG_REQ);
+				 DPMAC_IRQ_INDEX, DPMAC_IRQ_EVENT_LINK_CFG_REQ |
+				 DPMAC_IRQ_EVENT_LINK_UP_REQ |
+				 DPMAC_IRQ_EVENT_LINK_DOWN_REQ);
 	if (err) {
 		dev_err(&mc_dev->dev, "dpmac_set_irq_mask err %d\n", err);
 		goto free_irq;
@@ -657,9 +664,6 @@ static int dpaa2_mac_probe(struct fsl_mc_device *mc_dev)
 	netdev->netdev_ops = &dpaa2_mac_ndo_ops;
 	netdev->ethtool_ops = &dpaa2_mac_ethtool_ops;
 
-	/* phy starts up enabled so netdev should be up too */
-	netdev->flags |= IFF_UP;
-
 	err = register_netdev(priv->netdev);
 	if (err < 0) {
 		dev_err(dev, "register_netdev error %d\n", err);
@@ -722,8 +726,7 @@ probe_fixed_link:
 		};
 
 		/* try to register a fixed link phy */
-		netdev->phydev = fixed_phy_register(PHY_POLL, &status, -1,
-						    NULL);
+		netdev->phydev = fixed_phy_register(PHY_POLL, &status, NULL);
 		if (!netdev->phydev || IS_ERR(netdev->phydev)) {
 			dev_err(dev, "error trying to register fixed PHY\n");
 			/* So we don't crash unregister_netdev() later on */
@@ -741,8 +744,6 @@ probe_fixed_link:
 
 		dev_info(dev, "Registered fixed PHY.\n");
 	}
-
-	dpaa2_mac_open(netdev);
 
 	return 0;
 
@@ -771,7 +772,8 @@ static int dpaa2_mac_remove(struct fsl_mc_device *mc_dev)
 	struct dpaa2_mac_priv	*priv = dev_get_drvdata(dev);
 	struct net_device	*netdev = priv->netdev;
 
-	dpaa2_mac_stop(netdev);
+	if (netdev->flags & IFF_UP)
+		dpaa2_mac_stop(netdev);
 
 	if (phy_is_pseudo_fixed_link(netdev->phydev))
 		fixed_phy_unregister(netdev->phydev);

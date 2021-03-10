@@ -95,11 +95,17 @@ static struct sk_buff *codel_qdisc_dequeue(struct Qdisc *sch)
 			    &q->stats, qdisc_pkt_len, codel_get_enqueue_time,
 			    drop_func, dequeue_func);
 
-	/* We cant call qdisc_tree_reduce_backlog() if our qlen is 0,
-	 * or HTB crashes. Defer it for next round.
+	/* If our qlen is 0 qdisc_tree_reduce_backlog() will deactivate
+	 * parent class, dequeue in parent qdisc will do the same if we
+	 * return skb. Temporary increment qlen if we have skb.
 	 */
-	if (q->stats.drop_count && sch->q.qlen) {
-		qdisc_tree_reduce_backlog(sch, q->stats.drop_count, q->stats.drop_len);
+	if (q->stats.drop_count) {
+		if (skb)
+			sch->q.qlen++;
+		qdisc_tree_reduce_backlog(sch, q->stats.drop_count,
+					  q->stats.drop_len);
+		if (skb)
+			sch->q.qlen--;
 		q->stats.drop_count = 0;
 		q->stats.drop_len = 0;
 	}
@@ -130,7 +136,8 @@ static const struct nla_policy codel_policy[TCA_CODEL_MAX + 1] = {
 	[TCA_CODEL_CE_THRESHOLD]= { .type = NLA_U32 },
 };
 
-static int codel_change(struct Qdisc *sch, struct nlattr *opt)
+static int codel_change(struct Qdisc *sch, struct nlattr *opt,
+			struct netlink_ext_ack *extack)
 {
 	struct codel_sched_data *q = qdisc_priv(sch);
 	struct nlattr *tb[TCA_CODEL_MAX + 1];
@@ -140,7 +147,8 @@ static int codel_change(struct Qdisc *sch, struct nlattr *opt)
 	if (!opt)
 		return -EINVAL;
 
-	err = nla_parse_nested(tb, TCA_CODEL_MAX, opt, codel_policy, NULL);
+	err = nla_parse_nested_deprecated(tb, TCA_CODEL_MAX, opt,
+					  codel_policy, NULL);
 	if (err < 0)
 		return err;
 
@@ -184,7 +192,8 @@ static int codel_change(struct Qdisc *sch, struct nlattr *opt)
 	return 0;
 }
 
-static int codel_init(struct Qdisc *sch, struct nlattr *opt)
+static int codel_init(struct Qdisc *sch, struct nlattr *opt,
+		      struct netlink_ext_ack *extack)
 {
 	struct codel_sched_data *q = qdisc_priv(sch);
 
@@ -196,7 +205,7 @@ static int codel_init(struct Qdisc *sch, struct nlattr *opt)
 	q->params.mtu = psched_mtu(qdisc_dev(sch));
 
 	if (opt) {
-		int err = codel_change(sch, opt);
+		int err = codel_change(sch, opt, extack);
 
 		if (err)
 			return err;
@@ -215,7 +224,7 @@ static int codel_dump(struct Qdisc *sch, struct sk_buff *skb)
 	struct codel_sched_data *q = qdisc_priv(sch);
 	struct nlattr *opts;
 
-	opts = nla_nest_start(skb, TCA_OPTIONS);
+	opts = nla_nest_start_noflag(skb, TCA_OPTIONS);
 	if (opts == NULL)
 		goto nla_put_failure;
 

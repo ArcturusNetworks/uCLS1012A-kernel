@@ -54,6 +54,9 @@
  */
 #define MFDEN          20480
 
+static const struct clk_parent_data parent_data[] = {
+	{.index = 0},
+};
 
 struct clk_plldig {
 	struct clk_hw hw;
@@ -233,9 +236,7 @@ static int plldig_clk_probe(struct platform_device *pdev)
 {
 	struct clk_plldig *data;
 	struct resource *mem;
-	struct clk_init_data init = {};
 	struct device *dev = &pdev->dev;
-	const char *parent_name;
 	int ret;
 
 	data = devm_kzalloc(dev, sizeof(*data), GFP_KERNEL);
@@ -247,13 +248,10 @@ static int plldig_clk_probe(struct platform_device *pdev)
 	if (IS_ERR(data->regs))
 		return PTR_ERR(data->regs);
 
-	init.name = dev->of_node->name;
-	init.ops = &plldig_clk_ops;
-	parent_name = of_clk_get_parent_name(dev->of_node, 0);
-	init.parent_names = &parent_name;
-	init.num_parents = 1;
-
-	data->hw.init = &init;
+	data->hw.init = CLK_HW_INIT_PARENTS_DATA("dpclk",
+						 parent_data,
+						 &plldig_clk_ops,
+						 0);
 
 	ret = devm_clk_hw_register(dev, &data->hw);
 	if (ret) {
@@ -262,7 +260,7 @@ static int plldig_clk_probe(struct platform_device *pdev)
 		return ret;
 	}
 
-	ret = of_clk_add_hw_provider(dev->of_node, of_clk_hw_simple_get,
+	ret = devm_of_clk_add_hw_provider(dev, of_clk_hw_simple_get,
 					  &data->hw);
 	if (ret) {
 		dev_err(dev, "unable to add clk provider\n");

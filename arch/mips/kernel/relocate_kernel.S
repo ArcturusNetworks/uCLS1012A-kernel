@@ -1,9 +1,7 @@
+/* SPDX-License-Identifier: GPL-2.0-only */
 /*
  * relocate_kernel.S for kexec
  * Created by <nschichan@corp.free.fr> on Thu Oct 12 17:49:57 2006
- *
- * This source code is licensed under the GNU General Public License,
- * Version 2.  See the file COPYING for more details.
  */
 
 #include <asm/asm.h>
@@ -12,8 +10,9 @@
 #include <asm/mipsregs.h>
 #include <asm/stackframe.h>
 #include <asm/addrspace.h>
+#include "machine_kexec.h"
 
-LEAF(relocate_new_kernel)
+LEAF(kexec_relocate_new_kernel)
 	PTR_L a0,	arg0
 	PTR_L a1,	arg1
 	PTR_L a2,	arg2
@@ -85,7 +84,7 @@ done:
 
 #ifdef CONFIG_CPU_CAVIUM_OCTEON
 	/* We need to flush I-cache before jumping to new kernel.
-	 * Unfortunatelly, this code is cpu-specific.
+	 * Unfortunately, this code is cpu-specific.
 	 */
 	.set push
 	.set noreorder
@@ -98,7 +97,7 @@ done:
 #endif
 	/* jump to kexec_start_address */
 	j		s1
-	END(relocate_new_kernel)
+	END(kexec_relocate_new_kernel)
 
 #ifdef CONFIG_SMP
 /*
@@ -145,7 +144,7 @@ LEAF(kexec_smp_wait)
 #endif
 
 /* All parameters to new kernel are passed in registers a0-a3.
- * kexec_args[0..3] are uses to prepare register values.
+ * kexec_args[0..3] are used to prepare register values.
  */
 
 kexec_args:
@@ -184,9 +183,15 @@ kexec_indirection_page:
 	PTR		0
 	.size		kexec_indirection_page, PTRSIZE
 
-relocate_new_kernel_end:
+kexec_argv_buf:
+	EXPORT(kexec_argv_buf)
+	.skip		KEXEC_COMMAND_LINE_SIZE
+	.size		kexec_argv_buf, KEXEC_COMMAND_LINE_SIZE
 
-relocate_new_kernel_size:
-	EXPORT(relocate_new_kernel_size)
-	PTR		relocate_new_kernel_end - relocate_new_kernel
-	.size		relocate_new_kernel_size, PTRSIZE
+kexec_argv:
+	EXPORT(kexec_argv)
+	.skip		KEXEC_ARGV_SIZE
+	.size		kexec_argv, KEXEC_ARGV_SIZE
+
+kexec_relocate_new_kernel_end:
+	EXPORT(kexec_relocate_new_kernel_end)

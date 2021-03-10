@@ -8,7 +8,7 @@
 
 enum nf_ct_ext_id {
 	NF_CT_EXT_HELPER,
-#if defined(CONFIG_NF_NAT) || defined(CONFIG_NF_NAT_MODULE)
+#if IS_ENABLED(CONFIG_NF_NAT)
 	NF_CT_EXT_NAT,
 #endif
 	NF_CT_EXT_SEQADJ,
@@ -28,6 +28,9 @@ enum nf_ct_ext_id {
 #if IS_ENABLED(CONFIG_NETFILTER_SYNPROXY)
 	NF_CT_EXT_SYNPROXY,
 #endif
+#if IS_ENABLED(CONFIG_NF_CONNTRACK_RTCACHE)
+	NF_CT_EXT_RTCACHE,
+#endif
 	NF_CT_EXT_NUM,
 };
 
@@ -40,6 +43,7 @@ enum nf_ct_ext_id {
 #define NF_CT_EXT_TIMEOUT_TYPE struct nf_conn_timeout
 #define NF_CT_EXT_LABELS_TYPE struct nf_conn_labels
 #define NF_CT_EXT_SYNPROXY_TYPE struct nf_conn_synproxy
+#define NF_CT_EXT_RTCACHE_TYPE struct nf_conn_rtcache
 
 /* Extensions: optional stuff which isn't permanently in struct. */
 struct nf_ct_ext {

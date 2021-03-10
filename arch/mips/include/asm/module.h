@@ -12,6 +12,11 @@ struct mod_arch_specific {
 	const struct exception_table_entry *dbe_start;
 	const struct exception_table_entry *dbe_end;
 	struct mips_hi16 *r_mips_hi16_list;
+
+	void *phys_plt_tbl;
+	void *virt_plt_tbl;
+	unsigned int phys_plt_offset;
+	unsigned int virt_plt_offset;
 };
 
 typedef uint8_t Elf64_Byte;		/* Type for a 8-bit quantity.  */
@@ -103,22 +108,16 @@ search_module_dbetables(unsigned long addr)
 #define MODULE_PROC_FAMILY "TX39XX "
 #elif defined CONFIG_CPU_VR41XX
 #define MODULE_PROC_FAMILY "VR41XX "
-#elif defined CONFIG_CPU_R4300
-#define MODULE_PROC_FAMILY "R4300 "
 #elif defined CONFIG_CPU_R4X00
 #define MODULE_PROC_FAMILY "R4X00 "
 #elif defined CONFIG_CPU_TX49XX
 #define MODULE_PROC_FAMILY "TX49XX "
 #elif defined CONFIG_CPU_R5000
 #define MODULE_PROC_FAMILY "R5000 "
-#elif defined CONFIG_CPU_R5432
-#define MODULE_PROC_FAMILY "R5432 "
 #elif defined CONFIG_CPU_R5500
 #define MODULE_PROC_FAMILY "R5500 "
 #elif defined CONFIG_CPU_NEVADA
 #define MODULE_PROC_FAMILY "NEVADA "
-#elif defined CONFIG_CPU_R8000
-#define MODULE_PROC_FAMILY "R8000 "
 #elif defined CONFIG_CPU_R10000
 #define MODULE_PROC_FAMILY "R10000 "
 #elif defined CONFIG_CPU_RM7000

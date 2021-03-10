@@ -10,7 +10,7 @@ such as network interfaces, crypto accelerator instances, L2 switches,
 etc.
 
 For an overview of the DPAA2 architecture and fsl-mc bus see:
-drivers/staging/fsl-mc/README.txt
+Documentation/networking/device_drivers/freescale/dpaa2/overview.rst
 
 As described in the above overview, all DPAA2 objects in a DPRC share the
 same hardware "isolation context" and a 10-bit value called an ICID
@@ -123,7 +123,7 @@ Example:
 
         smmu: iommu@5000000 {
                compatible = "arm,mmu-500";
-               #iommu-cells = <2>;
+               #iommu-cells = <1>;
                stream-match-mask = <0x7C00>;
                ...
         };

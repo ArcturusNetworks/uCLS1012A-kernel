@@ -113,7 +113,7 @@ static int enetc_map_tx_buffs(struct enetc_bdr *tx_ring, struct sk_buff *skb,
 			      int active_offloads)
 {
 	struct enetc_tx_swbd *tx_swbd;
-	struct skb_frag_struct *frag;
+	skb_frag_t *frag;
 	int len = skb_headlen(skb);
 	union enetc_tx_bd temp_bd;
 	union enetc_tx_bd *txbd;
@@ -145,7 +145,7 @@ static int enetc_map_tx_buffs(struct enetc_bdr *tx_ring, struct sk_buff *skb,
 	do_tstamp = (active_offloads & ENETC_F_TX_TSTAMP) &&
 		    (skb_shinfo(skb)->tx_flags & SKBTX_HW_TSTAMP);
 	tx_swbd->do_tstamp = do_tstamp;
-	tx_swbd->qbv_en = active_offloads & ENETC_F_QBV;
+	tx_swbd->qbv_en = !!(active_offloads & ENETC_F_QBV);
 	tx_swbd->check_wb = tx_swbd->do_tstamp || tx_swbd->qbv_en;
 
 	if (do_vlan || do_tstamp)
@@ -260,7 +260,7 @@ static irqreturn_t enetc_msix(int irq, void *data)
 	/* disable interrupts */
 	enetc_wr_reg_hot(v->rbier, 0);
 
-	for_each_set_bit(i, &v->tx_rings_map, v->count_tx_rings)
+	for_each_set_bit(i, &v->tx_rings_map, ENETC_MAX_NUM_TXQS)
 		enetc_wr_reg_hot(v->tbier_base + ENETC_BDR_OFF(i), 0);
 
 	read_unlock(&enetc_mdio_lock);
@@ -300,7 +300,7 @@ static int enetc_poll(struct napi_struct *napi, int budget)
 	/* enable interrupts */
 	enetc_wr_reg_hot(v->rbier, ENETC_RBIER_RXTIE);
 
-	for_each_set_bit(i, &v->tx_rings_map, v->count_tx_rings)
+	for_each_set_bit(i, &v->tx_rings_map, ENETC_MAX_NUM_TXQS)
 		enetc_wr_reg_hot(v->tbier_base + ENETC_BDR_OFF(i),
 				 ENETC_TBIER_TXTIE);
 
@@ -342,8 +342,8 @@ static void enetc_tstamp_tx(struct sk_buff *skb, u64 tstamp)
 
 static bool enetc_clean_tx_ring(struct enetc_bdr *tx_ring, int napi_budget)
 {
-	int tx_frm_cnt = 0, tx_byte_cnt = 0, tx_win_drop = 0;
 	struct net_device *ndev = tx_ring->ndev;
+	int tx_frm_cnt = 0, tx_byte_cnt = 0, tx_win_drop = 0;
 	struct enetc_tx_swbd *tx_swbd;
 	int i, bds_to_clean;
 	bool do_tstamp;
@@ -366,6 +366,7 @@ static bool enetc_clean_tx_ring(struct enetc_bdr *tx_ring, int napi_budget)
 			union enetc_tx_bd *txbd;
 
 			txbd = ENETC_TXBD(*tx_ring, i);
+
 			if (txbd->flags & ENETC_TXBD_FLAGS_W &&
 			    tx_swbd->do_tstamp) {
 				enetc_get_tx_tstamp(&priv->si->hw, txbd,
@@ -775,12 +776,17 @@ void enetc_get_si_caps(struct enetc_si *si)
 	si->num_rss = 0;
 	val = enetc_rd(hw, ENETC_SIPCAPR0);
 	if (val & ENETC_SIPCAPR0_RSS) {
-		val = enetc_rd(hw, ENETC_SIRSSCAPR);
-		si->num_rss = ENETC_SIRSSCAPR_GET_NUM_RSS(val);
+		u32 rss;
+
+		rss = enetc_rd(hw, ENETC_SIRSSCAPR);
+		si->num_rss = ENETC_SIRSSCAPR_GET_NUM_RSS(rss);
 	}
 
 	if (val & ENETC_SIPCAPR0_QBV)
 		si->hw_features |= ENETC_SI_F_QBV;
+
+	if (val & ENETC_SIPCAPR0_QBU)
+		si->hw_features |= ENETC_SI_F_QBU;
 }
 
 static int enetc_dma_alloc_bdr(struct enetc_bdr *r, size_t bd_size)
@@ -1350,7 +1356,11 @@ static void enetc_disable_interrupts(struct enetc_ndev_priv *priv)
 
 static void adjust_link(struct net_device *ndev)
 {
+	struct enetc_ndev_priv *priv = netdev_priv(ndev);
 	struct phy_device *phydev = ndev->phydev;
+
+	if (priv->active_offloads & ENETC_F_QBV)
+		enetc_sched_speed_set(ndev);
 
 	phy_print_status(phydev);
 }
@@ -1359,6 +1369,7 @@ static int enetc_phy_connect(struct net_device *ndev)
 {
 	struct enetc_ndev_priv *priv = netdev_priv(ndev);
 	struct phy_device *phydev;
+	struct ethtool_eee edata;
 
 	if (!priv->phy_node)
 		return 0; /* phy-less mode */
@@ -1371,6 +1382,10 @@ static int enetc_phy_connect(struct net_device *ndev)
 	}
 
 	phy_attached_info(phydev);
+
+	/* disable EEE autoneg, until ENETC driver supports it */
+	memset(&edata, 0, sizeof(struct ethtool_eee));
+	phy_ethtool_set_eee(phydev, &edata);
 
 	return 0;
 }
@@ -1463,17 +1478,13 @@ int enetc_close(struct net_device *ndev)
 	return 0;
 }
 
-int enetc_setup_tc(struct net_device *ndev, enum tc_setup_type type,
-		   void *type_data)
+int enetc_setup_tc_mqprio(struct net_device *ndev, void *type_data)
 {
 	struct enetc_ndev_priv *priv = netdev_priv(ndev);
 	struct tc_mqprio_qopt *mqprio = type_data;
 	struct enetc_bdr *tx_ring;
 	u8 num_tc;
 	int i;
-
-	if (type != TC_SETUP_MQPRIO)
-		return -EOPNOTSUPP;
 
 	mqprio->hw = TC_MQPRIO_HW_OFFLOAD_TCS;
 	num_tc = mqprio->num_tc;
@@ -1517,6 +1528,21 @@ int enetc_setup_tc(struct net_device *ndev, enum tc_setup_type type,
 		netdev_set_tc_queue(ndev, i, 1, i);
 
 	return 0;
+}
+
+int enetc_setup_tc(struct net_device *ndev, enum tc_setup_type type,
+		   void *type_data)
+{
+	switch (type) {
+	case TC_SETUP_QDISC_MQPRIO:
+		return enetc_setup_tc_mqprio(ndev, type_data);
+	case TC_SETUP_QDISC_TAPRIO:
+		return enetc_setup_tc_taprio(ndev, type_data);
+	case TC_SETUP_QDISC_CBS:
+		return enetc_setup_tc_cbs(ndev, type_data);
+	default:
+		return -EOPNOTSUPP;
+	}
 }
 
 struct net_device_stats *enetc_get_stats(struct net_device *ndev)
@@ -1635,7 +1661,10 @@ int enetc_ioctl(struct net_device *ndev, struct ifreq *rq, int cmd)
 	if (cmd == SIOCGHWTSTAMP)
 		return enetc_hwtstamp_get(ndev, rq);
 #endif
-	return -EINVAL;
+
+	if (!ndev->phydev)
+		return -EINVAL;
+	return phy_mii_ioctl(ndev->phydev, rq, cmd);
 }
 
 int enetc_alloc_msix(struct enetc_ndev_priv *priv)
@@ -1846,7 +1875,3 @@ void enetc_pci_remove(struct pci_dev *pdev)
 	pci_release_mem_regions(pdev);
 	pci_disable_device(pdev);
 }
-
-/* Lock for MDIO access errata on LS1028A */
-DEFINE_RWLOCK(enetc_mdio_lock);
-EXPORT_SYMBOL_GPL(enetc_mdio_lock);

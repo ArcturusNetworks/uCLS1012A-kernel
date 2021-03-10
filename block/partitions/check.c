@@ -33,6 +33,7 @@
 #include "ibm.h"
 #include "ultrix.h"
 #include "efi.h"
+#include "fit.h"
 #include "karma.h"
 #include "sysv68.h"
 #include "cmdline.h"
@@ -72,6 +73,9 @@ static int (*check_part[])(struct parsed_partitions *) = {
 #endif
 #ifdef CONFIG_EFI_PARTITION
 	efi_partition,		/* this must come before msdos */
+#endif
+#ifdef CONFIG_FIT_PARTITION
+	fit_partition,
 #endif
 #ifdef CONFIG_SGI_PARTITION
 	sgi_partition,
@@ -122,7 +126,7 @@ static struct parsed_partitions *allocate_partitions(struct gendisk *hd)
 		return NULL;
 
 	nr = disk_max_parts(hd);
-	state->parts = vzalloc(nr * sizeof(state->parts[0]));
+	state->parts = vzalloc(array_size(nr, sizeof(state->parts[0])));
 	if (!state->parts) {
 		kfree(state);
 		return NULL;

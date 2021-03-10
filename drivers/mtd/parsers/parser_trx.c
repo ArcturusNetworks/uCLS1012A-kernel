@@ -1,12 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * Parser for TRX format partitions
  *
  * Copyright (C) 2012 - 2017 Rafał Miłecki <rafal@milecki.pl>
- *
- * This program is free software; you can redistribute it and/or modify
- * it under the terms of the GNU General Public License version 2 as
- * published by the Free Software Foundation.
- *
  */
 
 #include <linux/module.h>
@@ -28,6 +24,33 @@ struct trx_header {
 	uint16_t version;
 	uint32_t offset[3];
 } __packed;
+
+/*
+ * Calculate real end offset (address) for a given amount of data. It checks
+ * all blocks skipping bad ones.
+ */
+static size_t parser_trx_real_offset(struct mtd_info *mtd, size_t bytes)
+{
+	size_t real_offset = 0;
+
+	if (mtd_block_isbad(mtd, real_offset))
+		pr_warn("Base offset shouldn't be at bad block");
+
+	while (bytes >= mtd->erasesize) {
+		bytes -= mtd->erasesize;
+		real_offset += mtd->erasesize;
+		while (mtd_block_isbad(mtd, real_offset)) {
+			real_offset += mtd->erasesize;
+
+			if (real_offset >= mtd->size)
+				return real_offset - mtd->erasesize;
+		}
+	}
+
+	real_offset += bytes;
+
+	return real_offset;
+}
 
 static const char *parser_trx_data_part_name(struct mtd_info *master,
 					     size_t offset)
@@ -62,7 +85,7 @@ static int parser_trx_parse(struct mtd_info *mtd,
 	uint8_t curr_part = 0, i = 0;
 	int err;
 
-	parts = kzalloc(sizeof(struct mtd_partition) * TRX_PARSER_MAX_PARTS,
+	parts = kcalloc(TRX_PARSER_MAX_PARTS, sizeof(struct mtd_partition),
 			GFP_KERNEL);
 	if (!parts)
 		return -ENOMEM;
@@ -83,21 +106,21 @@ static int parser_trx_parse(struct mtd_info *mtd,
 	if (trx.offset[2]) {
 		part = &parts[curr_part++];
 		part->name = "loader";
-		part->offset = trx.offset[i];
+		part->offset = parser_trx_real_offset(mtd, trx.offset[i]);
 		i++;
 	}
 
 	if (trx.offset[i]) {
 		part = &parts[curr_part++];
 		part->name = "linux";
-		part->offset = trx.offset[i];
+		part->offset = parser_trx_real_offset(mtd, trx.offset[i]);
 		i++;
 	}
 
 	if (trx.offset[i]) {
 		part = &parts[curr_part++];
-		part->name = parser_trx_data_part_name(mtd, trx.offset[i]);
-		part->offset = trx.offset[i];
+		part->offset = parser_trx_real_offset(mtd, trx.offset[i]);
+		part->name = parser_trx_data_part_name(mtd, part->offset);
 		i++;
 	}
 
@@ -116,9 +139,16 @@ static int parser_trx_parse(struct mtd_info *mtd,
 	return i;
 };
 
+static const struct of_device_id mtd_parser_trx_of_match_table[] = {
+	{ .compatible = "brcm,trx" },
+	{},
+};
+MODULE_DEVICE_TABLE(of, mtd_parser_trx_of_match_table);
+
 static struct mtd_part_parser mtd_parser_trx = {
 	.parse_fn = parser_trx_parse,
 	.name = "trx",
+	.of_match_table = mtd_parser_trx_of_match_table,
 };
 module_mtd_part_parser(mtd_parser_trx);
 

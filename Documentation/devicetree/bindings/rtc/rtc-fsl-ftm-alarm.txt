@@ -10,6 +10,7 @@ Required properties:
 	       "fsl,ls1046a-ftm-alarm"
 	       "fsl,ls1088a-ftm-alarm"
 	       "fsl,ls208xa-ftm-alarm"
+	       "fsl,lx2160a-ftm-alarm"
 - reg : Specifies base physical address and size of the register sets for the
   FlexTimer Module.
 - interrupts : Should be the FlexTimer Module interrupt.
@@ -21,12 +22,6 @@ Optional properties:
   The default endian mode is little-endian.
 
 Example:
-aliases {
-	...
-	rtc1 = ftm_alarm0; // Use FlexTimer Module as /dev/rtc1
-	...
-};
-
 rcpm: rcpm@1e34040 {
 	compatible = "fsl,ls1088a-rcpm", "fsl,qoriq-rcpm-2.1+";
 	reg = <0x0 0x1e34040 0x0 0x18>;

@@ -127,7 +127,7 @@ fman0: fman@1a00000 {
 };
 
 ptp_timer0: ptp-timer@1afe000 {
-	compatible = "fsl,fman-ptp-timer";
+	compatible = "fsl,fman-ptp-timer", "fsl,fman-rtc";
 	reg = <0x0 0x1afe000 0x0 0x1000>;
 	interrupts = <GIC_SPI 44 IRQ_TYPE_LEVEL_HIGH>;
 	clocks = <&clockgen 3 0>;
