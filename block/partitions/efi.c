@@ -679,7 +679,7 @@ int efi_partition(struct parsed_partitions *state)
 {
 	gpt_header *gpt = NULL;
 	gpt_entry *ptes = NULL;
-	u32 i, slot = 0;
+	u32 i;
 	unsigned ssz = bdev_logical_block_size(state->bdev) / 512;
 
 	if (!find_valid_gpt(state, &gpt, &ptes) || !gpt || !ptes) {
@@ -698,18 +698,16 @@ int efi_partition(struct parsed_partitions *state)
 		u64 size = le64_to_cpu(ptes[i].ending_lba) -
 			   le64_to_cpu(ptes[i].starting_lba) + 1ULL;
 
-		if (!is_pte_valid(&ptes[i], last_lba(state->bdev))) {
-			++slot;
+		if (!is_pte_valid(&ptes[i], last_lba(state->bdev)))
 			continue;
-		}
 
-		put_partition(state, ++slot, start * ssz, size * ssz);
+		put_partition(state, i+1, start * ssz, size * ssz);
 
 		/* If this is a RAID volume, tell md */
 		if (!efi_guidcmp(ptes[i].partition_type_guid, PARTITION_LINUX_RAID_GUID))
-			state->parts[slot].flags = ADDPART_FLAG_RAID;
+			state->parts[i + 1].flags = ADDPART_FLAG_RAID;
 
-		info = &state->parts[slot].info;
+		info = &state->parts[i + 1].info;
 		efi_guid_to_str(&ptes[i].unique_partition_guid, info->uuid);
 
 		/* Naively convert UTF16-LE to 7 bits. */
@@ -723,12 +721,7 @@ int efi_partition(struct parsed_partitions *state)
 			info->volname[label_count] = c;
 			label_count++;
 		}
-		state->parts[slot].has_info = true;
-#ifdef CONFIG_FIT_PARTITION
-		/* If this is a U-Boot FIT volume it may have subpartitions */
-		if (!efi_guidcmp(ptes[i].partition_type_guid, PARTITION_LINUX_FIT_GUID))
-			(void) parse_fit_partitions(state, start * ssz, size * ssz, &slot, 1);
-#endif
+		state->parts[i + 1].has_info = true;
 	}
 	kfree(ptes);
 	kfree(gpt);

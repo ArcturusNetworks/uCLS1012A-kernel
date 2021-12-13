@@ -10,11 +10,11 @@
 #define RESET_BY_GPIO 1
 #define ENABLE_EXTERNAL_WATCHDOG_PING 0
 
-#include "arc-ls1012a.dtsi"
+#include "ucls1012a.dtsi"
 
 / {
 	model = "uCLS1012A-SOM Board";
-	compatible = "fsl,ls1012a-frdm", "fsl,ls1012a";
+	compatible = "fsl,ls1012a";
 
 	aliases {
 		ethernet0 = &pfe_mac0;
@@ -114,7 +114,7 @@
 };
 
 &pcie {
-	status = "okay";
+	status = "disabled";
 };
 
 &duart0 {

@@ -1020,6 +1020,7 @@ static const struct regmap_config cx2070x_regmap = {
 	.num_reg_defaults = ARRAY_SIZE(cx2070x_reg_defaults),
 };
 
+#if 0
 /*
  * Write all the default values from cx2070x_reg_defaults[] array into the
  * cx2070x registers, to make sure we always start with the sane registers
@@ -1048,6 +1049,7 @@ static void cx2070x_fill_defaults(struct i2c_client *client)
 		udelay(1);
 	}
 }
+#endif
 
 static int cx2070x_i2c_probe(struct i2c_client *client,
 			     const struct i2c_device_id *id)

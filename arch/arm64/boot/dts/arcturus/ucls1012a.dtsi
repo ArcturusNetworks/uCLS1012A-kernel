@@ -99,11 +99,7 @@
 	};
 
 	reboot {
-#if RESET_BY_GPIO
-		compatible = "syscon-reboot", "gpio-restart";
-#else
 		compatible = "syscon-reboot";
-#endif
 		regmap = <&dcfg>;
 		offset = <0xb0>;
 		mask = <0x02>;
@@ -157,6 +153,7 @@
 			ranges = <0x0 0x00 0x1700000 0x100000>;
 			reg = <0x00 0x1700000 0x0 0x100000>;
 			interrupts = <GIC_SPI 75 IRQ_TYPE_LEVEL_HIGH>;
+			dma-coherent;
 
 			sec_jr0: jr@10000 {
 				compatible = "fsl,sec-v5.4-job-ring",
@@ -395,7 +392,7 @@
 			#address-cells = <1>;
 			#size-cells = <0>;
 			reg = <0x0 0x1550000 0x0 0x10000>,
-				<0x0 0x40000000 0x0 0x10000000>;
+				<0x0 0x40000000 0x0 0x8000000>;
 			reg-names = "QuadSPI", "QuadSPI-memory";
 			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
 			clock-names = "qspi_en", "qspi";
@@ -519,14 +516,15 @@
 		ranges;
 
 		pfe_reserved: packetbuffer@83400000 {
-			reg = <0 0x83400000 0 0xc00000>;
+			reg = <0 0x83400000 0 0x1000000>;
+			no-map;
 		};
 	};
 
 	pfe: pfe@4000000 {
 		compatible = "fsl,pfe";
-		reg =   <0x0 0x04000000 0x0 0xc00000>,	/* AXI 16M */
-			<0x0 0x83400000 0x0 0xc00000>;  /* PFE DDR 12M */
+		reg =   <0x0 0x04000000 0x0 0xc00000>,	/* AXI 12M */
+			<0x0 0x83400000 0x0 0x1000000>;  /* PFE DDR 16M */
 		reg-names = "pfe", "pfe-ddr";
 		fsl,pfe-num-interfaces = <0x2>;
 		interrupts = <0 172 0x4>,    /* HIF interrupt */
@@ -535,7 +533,6 @@
 		interrupt-names = "pfe_hif", "pfe_hif_nocpy", "pfe_wol";
 		memory-region = <&pfe_reserved>;
 		fsl,pfe-scfg = <&scfg 0>;
-		fsl,rcpm-wakeup = <&rcpm 0xf0000020>;
 		clocks = <&clockgen 4 0>;
 		clock-names = "pfe";
 

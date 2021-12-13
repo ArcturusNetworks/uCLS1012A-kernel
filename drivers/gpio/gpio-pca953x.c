@@ -20,7 +20,6 @@
 #include <linux/platform_data/pca953x.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
-#include <linux/reset.h>
 #include <linux/slab.h>
 
 #include <asm/unaligned.h>
@@ -889,7 +888,9 @@ static int pca953x_irq_setup(struct pca953x_chip *chip,
 	for (i = 0; i < NBANK(chip); i++)
 		chip->irq_stat[i] &= reg_direction[i];
 	mutex_init(&chip->irq_lock);
-
+	/* gpio-mpc8xxx driver of Layerscape gpio support only edge interrupts.
+	 * irqd_get_trigger_type(d) will fix the problem.
+	 */
 	d = irq_get_irq_data(client->irq);
 	if (d)
 		irqflags |= irqd_get_trigger_type(d);
@@ -1033,21 +1034,17 @@ static int pca953x_probe(struct i2c_client *client,
 
 	chip->client = client;
 
-	reg = devm_regulator_get_optional(&client->dev, "vcc");
+	reg = devm_regulator_get(&client->dev, "vcc");
 	if (IS_ERR(reg)) {
 		ret = PTR_ERR(reg);
-		if (ret == -EPROBE_DEFER)
-			return ret;
-		dev_dbg(&client->dev, "reg get err: %d\n", ret);
-		reg = NULL;
+		if (ret != -EPROBE_DEFER)
+			dev_err(&client->dev, "reg get err: %d\n", ret);
+		return ret;
 	}
-
-	if (reg) {
-		ret = regulator_enable(reg);
-		if (ret) {
-			dev_err(&client->dev, "reg en err: %d\n", ret);
-			return ret;
-		}
+	ret = regulator_enable(reg);
+	if (ret) {
+		dev_err(&client->dev, "reg en err: %d\n", ret);
+		return ret;
 	}
 	chip->regulator = reg;
 
@@ -1105,10 +1102,6 @@ static int pca953x_probe(struct i2c_client *client,
 	lockdep_set_subclass(&chip->i2c_lock,
 			     i2c_adapter_depth(client->adapter));
 
-	ret = device_reset(&client->dev);
-	if (ret == -EPROBE_DEFER)
-		return -EPROBE_DEFER;
-
 	/* initialize cached registers from their original values.
 	 * we can't share this chip with another i2c master.
 	 */
@@ -1141,8 +1134,7 @@ static int pca953x_probe(struct i2c_client *client,
 	return 0;
 
 err_exit:
-	if (chip->regulator)
-		regulator_disable(chip->regulator);
+	regulator_disable(chip->regulator);
 	return ret;
 }
 
@@ -1161,8 +1153,7 @@ static int pca953x_remove(struct i2c_client *client)
 		ret = 0;
 	}
 
-	if (chip->regulator)
-		regulator_disable(chip->regulator);
+	regulator_disable(chip->regulator);
 
 	return ret;
 }
@@ -1223,8 +1214,7 @@ static int pca953x_suspend(struct device *dev)
 	if (atomic_read(&chip->wakeup_path))
 		device_set_wakeup_path(dev);
 	else
-		if (chip->regulator)
-			regulator_disable(chip->regulator);
+		regulator_disable(chip->regulator);
 
 	return 0;
 }
@@ -1234,20 +1224,15 @@ static int pca953x_resume(struct device *dev)
 	struct pca953x_chip *chip = dev_get_drvdata(dev);
 	int ret;
 
-	regcache_cache_only(chip->regmap, false);
-
 	if (!atomic_read(&chip->wakeup_path)) {
-		if (chip->regulator) {
-			ret = regulator_enable(chip->regulator);
-			if (ret) {
-				dev_err(dev, "Failed to enable regulator: %d\n", ret);
-				return 0;
-			}
-		} else {
+		ret = regulator_enable(chip->regulator);
+		if (ret) {
+			dev_err(dev, "Failed to enable regulator: %d\n", ret);
 			return 0;
 		}
 	}
 
+	regcache_cache_only(chip->regmap, false);
 	regcache_mark_dirty(chip->regmap);
 	ret = pca953x_regcache_sync(dev);
 	if (ret)
@@ -1303,6 +1288,7 @@ static const struct of_device_id pca953x_dt_ids[] = {
 
 	{ .compatible = "onnn,cat9554", .data = OF_953X( 8, PCA_INT), },
 	{ .compatible = "onnn,pca9654", .data = OF_953X( 8, PCA_INT), },
+	{ .compatible = "onnn,pca9655", .data = OF_953X(16, PCA_INT), },
 
 	{ .compatible = "exar,xra1202", .data = OF_953X( 8, 0), },
 	{ }

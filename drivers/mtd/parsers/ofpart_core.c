@@ -17,13 +17,18 @@
 #include <linux/mtd/partitions.h>
 
 #include "ofpart_bcm4908.h"
+#include "ofpart_linksys_ns.h"
 
 struct fixed_partitions_quirks {
 	int (*post_parse)(struct mtd_info *mtd, struct mtd_partition *parts, int nr_parts);
 };
 
-struct fixed_partitions_quirks bcm4908_partitions_quirks = {
+static struct fixed_partitions_quirks bcm4908_partitions_quirks = {
 	.post_parse = bcm4908_partitions_post_parse,
+};
+
+static struct fixed_partitions_quirks linksys_ns_partitions_quirks = {
+	.post_parse = linksys_ns_partitions_post_parse,
 };
 
 static const struct of_device_id parse_ofpart_match_table[];
@@ -52,17 +57,21 @@ static int parse_fixed_partitions(struct mtd_info *master,
 	if (!mtd_node)
 		return 0;
 
-	ofpart_node = of_get_child_by_name(mtd_node, "partitions");
-	if (!ofpart_node) {
-		/*
-		 * We might get here even when ofpart isn't used at all (e.g.,
-		 * when using another parser), so don't be louder than
-		 * KERN_DEBUG
-		 */
-		pr_debug("%s: 'partitions' subnode not found on %pOF. Trying to parse direct subnodes as partitions.\n",
-			 master->name, mtd_node);
+	if (!mtd_is_partition(master)) { /* Master */
+		ofpart_node = of_get_child_by_name(mtd_node, "partitions");
+		if (!ofpart_node) {
+			/*
+			 * We might get here even when ofpart isn't used at all (e.g.,
+			 * when using another parser), so don't be louder than
+			 * KERN_DEBUG
+			 */
+			pr_debug("%s: 'partitions' subnode not found on %pOF. Trying to parse direct subnodes as partitions.\n",
+				master->name, mtd_node);
+			ofpart_node = mtd_node;
+			dedicated = false;
+		}
+	} else { /* Partition */
 		ofpart_node = mtd_node;
-		dedicated = false;
 	}
 
 	of_id = of_match_node(parse_ofpart_match_table, ofpart_node);
@@ -162,6 +171,7 @@ static const struct of_device_id parse_ofpart_match_table[] = {
 	{ .compatible = "fixed-partitions" },
 	/* Customized */
 	{ .compatible = "brcm,bcm4908-partitions", .data = &bcm4908_partitions_quirks, },
+	{ .compatible = "linksys,ns-partitions", .data = &linksys_ns_partitions_quirks, },
 	{},
 };
 MODULE_DEVICE_TABLE(of, parse_ofpart_match_table);
