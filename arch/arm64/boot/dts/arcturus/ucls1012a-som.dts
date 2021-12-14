@@ -14,7 +14,7 @@
 
 / {
 	model = "uCLS1012A-SOM Board";
-	compatible = "fsl,ls1012a";
+	compatible = "arc,ucls1012a-som", "fsl,ls1012a";
 
 	aliases {
 		ethernet0 = &pfe_mac0;
@@ -105,11 +105,108 @@
 	leds {
 		compatible = "gpio-leds";
 		status = "okay";
+#if 0
+		led1 {
+			label = "OUT1";
+			gpios = <&gpio2 8 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		led2 {
+			label = "OUT2";
+			gpios = <&gpio2 9 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+		led3 {
+			label = "OUT3";
+			gpios = <&gpio2 10 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		led4 {
+			label = "OUT4";
+			gpios = <&gpio2 11 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+		led5 {
+			label = "OUT5";
+			gpios = <&gpio2 12 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		led6 {
+			label = "OUT6";
+			gpios = <&gpio2 13 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+		led7 {
+			label = "OUT7";
+			gpios = <&gpio2 14 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		led8 {
+			label = "OUT8";
+			gpios = <&gpio2 15 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+		amp_en {
+			label = "AMP_EN";
+			gpios = <&gpio3 0 GPIO_ACTIVE_HIGH>;
+			default-state = "off";
+		};
+#endif
 	};
 
 	gpio-keys {
 		compatible = "gpio-keys";
 		status = "okay";
+#if 0
+		button1 {
+			label = "IN1";
+			linux,code = <432>;
+			gpios = <&gpio2 0 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button2 {
+			label = "IN2";
+			linux,code = <433>;
+			gpios = <&gpio2 1 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button3 {
+			label = "IN3";
+			linux,code = <434>;
+			gpios = <&gpio2 2 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button4 {
+			label = "IN4";
+			linux,code = <435>;
+			gpios = <&gpio2 3 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button5 {
+			label = "IN5";
+			linux,code = <436>;
+			gpios = <&gpio2 4 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button6 {
+			label = "IN6";
+			linux,code = <437>;
+			gpios = <&gpio2 5 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button7 {
+			label = "IN7";
+			linux,code = <438>;
+			gpios = <&gpio2 6 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button8 {
+			label = "IN8";
+			linux,code = <439>;
+			gpios = <&gpio2 7 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+#endif
 	};
 };
 
@@ -193,9 +290,15 @@
 		vcc-supply = <&reg_3p3v>;
 	};
 
-	eeprom@50 {
-		compatible = "at,24c1024";
-		reg = <0x50>;
+	rtc51: rtc@51 {
+		compatible = "nxp,pcf85063";
+		reg = <0x51>;
+		status = "ok";
+	};
+
+	eeprom@52 {
+		compatible = "at,24c512";
+		reg = <0x52>;
 	};
 };
 
@@ -211,6 +314,31 @@
 		m25p,fast-read;
 		spi-max-frequency = <20000000>;
 		reg = <0>;
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition0 {
+				label = "0";
+				reg = <0x00A00000 0x00800000>;
+			};
+			partition1 {
+				label = "1";
+				reg = <0x01200000 0x06600000>;
+			};
+			partition2 {
+				label = "2";
+				reg = <0x07800000 0x00080000>;
+			};
+			partitionB {
+				label = "B";
+				reg = <0x00100000 0x00100000>;
+			};
+			partitionE {
+				label = "E";
+				reg = <0x00200000 0x00040000>;
+			};
+		};
 	};
 };
 
@@ -263,6 +391,39 @@
 &dspi {
 	bus-num = <0>;
 	status = "okay";
+/***
+	flash@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "w25q32dw", "jedec,spi-nor";
+		reg = <2>;
+		spi-max-frequency = <10000000>;
+	};
+
+	spidev@0 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "spidev";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+		fsl,spi-cs-sck-delay = <100>;
+		fsl,spi-sck-cs-delay = <100>;
+	};
+***/
+/*** Disabled until RCW will be changed
+	mmc-spi@1 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "mmc-spi-slot";
+		reg = <1>;
+		spi-max-frequency = <5000000>;
+		voltage-ranges = <3200 3400>;
+		spi-rx-bus-width = <1>;
+		spi-tx-bus-width = <1>;
+		disable-wp;
+		disable-cd;
+	};
+***/
 };
 
 &esdhc0 {
