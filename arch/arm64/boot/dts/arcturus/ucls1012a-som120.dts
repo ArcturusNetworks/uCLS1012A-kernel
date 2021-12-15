@@ -14,7 +14,7 @@
 
 / {
 	model = "uCLS1012A-SOM120 Board";
-	compatible = "fsl,ls1012a";
+	compatible = "arc,ucls1012a-som120","fsl,ls1012a";
 
 	aliases {
 		ethernet0 = &pfe_mac0;
@@ -324,15 +324,11 @@
 			};
 			partition1 {
 				label = "1";
-				reg = <0x01200000 0x06580000>;
+				reg = <0x01200000 0x02e00000>;
 			};
 			partition2 {
 				label = "2";
-				reg = <0x07780000 0x00080000>;
-			};
-			partition3 {
-				label = "3";
-				reg = <0x07800000 0x00800000>;
+				reg = <0x04000000 0x04000000>;
 			};
 			partitionB {
 				label = "B";
