@@ -314,6 +314,7 @@
 		m25p,fast-read;
 		spi-max-frequency = <20000000>;
 		reg = <0>;
+#if 0
 		partitions {
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
@@ -339,6 +340,7 @@
 				reg = <0x00200000 0x00040000>;
 			};
 		};
+#endif
 	};
 };
 
