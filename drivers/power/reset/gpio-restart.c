@@ -54,13 +54,7 @@ static int gpio_restart_probe(struct platform_device *pdev)
 	bool open_source = false;
 	u32 property;
 	int ret;
-#ifdef CONFIG_FSL_GUTS
-	extern u32 fsl_guts_get_svr(void);
 
-	u32 svr = fsl_guts_get_svr();
-	if ( svr != 0x87040010)
-		return -ENODEV;
-#endif
 	gpio_restart = devm_kzalloc(&pdev->dev, sizeof(*gpio_restart),
 			GFP_KERNEL);
 	if (!gpio_restart)

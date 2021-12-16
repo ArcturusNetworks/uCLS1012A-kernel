@@ -45,13 +45,7 @@ static int syscon_reboot_probe(struct platform_device *pdev)
 	struct device *dev = &pdev->dev;
 	int mask_err, value_err;
 	int err;
-#ifdef CONFIG_FSL_GUTS
-	extern u32 fsl_guts_get_svr(void);
 
-	u32 svr = fsl_guts_get_svr();
-	if ( svr == 0x87040010)
-		return -ENODEV;
-#endif
 	ctx = devm_kzalloc(&pdev->dev, sizeof(*ctx), GFP_KERNEL);
 	if (!ctx)
 		return -ENOMEM;
