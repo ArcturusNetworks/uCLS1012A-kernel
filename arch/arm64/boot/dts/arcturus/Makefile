@@ -2,6 +2,7 @@
 
 dtb-$(CONFIG_ARCH_LAYERSCAPE) += ucls1012a-som.dtb
 dtb-$(CONFIG_ARCH_LAYERSCAPE) += ucls1012a-som120.dtb
+dtb-$(CONFIG_ARCH_LAYERSCAPE) += ucls1012a-som120-sitecontroller.dtb
 
 always		:= $(dtb-y)
 subdir-y	:= $(dts-dirs)

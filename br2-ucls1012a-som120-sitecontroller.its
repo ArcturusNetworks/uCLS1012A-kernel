@@ -25,7 +25,7 @@
 		};
 		fdt {
 			description = "Flattened Device Tree blob";
-			data = /incbin/("ucls1012a-som.dtb");
+			data = /incbin/("ucls1012a-som120-sitecontroller.dtb");
 			type = "flat_dt";
 			arch = "arm64";
 			compression = "none";
