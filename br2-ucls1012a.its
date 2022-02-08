@@ -15,17 +15,17 @@
 	images {
 		kernel {
 			description = "ARM64 Linux kernel";
-			data = /incbin/("Image.gz");
+			data = /incbin/("Image");
 			type = "kernel";
 			arch = "arm64";
 			os = "linux";
-			compression = "gzip";
+			compression = "none";
 			load = <0x80080000>;
 			entry = <0x80080000>;
 		};
 		fdt {
 			description = "Flattened Device Tree blob";
-			data = /incbin/("ucls1012a-som.dtb");
+			data = /incbin/("arc-ucls1012a.dtb");
 			type = "flat_dt";
 			arch = "arm64";
 			compression = "none";
