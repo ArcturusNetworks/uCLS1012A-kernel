@@ -20,6 +20,7 @@
 
 extern bool pfe_use_old_dts_phy;
 struct ls1012a_pfe_platform_data pfe_platform_data;
+int NUM_GEMAC_SUPPORT = 1;
 
 static int pfe_get_gemac_if_properties(struct device_node *gem,
 				       int port,
@@ -30,14 +31,13 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 	int phy_id = 0;
 	const u32 *addr;
 	const u8 *mac_addr;
-	int ret;
+	int err;
 
 	addr = of_get_property(gem, "reg", &size);
 	if (addr)
 		port = be32_to_cpup(addr);
 	else
 		goto err;
-
 
 	pdata->ls1012a_eth_pdata[port].gem_id = port;
 
@@ -86,12 +86,10 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 	}
 
 process_phynode:
-	ret = of_get_phy_mode(gem);
-	if (ret < 0)
+	err = of_get_phy_mode(gem, &pdata->ls1012a_eth_pdata[port].mii_config);
+	if (err)
 		pr_err("%s:%d Incorrect Phy mode....\n", __func__,
 		       __LINE__);
-	else
-		pdata->ls1012a_eth_pdata[port].mii_config = ret;
 
 	addr = of_get_property(gem, "fsl,mdio-mux-val", &size);
 	if (!addr) {
@@ -211,6 +209,7 @@ static int pfe_platform_probe(struct platform_device *pdev)
 		rc = -ENXIO;
 		goto err_prop;
 	}
+	NUM_GEMAC_SUPPORT = interface_count;
 
 	pfe_platform_data.ls1012a_mdio_pdata[0].phy_mask = 0xffffffff;
 

@@ -319,6 +319,12 @@ static int __uac_clock_find_source(struct snd_usb_audio *chip,
 					      selector->baCSourceID[ret - 1],
 					      visited, validate);
 		if (ret > 0) {
+			/*
+			 * For Samsung USBC Headset (AKG), setting clock selector again
+			 * will result in incorrect default clock setting problems
+			 */
+			if (chip->usb_id == USB_ID(0x04e8, 0xa051))
+				return ret;
 			err = uac_clock_selector_set_val(chip, entity_id, cur);
 			if (err < 0)
 				return err;
@@ -686,7 +692,7 @@ int snd_usb_init_sample_rate(struct snd_usb_audio *chip, int iface,
 			else
 				return 0;
 		}
-	/* fall through */
+		fallthrough;
 	case UAC_VERSION_2:
 		return set_sample_rate_v2v3(chip, iface, alts, fmt, rate);
 	}

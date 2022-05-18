@@ -66,14 +66,22 @@
 			>;
 			clock-latency = <61036>; /* two CLK32 periods */
 			#cooling-cells = <2>;
-			clocks = <&clks IMX6SL_CLK_ARM>, <&clks IMX6SL_CLK_PLL2_PFD2>,
-					<&clks IMX6SL_CLK_STEP>, <&clks IMX6SL_CLK_PLL1_SW>,
-					<&clks IMX6SL_CLK_PLL1_SYS>;
+			clocks = <&clks IMX6SL_CLK_ARM>,
+				 <&clks IMX6SL_CLK_PLL2_PFD2>,
+				 <&clks IMX6SL_CLK_STEP>,
+				 <&clks IMX6SL_CLK_PLL1_SW>,
+				 <&clks IMX6SL_CLK_PLL1_SYS>,
+				 <&clks IMX6SL_CLK_PLL1>,
+				 <&clks IMX6SL_PLL1_BYPASS>,
+				 <&clks IMX6SL_PLL1_BYPASS_SRC>;
 			clock-names = "arm", "pll2_pfd2_396m", "step",
-				      "pll1_sw", "pll1_sys";
+				      "pll1_sw", "pll1_sys", "pll1", "pll1_bypass",
+				      "pll1_bypass_src";
 			arm-supply = <&reg_arm>;
 			pu-supply = <&reg_pu>;
 			soc-supply = <&reg_soc>;
+			nvmem-cells = <&cpu_speed_grade>;
+			nvmem-cell-names = "speed_grade";
 		};
 	};
 
@@ -89,15 +97,6 @@
 			#clock-cells = <0>;
 			clock-frequency = <24000000>;
 		};
-	};
-
-	tempmon: tempmon {
-		compatible = "fsl,imx6q-tempmon";
-		interrupts = <0 49 IRQ_TYPE_LEVEL_HIGH>;
-		interrupt-parent = <&gpc>;
-		fsl,tempmon = <&anatop>;
-		fsl,tempmon-data = <&ocotp>;
-		clocks = <&clks IMX6SL_CLK_PLL3_USB_OTG>;
 	};
 
 	pmu {
@@ -118,10 +117,49 @@
 		interrupt-parent = <&gpc>;
 		ranges;
 
-		ocram: sram@900000 {
-			compatible = "mmio-sram";
-			reg = <0x00900000 0x20000>;
+		busfreq { /* BUSFREQ */
+			compatible = "fsl,imx_busfreq";
+			clocks = <&clks IMX6SL_CLK_PLL2_BUS>, <&clks IMX6SL_CLK_PLL2_PFD2>,
+					<&clks IMX6SL_CLK_PLL2_198M>, <&clks IMX6SL_CLK_ARM>,
+					<&clks IMX6SL_CLK_PLL3_USB_OTG>, <&clks IMX6SL_CLK_PERIPH>,
+					<&clks IMX6SL_CLK_PRE_PERIPH_SEL>, <&clks IMX6SL_CLK_PERIPH_CLK2_PODF>,
+					<&clks IMX6SL_CLK_PERIPH_CLK2_SEL>, <&clks IMX6SL_CLK_OSC>,
+					<&clks IMX6SL_CLK_PLL1_SYS>, <&clks IMX6SL_CLK_PERIPH2>,
+					<&clks IMX6SL_CLK_AHB>, <&clks IMX6SL_CLK_OCRAM_PODF>,
+					<&clks IMX6SL_CLK_PLL1_SW>, <&clks IMX6SL_CLK_PRE_PERIPH2_SEL>,
+					<&clks IMX6SL_CLK_PERIPH2_CLK2_SEL>, <&clks IMX6SL_CLK_PERIPH2_CLK2_PODF>,
+					<&clks IMX6SL_CLK_STEP>, <&clks IMX6SL_PLL2_BYPASS_SRC>, <&clks IMX6SL_PLL2_BYPASS>,
+					<&clks IMX6SL_CLK_PLL2>, <&clks IMX6SL_CLK_PLL1>, <&clks IMX6SL_PLL1_BYPASS>,
+					<&clks IMX6SL_PLL1_BYPASS_SRC>;
+			clock-names = "pll2_bus", "pll2_pfd2_396m", "pll2_198m", "arm", "pll3_usb_otg", "periph",
+				"periph_pre", "periph_clk2", "periph_clk2_sel", "osc", "pll1_sys", "periph2", "ahb",
+				"ocram", "pll1_sw", "periph2_pre", "periph2_clk2_sel", "periph2_clk2", "step", "pll2_bypass_src",
+				"pll2_bypass", "pll2", "pll1", "pll1_bypass", "pll1_bypass_src";
+			fsl,max_ddr_freq = <400000000>;
+		};
+
+		ocrams: sram@900000 {
+			compatible = "fsl,lpm-sram";
+			reg = <0x900000 0x4000>;
 			clocks = <&clks IMX6SL_CLK_OCRAM>;
+		};
+
+		ocrams_ddr: sram@904000 {
+			compatible = "fsl,ddr-lpm-sram";
+			reg = <0x904000 0x1000>;
+			clocks = <&clks IMX6SL_CLK_OCRAM>;
+		};
+
+		ocram: sram@905000 {
+			compatible = "mmio-sram";
+			reg = <0x905000 0x1B000>;
+			clocks = <&clks IMX6SL_CLK_OCRAM>;
+		};
+
+		ocram_optee: sram@918000 {
+			compatible = "fsl,optee-lpm-sram";
+			reg = <0x918000 0x8000>;
+			overw_reg = <&ocram 0x905000 0x13000>;
 		};
 
 		intc: interrupt-controller@a01000 {
@@ -133,7 +171,7 @@
 			interrupt-parent = <&intc>;
 		};
 
-		L2: l2-cache@a02000 {
+		L2: cache-controller@a02000 {
 			compatible = "arm,pl310-cache";
 			reg = <0x00a02000 0x1000>;
 			interrupts = <0 92 IRQ_TYPE_LEVEL_HIGH>;
@@ -143,7 +181,7 @@
 			arm,data-latency = <4 2 3>;
 		};
 
-		aips1: aips-bus@2000000 {
+		aips1: bus@2000000 {
 			compatible = "fsl,aips-bus", "simple-bus";
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -341,7 +379,7 @@
 			};
 
 			pwm1: pwm@2080000 {
-				#pwm-cells = <2>;
+				#pwm-cells = <3>;
 				compatible = "fsl,imx6sl-pwm", "fsl,imx27-pwm";
 				reg = <0x02080000 0x4000>;
 				interrupts = <0 83 IRQ_TYPE_LEVEL_HIGH>;
@@ -351,7 +389,7 @@
 			};
 
 			pwm2: pwm@2084000 {
-				#pwm-cells = <2>;
+				#pwm-cells = <3>;
 				compatible = "fsl,imx6sl-pwm", "fsl,imx27-pwm";
 				reg = <0x02084000 0x4000>;
 				interrupts = <0 84 IRQ_TYPE_LEVEL_HIGH>;
@@ -361,7 +399,7 @@
 			};
 
 			pwm3: pwm@2088000 {
-				#pwm-cells = <2>;
+				#pwm-cells = <3>;
 				compatible = "fsl,imx6sl-pwm", "fsl,imx27-pwm";
 				reg = <0x02088000 0x4000>;
 				interrupts = <0 85 IRQ_TYPE_LEVEL_HIGH>;
@@ -371,7 +409,7 @@
 			};
 
 			pwm4: pwm@208c000 {
-				#pwm-cells = <2>;
+				#pwm-cells = <3>;
 				compatible = "fsl,imx6sl-pwm", "fsl,imx27-pwm";
 				reg = <0x0208c000 0x4000>;
 				interrupts = <0 86 IRQ_TYPE_LEVEL_HIGH>;
@@ -380,7 +418,7 @@
 				clock-names = "ipg", "per";
 			};
 
-			gpt: gpt@2098000 {
+			gpt: timer@2098000 {
 				compatible = "fsl,imx6sl-gpt";
 				reg = <0x02098000 0x4000>;
 				interrupts = <0 55 IRQ_TYPE_LEVEL_HIGH>;
@@ -491,7 +529,7 @@
 					      <&iomuxc 21 161 1>;
 			};
 
-			kpp: kpp@20b8000 {
+			kpp: keypad@20b8000 {
 				compatible = "fsl,imx6sl-kpp", "fsl,imx21-kpp";
 				reg = <0x020b8000 0x4000>;
 				interrupts = <0 82 IRQ_TYPE_LEVEL_HIGH>;
@@ -499,14 +537,14 @@
 				status = "disabled";
 			};
 
-			wdog1: wdog@20bc000 {
+			wdog1: watchdog@20bc000 {
 				compatible = "fsl,imx6sl-wdt", "fsl,imx21-wdt";
 				reg = <0x020bc000 0x4000>;
 				interrupts = <0 80 IRQ_TYPE_LEVEL_HIGH>;
 				clocks = <&clks IMX6SL_CLK_IPG>;
 			};
 
-			wdog2: wdog@20c0000 {
+			wdog2: watchdog@20c0000 {
 				compatible = "fsl,imx6sl-wdt", "fsl,imx21-wdt";
 				reg = <0x020c0000 0x4000>;
 				interrupts = <0 81 IRQ_TYPE_LEVEL_HIGH>;
@@ -514,7 +552,7 @@
 				status = "disabled";
 			};
 
-			clks: ccm@20c4000 {
+			clks: clock-controller@20c4000 {
 				compatible = "fsl,imx6sl-ccm";
 				reg = <0x020c4000 0x4000>;
 				interrupts = <0 87 IRQ_TYPE_LEVEL_HIGH>,
@@ -525,7 +563,7 @@
 			anatop: anatop@20c8000 {
 				compatible = "fsl,imx6sl-anatop",
 					     "fsl,imx6q-anatop",
-					     "syscon", "simple-bus";
+					     "syscon", "simple-mfd";
 				reg = <0x020c8000 0x1000>;
 				interrupts = <0 49 IRQ_TYPE_LEVEL_HIGH>,
 					     <0 54 IRQ_TYPE_LEVEL_HIGH>,
@@ -591,6 +629,7 @@
 					anatop-min-bit-val = <1>;
 					anatop-min-voltage = <725000>;
 					anatop-max-voltage = <1450000>;
+					regulator-allow-bypass;
 				};
 
 				reg_pu: regulator-vddpu {
@@ -607,6 +646,7 @@
 					anatop-min-bit-val = <1>;
 					anatop-min-voltage = <725000>;
 					anatop-max-voltage = <1450000>;
+					regulator-allow-bypass;
 				};
 
 				reg_soc: regulator-vddsoc {
@@ -624,6 +664,17 @@
 					anatop-min-bit-val = <1>;
 					anatop-min-voltage = <725000>;
 					anatop-max-voltage = <1450000>;
+					regulator-allow-bypass;
+				};
+
+				tempmon: tempmon {
+					compatible = "fsl,imx6q-tempmon";
+					interrupts = <0 49 IRQ_TYPE_LEVEL_HIGH>;
+					interrupt-parent = <&gpc>;
+					fsl,tempmon = <&anatop>;
+					nvmem-cells = <&tempmon_calib>, <&tempmon_temp_grade>;
+					nvmem-cell-names = "calib", "temp_grade";
+					clocks = <&clks IMX6SL_CLK_PLL3_USB_OTG>;
 				};
 			};
 
@@ -675,7 +726,7 @@
 				interrupts = <0 57 IRQ_TYPE_LEVEL_HIGH>;
 			};
 
-			src: src@20d8000 {
+			src: reset-controller@20d8000 {
 				compatible = "fsl,imx6sl-src", "fsl,imx51-src";
 				reg = <0x020d8000 0x4000>;
 				interrupts = <0 91 IRQ_TYPE_LEVEL_HIGH>,
@@ -728,14 +779,20 @@
 				reg = <0x020e0000 0x38>;
 			};
 
-			iomuxc: iomuxc@20e0000 {
+			iomuxc: pinctrl@20e0000 {
 				compatible = "fsl,imx6sl-iomuxc";
 				reg = <0x020e0000 0x4000>;
 			};
 
 			csi: csi@20e4000 {
-				reg = <0x020e4000 0x4000>;
+				compatible = "fsl,imx6sl-csi";
+				reg = <0x20e4000 0x4000>;
 				interrupts = <0 7 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&clks IMX6SL_CLK_DUMMY>,
+					<&clks IMX6SL_CLK_DUMMY>,
+					<&clks IMX6SL_CLK_DUMMY>;
+				clock-names = "disp-axi", "csi_mclk", "disp_dcic";
+				status = "disabled";
 			};
 
 			spdc: spdc@20e8000 {
@@ -756,13 +813,20 @@
 			};
 
 			pxp: pxp@20f0000 {
-				reg = <0x020f0000 0x4000>;
+				compatible = "fsl,imx6sl-pxp-dma", "fsl,imx6dl-pxp-dma";
+				reg = <0x20f0000 0x4000>;
 				interrupts = <0 98 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&clks IMX6SL_CLK_PXP_AXI>, <&clks IMX6SL_CLK_DUMMY>;
+				clock-names = "pxp-axi", "disp-axi";
+				status = "disabled";
 			};
 
 			epdc: epdc@20f4000 {
-				reg = <0x020f4000 0x4000>;
+				compatible = "fsl,imx6sl-epdc", "fsl,imx6dl-epdc";
+				reg = <0x20f4000 0x4000>;
 				interrupts = <0 97 IRQ_TYPE_LEVEL_HIGH>;
+				clocks = <&clks IMX6SL_CLK_EPDC_AXI>, <&clks IMX6SL_CLK_EPDC_PIX>;
+				clock-names = "epdc_axi", "epdc_pix";
 			};
 
 			lcdif: lcdif@20f8000 {
@@ -777,7 +841,7 @@
 				power-domains = <&pd_disp>;
 			};
 
-			dcp: dcp@20fc000 {
+			dcp: crypto@20fc000 {
 				compatible = "fsl,imx6sl-dcp", "fsl,imx28-dcp";
 				reg = <0x020fc000 0x4000>;
 				interrupts = <0 99 IRQ_TYPE_LEVEL_HIGH>,
@@ -786,7 +850,7 @@
 			};
 		};
 
-		aips2: aips-bus@2100000 {
+		aips2: bus@2100000 {
 			compatible = "fsl,aips-bus", "simple-bus";
 			#address-cells = <1>;
 			#size-cells = <1>;
@@ -851,7 +915,7 @@
 				status = "disabled";
 			};
 
-			usdhc1: usdhc@2190000 {
+			usdhc1: mmc@2190000 {
 				compatible = "fsl,imx6sl-usdhc", "fsl,imx6q-usdhc";
 				reg = <0x02190000 0x4000>;
 				interrupts = <0 22 IRQ_TYPE_LEVEL_HIGH>;
@@ -863,7 +927,7 @@
 				status = "disabled";
 			};
 
-			usdhc2: usdhc@2194000 {
+			usdhc2: mmc@2194000 {
 				compatible = "fsl,imx6sl-usdhc", "fsl,imx6q-usdhc";
 				reg = <0x02194000 0x4000>;
 				interrupts = <0 23 IRQ_TYPE_LEVEL_HIGH>;
@@ -875,7 +939,7 @@
 				status = "disabled";
 			};
 
-			usdhc3: usdhc@2198000 {
+			usdhc3: mmc@2198000 {
 				compatible = "fsl,imx6sl-usdhc", "fsl,imx6q-usdhc";
 				reg = <0x02198000 0x4000>;
 				interrupts = <0 24 IRQ_TYPE_LEVEL_HIGH>;
@@ -887,7 +951,7 @@
 				status = "disabled";
 			};
 
-			usdhc4: usdhc@219c000 {
+			usdhc4: mmc@219c000 {
 				compatible = "fsl,imx6sl-usdhc", "fsl,imx6q-usdhc";
 				reg = <0x0219c000 0x4000>;
 				interrupts = <0 25 IRQ_TYPE_LEVEL_HIGH>;
@@ -951,10 +1015,24 @@
 				status = "disabled";
 			};
 
-			ocotp: ocotp@21bc000 {
+			ocotp: efuse@21bc000 {
 				compatible = "fsl,imx6sl-ocotp", "syscon";
 				reg = <0x021bc000 0x4000>;
 				clocks = <&clks IMX6SL_CLK_OCOTP>;
+				#address-cells = <1>;
+				#size-cells = <1>;
+
+				cpu_speed_grade: speed-grade@10 {
+					reg = <0x10 4>;
+				};
+
+				tempmon_calib: calib@38 {
+					reg = <0x38 4>;
+				};
+
+				tempmon_temp_grade: temp-grade@20 {
+					reg = <0x20 4>;
+				};
 			};
 
 			audmux: audmux@21d8000 {

@@ -429,7 +429,7 @@ static int serdes_init_niu_1g_serdes(struct niu *np)
 	struct niu_link_config *lp = &np->link_config;
 	u16 pll_cfg, pll_sts;
 	int max_retry = 100;
-	u64 uninitialized_var(sig), mask, val;
+	u64 sig, mask, val;
 	u32 tx_cfg, rx_cfg;
 	unsigned long i;
 	int err;
@@ -526,7 +526,7 @@ static int serdes_init_niu_10g_serdes(struct niu *np)
 	struct niu_link_config *lp = &np->link_config;
 	u32 tx_cfg, rx_cfg, pll_cfg, pll_sts;
 	int max_retry = 100;
-	u64 uninitialized_var(sig), mask, val;
+	u64 sig, mask, val;
 	unsigned long i;
 	int err;
 
@@ -714,7 +714,7 @@ static int esr_write_glue0(struct niu *np, unsigned long chan, u32 val)
 
 static int esr_reset(struct niu *np)
 {
-	u32 uninitialized_var(reset);
+	u32 reset;
 	int err;
 
 	err = mdio_write(np, np->port, NIU_ESR_DEV_ADDR,
@@ -6515,7 +6515,7 @@ static void niu_reset_task(struct work_struct *work)
 	spin_unlock_irqrestore(&np->lock, flags);
 }
 
-static void niu_tx_timeout(struct net_device *dev)
+static void niu_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	struct niu *np = netdev_priv(dev);
 
@@ -8191,8 +8191,9 @@ static int niu_pci_vpd_fetch(struct niu *np, u32 start)
 		err = niu_pci_vpd_scan_props(np, here, end);
 		if (err < 0)
 			return err;
+		/* ret == 1 is not an error */
 		if (err == 1)
-			return -EINVAL;
+			return 0;
 	}
 	return 0;
 }
@@ -8838,7 +8839,7 @@ static int walk_phys(struct niu *np, struct niu_parent *parent)
 			else
 				goto unknown_vg_1g_port;
 
-			/* fallthru */
+			fallthrough;
 		case 0x22:
 			val = (phy_encode(PORT_TYPE_10G, 0) |
 			       phy_encode(PORT_TYPE_10G, 1) |
@@ -8863,7 +8864,7 @@ static int walk_phys(struct niu *np, struct niu_parent *parent)
 			else
 				goto unknown_vg_1g_port;
 
-			/* fallthru */
+			fallthrough;
 		case 0x13:
 			if ((lowest_10g & 0x7) == 0)
 				val = (phy_encode(PORT_TYPE_10G, 0) |
@@ -9879,9 +9880,9 @@ static void niu_pci_remove_one(struct pci_dev *pdev)
 	}
 }
 
-static int niu_suspend(struct pci_dev *pdev, pm_message_t state)
+static int __maybe_unused niu_suspend(struct device *dev_d)
 {
-	struct net_device *dev = pci_get_drvdata(pdev);
+	struct net_device *dev = dev_get_drvdata(dev_d);
 	struct niu *np = netdev_priv(dev);
 	unsigned long flags;
 
@@ -9903,22 +9904,18 @@ static int niu_suspend(struct pci_dev *pdev, pm_message_t state)
 	niu_stop_hw(np);
 	spin_unlock_irqrestore(&np->lock, flags);
 
-	pci_save_state(pdev);
-
 	return 0;
 }
 
-static int niu_resume(struct pci_dev *pdev)
+static int __maybe_unused niu_resume(struct device *dev_d)
 {
-	struct net_device *dev = pci_get_drvdata(pdev);
+	struct net_device *dev = dev_get_drvdata(dev_d);
 	struct niu *np = netdev_priv(dev);
 	unsigned long flags;
 	int err;
 
 	if (!netif_running(dev))
 		return 0;
-
-	pci_restore_state(pdev);
 
 	netif_device_attach(dev);
 
@@ -9936,13 +9933,14 @@ static int niu_resume(struct pci_dev *pdev)
 	return err;
 }
 
+static SIMPLE_DEV_PM_OPS(niu_pm_ops, niu_suspend, niu_resume);
+
 static struct pci_driver niu_pci_driver = {
 	.name		= DRV_MODULE_NAME,
 	.id_table	= niu_pci_tbl,
 	.probe		= niu_pci_init_one,
 	.remove		= niu_pci_remove_one,
-	.suspend	= niu_suspend,
-	.resume		= niu_resume,
+	.driver.pm	= &niu_pm_ops,
 };
 
 #ifdef CONFIG_SPARC64

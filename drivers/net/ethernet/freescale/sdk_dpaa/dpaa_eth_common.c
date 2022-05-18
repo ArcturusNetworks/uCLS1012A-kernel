@@ -210,7 +210,7 @@ int __cold dpa_stop(struct net_device *net_dev)
 }
 EXPORT_SYMBOL(dpa_stop);
 
-void __cold dpa_timeout(struct net_device *net_dev)
+void __cold dpa_timeout(struct net_device *net_dev, unsigned int txqueue)
 {
 	const struct dpa_priv_s	*priv;
 	struct dpa_percpu_priv_s *percpu_priv;
@@ -706,12 +706,6 @@ dpa_bp_alloc(struct dpa_bp *dpa_bp, struct device *dev)
 
 	dpa_bp->dev = dev;
 
-	if (dpa_bp->seed_cb) {
-		err = dpa_bp->seed_cb(dpa_bp);
-		if (err)
-			goto bman_free_pool;
-	}
-
 	dpa_bpid2pool_map(dpa_bp->bpid, dpa_bp);
 
 	return 0;
@@ -1050,6 +1044,7 @@ int dpaa_eth_cgr_init(struct dpa_priv_s *priv)
 	priv->cgr_data.cgr.cb = dpaa_eth_cgscn;
 
 	/* Enable Congestion State Change Notifications and CS taildrop */
+	memset(&initcgr, 0, sizeof(initcgr));
 	initcgr.we_mask = QM_CGR_WE_CSCN_EN | QM_CGR_WE_CS_THRES;
 	initcgr.cgr.cscn_en = QM_CGR_EN;
 

@@ -109,7 +109,7 @@ sub declare_function() {
 	my ($name, $align, $nargs) = @_;
 	if($kernel) {
 		$code .= ".align $align\n";
-		$code .= "ENTRY($name)\n";
+		$code .= "SYM_FUNC_START($name)\n";
 		$code .= ".L$name:\n";
 	} else {
 		$code .= ".globl	$name\n";
@@ -122,7 +122,7 @@ sub declare_function() {
 sub end_function() {
 	my ($name) = @_;
 	if($kernel) {
-		$code .= "ENDPROC($name)\n";
+		$code .= "SYM_FUNC_END($name)\n";
 	} else {
 		$code .= ".size   $name,.-$name\n";
 	}
@@ -403,10 +403,6 @@ $code.=<<___;
 ___
 &end_function("poly1305_emit_x86_64");
 if ($avx) {
-
-if($kernel) {
-	$code .= "#ifdef CONFIG_AS_AVX\n";
-}
 
 ########################################################################
 # Layout of opaque area is following.
@@ -1516,15 +1512,7 @@ $code.=<<___;
 ___
 &end_function("poly1305_emit_avx");
 
-if ($kernel) {
-	$code .= "#endif\n";
-}
-
 if ($avx>1) {
-
-if ($kernel) {
-	$code .= "#ifdef CONFIG_AS_AVX2\n";
-}
 
 my ($H0,$H1,$H2,$H3,$H4, $MASK, $T4,$T0,$T1,$T2,$T3, $D0,$D1,$D2,$D3,$D4) =
     map("%ymm$_",(0..15));
@@ -2815,10 +2803,6 @@ ___
 &declare_function("poly1305_blocks_avx2", 32, 4);
 poly1305_blocks_avxN(0);
 &end_function("poly1305_blocks_avx2");
-
-if($kernel) {
-	$code .= "#endif\n";
-}
 
 #######################################################################
 if ($avx>2) {

@@ -38,7 +38,7 @@
 
 struct ls1012a_eth_platform_data {
 	/* board specific information */
-	u32 mii_config;
+	phy_interface_t mii_config;
 	u32 phy_flags;
 	u32 gem_id;
 	u32 phy_id;
@@ -59,7 +59,7 @@ struct ls1012a_pfe_platform_data {
 	struct ls1012a_mdio_platform_data ls1012a_mdio_pdata[3];
 };
 
-#define NUM_GEMAC_SUPPORT	2
+#define MAX_NUM_GEMAC_SUPPORT	2
 #define DRV_NAME		"pfe-eth"
 #define DRV_VERSION		"1.0"
 

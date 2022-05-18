@@ -706,7 +706,7 @@ void xas_create_range(struct xa_state *xas)
 	unsigned char shift = xas->xa_shift;
 	unsigned char sibs = xas->xa_sibs;
 
-	xas->xa_index |= ((sibs + 1) << shift) - 1;
+	xas->xa_index |= ((sibs + 1UL) << shift) - 1;
 	if (xas_is_node(xas) && xas->xa_node->shift == xas->xa_shift)
 		xas->xa_offset |= sibs;
 	xas->xa_shift = 0;
@@ -1011,7 +1011,7 @@ void xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
 
 	do {
 		unsigned int i;
-		void *sibling;
+		void *sibling = NULL;
 		struct xa_node *node;
 
 		node = kmem_cache_alloc(radix_tree_node_cachep, gfp);
@@ -1021,7 +1021,7 @@ void xas_split_alloc(struct xa_state *xas, void *entry, unsigned int order,
 		for (i = 0; i < XA_CHUNK_SIZE; i++) {
 			if ((i & mask) == 0) {
 				RCU_INIT_POINTER(node->slots[i], entry);
-				sibling = xa_mk_sibling(0);
+				sibling = xa_mk_sibling(i);
 			} else {
 				RCU_INIT_POINTER(node->slots[i], sibling);
 			}
@@ -2028,7 +2028,7 @@ static bool xas_sibling(struct xa_state *xas)
 	struct xa_node *node = xas->xa_node;
 	unsigned long mask;
 
-	if (!node)
+	if (!IS_ENABLED(CONFIG_XARRAY_MULTI) || !node)
 		return false;
 	mask = (XA_CHUNK_SIZE << node->shift) - 1;
 	return (xas->xa_index & mask) >
@@ -2162,6 +2162,29 @@ unsigned int xa_extract(struct xarray *xa, void **dst, unsigned long start,
 	return xas_extract_present(&xas, dst, max, n);
 }
 EXPORT_SYMBOL(xa_extract);
+
+/**
+ * xa_delete_node() - Private interface for workingset code.
+ * @node: Node to be removed from the tree.
+ * @update: Function to call to update ancestor nodes.
+ *
+ * Context: xa_lock must be held on entry and will not be released.
+ */
+void xa_delete_node(struct xa_node *node, xa_update_node_t update)
+{
+	struct xa_state xas = {
+		.xa = node->array,
+		.xa_index = (unsigned long)node->offset <<
+				(node->shift + XA_CHUNK_SHIFT),
+		.xa_shift = node->shift + XA_CHUNK_SHIFT,
+		.xa_offset = node->offset,
+		.xa_node = xa_parent_locked(node->array, node),
+		.xa_update = update,
+	};
+
+	xas_store(&xas, NULL);
+}
+EXPORT_SYMBOL_GPL(xa_delete_node);	/* For the benefit of the test suite */
 
 /**
  * xa_destroy() - Free all internal data structures.

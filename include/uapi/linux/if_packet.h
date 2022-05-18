@@ -2,11 +2,8 @@
 #ifndef __LINUX_IF_PACKET_H
 #define __LINUX_IF_PACKET_H
 
+#include <asm/byteorder.h>
 #include <linux/types.h>
-
-#ifndef __aligned_u64  /* Added as a hack (buildsystem has to be fixed. OZH. */
-#define __aligned_u64 __u64 __attribute__((aligned(8)))
-#endif
 
 struct sockaddr_pkt {
 	unsigned short spkt_family;
@@ -36,8 +33,6 @@ struct sockaddr_ll {
 #define PACKET_KERNEL		7		/* To kernel space	*/
 /* Unused, PACKET_FASTROUTE and PACKET_LOOPBACK are invisible to user space */
 #define PACKET_FASTROUTE	6		/* Fastrouted frame	*/
-#define PACKET_MASK_ANY		0xffffffff	/* mask for packet type bits */
-
 
 /* Packet socket options */
 
@@ -64,7 +59,6 @@ struct sockaddr_ll {
 #define PACKET_ROLLOVER_STATS		21
 #define PACKET_FANOUT_DATA		22
 #define PACKET_IGNORE_OUTGOING		23
-#define PACKET_RECV_TYPE		24
 
 #define PACKET_FANOUT_HASH		0
 #define PACKET_FANOUT_LB		1
@@ -301,6 +295,17 @@ struct packet_mreq {
 	unsigned short	mr_type;
 	unsigned short	mr_alen;
 	unsigned char	mr_address[8];
+};
+
+struct fanout_args {
+#if defined(__LITTLE_ENDIAN_BITFIELD)
+	__u16		id;
+	__u16		type_flags;
+#else
+	__u16		type_flags;
+	__u16		id;
+#endif
+	__u32		max_num_members;
 };
 
 #define PACKET_MR_MULTICAST	0

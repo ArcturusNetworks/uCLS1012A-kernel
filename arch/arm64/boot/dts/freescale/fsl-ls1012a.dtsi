@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Device Tree Include file for Freescale Layerscape-1012A family SoC.
+ * Device Tree Include file for NXP Layerscape-1012A family SoC.
  *
  * Copyright 2016 Freescale Semiconductor, Inc.
- * Copyright 2019 NXP
+ * Copyright 2019-2020 NXP
  *
  */
 
@@ -18,19 +18,21 @@
 
 	aliases {
 		crypto = &crypto;
+		mmc0 = &esdhc0;
+		mmc1 = &esdhc1;
+		rtc1 = &ftm_alarm0;
 		rtic-a = &rtic_a;
 		rtic-b = &rtic_b;
 		rtic-c = &rtic_c;
 		rtic-d = &rtic_d;
 		sec-mon = &sec_mon;
-		rtc1 = &ftm_alarm0;
 	};
 
 	cpus {
 		#address-cells = <1>;
 		#size-cells = <0>;
 
-		cooling_map0: cpu0: cpu@0 {
+		cpu0: cpu@0 {
 			device_type = "cpu";
 			compatible = "arm,cortex-a53";
 			reg = <0x0>;
@@ -102,13 +104,55 @@
 		mask = <0x02>;
 	};
 
-	#include "fsl-tmu.dtsi"
+	thermal-zones {
+		cpu_thermal: cpu-thermal {
+			polling-delay-passive = <1000>;
+			polling-delay = <5000>;
+			thermal-sensors = <&tmu 0>;
+
+			trips {
+				cpu_alert: cpu-alert {
+					temperature = <85000>;
+					hysteresis = <2000>;
+					type = "passive";
+				};
+
+				cpu_crit: cpu-crit {
+					temperature = <95000>;
+					hysteresis = <2000>;
+					type = "critical";
+				};
+			};
+
+			cooling-maps {
+				map0 {
+					trip = <&cpu_alert>;
+					cooling-device =
+						<&cpu0 THERMAL_NO_LIMIT
+						THERMAL_NO_LIMIT>;
+				};
+			};
+		};
+	};
 
 	soc {
 		compatible = "simple-bus";
 		#address-cells = <2>;
 		#size-cells = <2>;
 		ranges;
+
+		qspi: spi@1550000 {
+			compatible = "fsl,ls1021a-qspi";
+			#address-cells = <1>;
+			#size-cells = <0>;
+			reg = <0x0 0x1550000 0x0 0x10000>,
+				<0x0 0x40000000 0x0 0x10000000>;
+			reg-names = "QuadSPI", "QuadSPI-memory";
+			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
+			clock-names = "qspi_en", "qspi";
+			clocks = <&clockgen 4 0>, <&clockgen 4 0>;
+			status = "disabled";
+		};
 
 		esdhc0: esdhc@1560000 {
 			compatible = "fsl,ls1012a-esdhc", "fsl,esdhc";
@@ -291,21 +335,6 @@
 			#thermal-sensor-cells = <1>;
 		};
 
-		rcpm: rcpm@1ee2140 {
-			compatible = "fsl,ls1012a-rcpm", "fsl,qoriq-rcpm-2.1+";
-			reg = <0x0 0x1ee2140 0x0 0x4>;
-			#fsl,rcpm-wakeup-cells = <1>;
-		};
-
-		ftm_alarm0: timer@29d0000 {
-			compatible = "fsl,ls1012a-ftm-alarm";
-			reg = <0x0 0x29d0000 0x0 0x10000>;
-			fsl,rcpm-wakeup = <&rcpm 0x20000>;
-			interrupts = <0 86 0x4>;
-			big-endian;
-		};
-
-
 		i2c0: i2c@2180000 {
 			compatible = "fsl,vf610-i2c", "fsl,ls1012a-vf610-i2c";
 			#address-cells = <1>;
@@ -385,28 +414,14 @@
 			big-endian;
 		};
 
-		qspi: spi@1550000 {
-			compatible = "fsl,ls1021a-qspi";
-			#address-cells = <1>;
-			#size-cells = <0>;
-			reg = <0x0 0x1550000 0x0 0x10000>,
-				<0x0 0x40000000 0x0 0x10000000>;
-			reg-names = "QuadSPI", "QuadSPI-memory";
-			interrupts = <GIC_SPI 99 IRQ_TYPE_LEVEL_HIGH>;
-			clock-names = "qspi_en", "qspi";
-			clocks = <&clockgen 4 0>, <&clockgen 4 0>;
-			status = "disabled";
-		};
-
 		sai1: sai@2b50000 {
 			#sound-dai-cells = <0>;
 			compatible = "fsl,vf610-sai";
 			reg = <0x0 0x2b50000 0x0 0x10000>;
 			interrupts = <0 148 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clockgen 4 3>, <&clockgen 4 3>,
-				 <&clockgen 4 3>, <&clockgen 4 3>,
-				 <&clockgen 4 3>;
-			clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
+				 <&clockgen 4 3>, <&clockgen 4 3>;
+			clock-names = "bus", "mclk1", "mclk2", "mclk3";
 			dma-names = "tx", "rx";
 			dmas = <&edma0 1 47>,
 			       <&edma0 1 46>;
@@ -419,9 +434,8 @@
 			reg = <0x0 0x2b60000 0x0 0x10000>;
 			interrupts = <0 149 IRQ_TYPE_LEVEL_HIGH>;
 			clocks = <&clockgen 4 3>, <&clockgen 4 3>,
-				 <&clockgen 4 3>, <&clockgen 4 3>,
-				 <&clockgen 4 3>;
-			clock-names = "bus", "mclk0", "mclk1", "mclk2", "mclk3";
+				 <&clockgen 4 3>, <&clockgen 4 3>;
+			clock-names = "bus", "mclk1", "mclk2", "mclk3";
 			dma-names = "tx", "rx";
 			dmas = <&edma0 1 45>,
 			       <&edma0 1 44>;
@@ -482,7 +496,7 @@
 			interrupts = <0 126 IRQ_TYPE_LEVEL_HIGH>;
 		};
 
-		pcie: pcie@3400000 {
+		pcie1: pcie@3400000 {
 			compatible = "fsl,ls1012a-pcie";
 			reg = <0x00 0x03400000 0x0 0x00100000   /* controller registers */
 			       0x40 0x00000000 0x0 0x00002000>; /* configuration space */
@@ -504,7 +518,22 @@
 					<0000 0 0 2 &gic 0 111 IRQ_TYPE_LEVEL_HIGH>,
 					<0000 0 0 3 &gic 0 112 IRQ_TYPE_LEVEL_HIGH>,
 					<0000 0 0 4 &gic 0 113 IRQ_TYPE_LEVEL_HIGH>;
+			big-endian;
 			status = "disabled";
+		};
+
+		rcpm: power-controller@1ee2140 {
+			compatible = "fsl,ls1012a-rcpm", "fsl,qoriq-rcpm-2.1+";
+			reg = <0x0 0x1ee2140 0x0 0x4>;
+			#fsl,rcpm-wakeup-cells = <1>;
+		};
+
+		ftm_alarm0: timer@29d0000 {
+			compatible = "fsl,ls1012a-ftm-alarm";
+			reg = <0x0 0x29d0000 0x0 0x10000>;
+			fsl,rcpm-wakeup = <&rcpm 0x20000>;
+			interrupts = <GIC_SPI 86 IRQ_TYPE_LEVEL_HIGH>;
+			big-endian;
 		};
 	};
 
@@ -542,11 +571,5 @@
 			compatible = "linaro,optee-tz";
 			method = "smc";
 		};
-	};
-};
-
-&thermal_zones {
-	thermal-zone0 {
-		status = "okay";
 	};
 };

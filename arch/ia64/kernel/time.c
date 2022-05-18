@@ -32,6 +32,7 @@
 #include <asm/sections.h>
 
 #include "fsyscall_gtod_data.h"
+#include "irq.h"
 
 static u64 itc_get_cycles(struct clocksource *cs);
 
@@ -132,27 +133,37 @@ static __u64 vtime_delta(struct task_struct *tsk)
 	return delta_stime;
 }
 
-void vtime_account_system(struct task_struct *tsk)
+void vtime_account_kernel(struct task_struct *tsk)
 {
 	struct thread_info *ti = task_thread_info(tsk);
 	__u64 stime = vtime_delta(tsk);
 
-	if ((tsk->flags & PF_VCPU) && !irq_count())
+	if (tsk->flags & PF_VCPU)
 		ti->gtime += stime;
-	else if (hardirq_count())
-		ti->hardirq_time += stime;
-	else if (in_serving_softirq())
-		ti->softirq_time += stime;
 	else
 		ti->stime += stime;
 }
-EXPORT_SYMBOL_GPL(vtime_account_system);
+EXPORT_SYMBOL_GPL(vtime_account_kernel);
 
 void vtime_account_idle(struct task_struct *tsk)
 {
 	struct thread_info *ti = task_thread_info(tsk);
 
 	ti->idle_time += vtime_delta(tsk);
+}
+
+void vtime_account_softirq(struct task_struct *tsk)
+{
+	struct thread_info *ti = task_thread_info(tsk);
+
+	ti->softirq_time += vtime_delta(tsk);
+}
+
+void vtime_account_hardirq(struct task_struct *tsk)
+{
+	struct thread_info *ti = task_thread_info(tsk);
+
+	ti->hardirq_time += vtime_delta(tsk);
 }
 
 #endif /* CONFIG_VIRT_CPU_ACCOUNTING_NATIVE */
@@ -380,13 +391,6 @@ static u64 itc_get_cycles(struct clocksource *cs)
 	return now;
 }
 
-
-static struct irqaction timer_irqaction = {
-	.handler =	timer_interrupt,
-	.flags =	IRQF_IRQPOLL,
-	.name =		"timer"
-};
-
 void read_persistent_clock64(struct timespec64 *ts)
 {
 	efi_gettimeofday(ts);
@@ -395,7 +399,8 @@ void read_persistent_clock64(struct timespec64 *ts)
 void __init
 time_init (void)
 {
-	register_percpu_irq(IA64_TIMER_VECTOR, &timer_irqaction);
+	register_percpu_irq(IA64_TIMER_VECTOR, timer_interrupt, IRQF_IRQPOLL,
+			    "timer");
 	ia64_init_itm();
 }
 

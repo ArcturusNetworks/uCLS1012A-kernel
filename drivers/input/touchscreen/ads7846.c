@@ -358,7 +358,8 @@ static int ads7846_read12_ser(struct device *dev, unsigned command)
 		req->xfer[1].len = 2;
 
 		/* for 1uF, settle for 800 usec; no cap, 100 usec.  */
-		req->xfer[1].delay_usecs = ts->vref_delay_usecs;
+		req->xfer[1].delay.value = ts->vref_delay_usecs;
+		req->xfer[1].delay.unit = SPI_DELAY_UNIT_USECS;
 		spi_message_add_tail(&req->xfer[1], &req->msg);
 
 		/* Enable reference voltage */
@@ -1028,7 +1029,8 @@ static void ads7846_setup_spi_msg(struct ads7846 *ts,
 	 * have had enough time to stabilize.
 	 */
 	if (pdata->settle_delay_usecs) {
-		x->delay_usecs = pdata->settle_delay_usecs;
+		x->delay.value = pdata->settle_delay_usecs;
+		x->delay.unit = SPI_DELAY_UNIT_USECS;
 
 		x++;
 		x->tx_buf = &packet->read_y;
@@ -1071,7 +1073,8 @@ static void ads7846_setup_spi_msg(struct ads7846 *ts,
 
 	/* ... maybe discard first sample ... */
 	if (pdata->settle_delay_usecs) {
-		x->delay_usecs = pdata->settle_delay_usecs;
+		x->delay.value = pdata->settle_delay_usecs;
+		x->delay.unit = SPI_DELAY_UNIT_USECS;
 
 		x++;
 		x->tx_buf = &packet->read_x;
@@ -1104,7 +1107,8 @@ static void ads7846_setup_spi_msg(struct ads7846 *ts,
 
 		/* ... maybe discard first sample ... */
 		if (pdata->settle_delay_usecs) {
-			x->delay_usecs = pdata->settle_delay_usecs;
+			x->delay.value = pdata->settle_delay_usecs;
+			x->delay.unit = SPI_DELAY_UNIT_USECS;
 
 			x++;
 			x->tx_buf = &packet->read_z1;
@@ -1135,7 +1139,8 @@ static void ads7846_setup_spi_msg(struct ads7846 *ts,
 
 		/* ... maybe discard first sample ... */
 		if (pdata->settle_delay_usecs) {
-			x->delay_usecs = pdata->settle_delay_usecs;
+			x->delay.value = pdata->settle_delay_usecs;
+			x->delay.unit = SPI_DELAY_UNIT_USECS;
 
 			x++;
 			x->tx_buf = &packet->read_z2;
@@ -1195,6 +1200,7 @@ static const struct ads7846_platform_data *ads7846_probe_dt(struct device *dev)
 	struct device_node *node = dev->of_node;
 	const struct of_device_id *match;
 	u32 value;
+	int ret;
 
 	if (!node) {
 		dev_err(dev, "Device does not have associated DT data\n");
@@ -1248,8 +1254,11 @@ static const struct ads7846_platform_data *ads7846_probe_dt(struct device *dev)
 	of_property_read_u16(node, "ti,debounce-tol", &pdata->debounce_tol);
 	of_property_read_u16(node, "ti,debounce-rep", &pdata->debounce_rep);
 
-	of_property_read_u32(node, "ti,pendown-gpio-debounce",
+	ret = of_property_read_u32(node, "ti,pendown-gpio-debounce",
 			     &pdata->gpio_pendown_debounce);
+	if (!ret)
+		dev_info(dev, "Set pendown gpio debounce time to %d microseconds\n",
+			pdata->gpio_pendown_debounce);
 
 	pdata->wakeup = of_property_read_bool(node, "wakeup-source") ||
 			of_property_read_bool(node, "linux,wakeup");
@@ -1377,7 +1386,7 @@ static int ads7846_probe(struct spi_device *spi)
 			pdata->y_max ? : MAX_12BIT,
 			0, 0);
 	input_set_abs_params(input_dev, ABS_PRESSURE,
-			pdata->pressure_min, pdata->pressure_max, 0, 0);
+			pdata->pressure_min, ts->pressure_max, 0, 0);
 
 	/*
 	 * Parse common framework properties. Must be done here to ensure the

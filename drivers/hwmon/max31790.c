@@ -459,8 +459,7 @@ static int max31790_init_client(struct i2c_client *client,
 	return 0;
 }
 
-static int max31790_probe(struct i2c_client *client,
-			  const struct i2c_device_id *id)
+static int max31790_probe(struct i2c_client *client)
 {
 	struct i2c_adapter *adapter = client->adapter;
 	struct device *dev = &client->dev;
@@ -502,7 +501,7 @@ MODULE_DEVICE_TABLE(i2c, max31790_id);
 
 static struct i2c_driver max31790_driver = {
 	.class		= I2C_CLASS_HWMON,
-	.probe		= max31790_probe,
+	.probe_new	= max31790_probe,
 	.driver = {
 		.name	= "max31790",
 	},

@@ -95,7 +95,7 @@ Ethernet switch.
 Networking stack hooks
 ----------------------
 
-When a master netdev is used with DSA, a small hook is placed in in the
+When a master netdev is used with DSA, a small hook is placed in the
 networking stack is in order to have the DSA subsystem process the Ethernet
 switch specific tagging protocol. DSA accomplishes this by registering a
 specific (and fake) Ethernet type (later becoming ``skb->protocol``) with the
@@ -272,6 +272,10 @@ directly through this interface (e.g.: opening a socket using this interface)
 will not make us go through the switch tagging protocol transmit function, so
 the Ethernet switch on the other end, expecting a tag will typically drop this
 frame.
+
+Slave network devices check that the master network device is UP before allowing
+you to administratively bring UP these slave network devices. A common
+configuration mistake is forgetting to bring UP the master network device first.
 
 Interactions with other subsystems
 ==================================

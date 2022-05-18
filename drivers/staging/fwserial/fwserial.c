@@ -466,7 +466,7 @@ static void fwtty_throttle_port(struct fwtty_port *port)
  * fwtty_do_hangup - wait for ldisc to deliver all pending rx; only then hangup
  *
  * When the remote has finished tx, and all in-flight rx has been received and
- * and pushed to the flip buffer, the remote may close its device. This will
+ * pushed to the flip buffer, the remote may close its device. This will
  * drop DTR on the remote which will drop carrier here. Typically, the tty is
  * hung up when carrier is dropped or lost.
  *
@@ -1218,13 +1218,12 @@ static int get_serial_info(struct tty_struct *tty,
 	struct fwtty_port *port = tty->driver_data;
 
 	mutex_lock(&port->port.mutex);
-	ss->type =  PORT_UNKNOWN;
-	ss->line =  port->port.tty->index;
-	ss->flags = port->port.flags;
-	ss->xmit_fifo_size = FWTTY_PORT_TXFIFO_LEN;
+	ss->line = port->index;
 	ss->baud_base = 400000000;
 	ss->close_delay = jiffies_to_msecs(port->port.close_delay) / 10;
+	ss->closing_wait = 3000;
 	mutex_unlock(&port->port.mutex);
+
 	return 0;
 }
 
@@ -1233,10 +1232,6 @@ static int set_serial_info(struct tty_struct *tty,
 {
 	struct fwtty_port *port = tty->driver_data;
 	unsigned int cdelay;
-
-	if (ss->irq != 0 || ss->port != 0 || ss->custom_divisor != 0 ||
-	    ss->baud_base != 400000000)
-		return -EPERM;
 
 	cdelay = msecs_to_jiffies(ss->close_delay * 10);
 

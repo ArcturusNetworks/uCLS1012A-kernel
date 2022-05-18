@@ -103,6 +103,23 @@
 	};
 };
 
+&cpu0 {
+	operating-points = <
+		/* kHz    uV */
+		996000  1250000
+		792000  1175000
+		396000  1175000
+	>;
+	fsl,soc-operating-points = <
+		/* ARM kHz      SOC uV */
+		996000  1250000
+		792000  1175000
+		396000  1175000
+	>;
+
+	fsl,arm-soc-shared = <1>;
+};
+
 &qspi2 {
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_qspi2>;
@@ -114,7 +131,7 @@
 		compatible = "micron,n25q256a", "jedec,spi-nor";
 		spi-max-frequency = <29000000>;
 		spi-rx-bus-width = <4>;
-		spi-tx-bus-width = <4>;
+		spi-tx-bus-width = <1>;
 		reg = <0>;
 	};
 
@@ -124,17 +141,19 @@
 		compatible = "micron,n25q256a", "jedec,spi-nor";
 		spi-max-frequency = <29000000>;
 		spi-rx-bus-width = <4>;
-		spi-tx-bus-width = <4>;
+		spi-tx-bus-width = <1>;
 		reg = <2>;
 	};
 };
 
 &reg_arm {
 	vin-supply = <&sw1a_reg>;
+	regulator-allow-bypass;
 };
 
 &reg_soc {
 	vin-supply = <&sw1a_reg>;
+	regulator-allow-bypass;
 };
 
 &reg_vdd1p1 {

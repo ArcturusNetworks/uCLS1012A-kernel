@@ -70,4 +70,12 @@
 			};
 		};
 	};
+
+	fragment@2 {
+		target = <&mscc_felix>;
+		__overlay__ {
+			status = "okay";
+		};
+	};
+
 };

@@ -926,13 +926,6 @@ static bool vol_ignored(int vol_id)
 #endif
 }
 
-static bool ec_hdr_has_eof(struct ubi_ec_hdr *ech)
-{
-	return ech->padding1[0] == 'E' &&
-	       ech->padding1[1] == 'O' &&
-	       ech->padding1[2] == 'F';
-}
-
 /**
  * scan_peb - scan and process UBI headers of a PEB.
  * @ubi: UBI device description object
@@ -965,21 +958,9 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 		return 0;
 	}
 
-	if (!ai->eof_found) {
-		err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
-		if (err < 0)
-			return err;
-
-		if (ec_hdr_has_eof(ech)) {
-			pr_notice("UBI: EOF marker found, PEBs from %d will be erased\n",
-				pnum);
-			ai->eof_found = true;
-		}
-	}
-
-	if (ai->eof_found)
-		err = UBI_IO_FF_BITFLIPS;
-
+	err = ubi_io_read_ec_hdr(ubi, pnum, ech, 0);
+	if (err < 0)
+		return err;
 	switch (err) {
 	case 0:
 		break;
@@ -1078,7 +1059,7 @@ static int scan_peb(struct ubi_device *ubi, struct ubi_attach_info *ai,
 			 * be a result of power cut during erasure.
 			 */
 			ai->maybe_bad_peb_count += 1;
-		/* fall through */
+		fallthrough;
 	case UBI_IO_BAD_HDR:
 			/*
 			 * If we're facing a bad VID header we have to drop *all*
@@ -1659,7 +1640,7 @@ int ubi_attach(struct ubi_device *ubi, int force_scan)
 out_wl:
 	ubi_wl_close(ubi);
 out_vtbl:
-	ubi_free_internal_volumes(ubi);
+	ubi_free_all_volumes(ubi);
 	vfree(ubi->vtbl);
 out_ai:
 	destroy_ai(ai);

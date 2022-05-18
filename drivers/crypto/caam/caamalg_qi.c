@@ -18,6 +18,7 @@
 #include "qi.h"
 #include "jr.h"
 #include "caamalg_desc.h"
+#include <crypto/xts.h>
 #include <asm/unaligned.h>
 
 /*
@@ -68,6 +69,7 @@ struct caam_ctx {
 	struct device *qidev;
 	spinlock_t lock;	/* Protects multiple init of driver context */
 	struct caam_drv_ctx *drv_ctx[NUM_OP];
+	bool xts_key_fallback;
 	struct crypto_skcipher *fallback;
 };
 
@@ -274,7 +276,6 @@ skip_split_key:
 	memzero_explicit(&keys, sizeof(keys));
 	return ret;
 badkey:
-	crypto_aead_set_flags(aead, CRYPTO_TFM_RES_BAD_KEY_LEN);
 	memzero_explicit(&keys, sizeof(keys));
 	return -EINVAL;
 }
@@ -452,7 +453,6 @@ skip_split_key:
 	memzero_explicit(&keys, sizeof(keys));
 	return ret;
 badkey:
-	crypto_aead_set_flags(tls, CRYPTO_TFM_RES_BAD_KEY_LEN);
 	memzero_explicit(&keys, sizeof(keys));
 	return -EINVAL;
 }
@@ -523,10 +523,8 @@ static int gcm_setkey(struct crypto_aead *aead,
 	int ret;
 
 	ret = aes_check_keylen(keylen);
-	if (ret) {
-		crypto_aead_set_flags(aead, CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (ret)
 		return ret;
-	}
 
 	print_hex_dump_debug("key in @" __stringify(__LINE__)": ",
 			     DUMP_PREFIX_ADDRESS, 16, 4, key, keylen, 1);
@@ -629,10 +627,8 @@ static int rfc4106_setkey(struct crypto_aead *aead,
 	int ret;
 
 	ret = aes_check_keylen(keylen - 4);
-	if (ret) {
-		crypto_aead_set_flags(aead, CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (ret)
 		return ret;
-	}
 
 	print_hex_dump_debug("key in @" __stringify(__LINE__)": ",
 			     DUMP_PREFIX_ADDRESS, 16, 4, key, keylen, 1);
@@ -737,10 +733,8 @@ static int rfc4543_setkey(struct crypto_aead *aead,
 	int ret;
 
 	ret = aes_check_keylen(keylen - 4);
-	if (ret) {
-		crypto_aead_set_flags(aead, CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (ret)
 		return ret;
-	}
 
 	print_hex_dump_debug("key in @" __stringify(__LINE__)": ",
 			     DUMP_PREFIX_ADDRESS, 16, 4, key, keylen, 1);
@@ -811,7 +805,7 @@ static int skcipher_setkey(struct crypto_skcipher *skcipher, const u8 *key,
 					  ctx->sh_desc_enc);
 		if (ret) {
 			dev_err(jrdev, "driver enc context update failed\n");
-			goto badkey;
+			return -EINVAL;
 		}
 	}
 
@@ -820,14 +814,11 @@ static int skcipher_setkey(struct crypto_skcipher *skcipher, const u8 *key,
 					  ctx->sh_desc_dec);
 		if (ret) {
 			dev_err(jrdev, "driver dec context update failed\n");
-			goto badkey;
+			return -EINVAL;
 		}
 	}
 
 	return ret;
-badkey:
-	crypto_skcipher_set_flags(skcipher, CRYPTO_TFM_RES_BAD_KEY_LEN);
-	return -EINVAL;
 }
 
 static int aes_skcipher_setkey(struct crypto_skcipher *skcipher,
@@ -836,11 +827,8 @@ static int aes_skcipher_setkey(struct crypto_skcipher *skcipher,
 	int err;
 
 	err = aes_check_keylen(keylen);
-	if (err) {
-		crypto_skcipher_set_flags(skcipher,
-					  CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (err)
 		return err;
-	}
 
 	return skcipher_setkey(skcipher, key, keylen, 0);
 }
@@ -860,11 +848,8 @@ static int rfc3686_skcipher_setkey(struct crypto_skcipher *skcipher,
 	keylen -= CTR_RFC3686_NONCE_SIZE;
 
 	err = aes_check_keylen(keylen);
-	if (err) {
-		crypto_skcipher_set_flags(skcipher,
-					  CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (err)
 		return err;
-	}
 
 	return skcipher_setkey(skcipher, key, keylen, ctx1_iv_off);
 }
@@ -883,11 +868,8 @@ static int ctr_skcipher_setkey(struct crypto_skcipher *skcipher,
 	ctx1_iv_off = 16;
 
 	err = aes_check_keylen(keylen);
-	if (err) {
-		crypto_skcipher_set_flags(skcipher,
-					  CRYPTO_TFM_RES_BAD_KEY_LEN);
+	if (err)
 		return err;
-	}
 
 	return skcipher_setkey(skcipher, key, keylen, ctx1_iv_off);
 }
@@ -911,17 +893,24 @@ static int xts_skcipher_setkey(struct crypto_skcipher *skcipher, const u8 *key,
 {
 	struct caam_ctx *ctx = crypto_skcipher_ctx(skcipher);
 	struct device *jrdev = ctx->jrdev;
+	struct caam_drv_private *ctrlpriv = dev_get_drvdata(jrdev->parent);
 	int ret = 0;
 	int err;
 
-	if (keylen != 2 * AES_MIN_KEY_SIZE  && keylen != 2 * AES_MAX_KEY_SIZE) {
-		dev_err(jrdev, "key size mismatch\n");
-		goto badkey;
+	err = xts_verify_key(skcipher, key, keylen);
+	if (err) {
+		dev_dbg(jrdev, "key size mismatch\n");
+		return err;
 	}
 
-	err = crypto_skcipher_setkey(ctx->fallback, key, keylen);
-	if (err)
-		return err;
+	if (keylen != 2 * AES_KEYSIZE_128 && keylen != 2 * AES_KEYSIZE_256)
+		ctx->xts_key_fallback = true;
+
+	if (ctrlpriv->era <= 8 || ctx->xts_key_fallback) {
+		err = crypto_skcipher_setkey(ctx->fallback, key, keylen);
+		if (err)
+			return err;
+	}
 
 	ctx->cdata.keylen = keylen;
 	ctx->cdata.key_virt = key;
@@ -937,7 +926,7 @@ static int xts_skcipher_setkey(struct crypto_skcipher *skcipher, const u8 *key,
 					  ctx->sh_desc_enc);
 		if (ret) {
 			dev_err(jrdev, "driver enc context update failed\n");
-			goto badkey;
+			return -EINVAL;
 		}
 	}
 
@@ -946,14 +935,11 @@ static int xts_skcipher_setkey(struct crypto_skcipher *skcipher, const u8 *key,
 					  ctx->sh_desc_dec);
 		if (ret) {
 			dev_err(jrdev, "driver dec context update failed\n");
-			goto badkey;
+			return -EINVAL;
 		}
 	}
 
 	return ret;
-badkey:
-	crypto_skcipher_set_flags(skcipher, CRYPTO_TFM_RES_BAD_KEY_LEN);
-	return -EINVAL;
 }
 
 /*
@@ -977,7 +963,7 @@ struct aead_edesc {
 	unsigned int assoclen;
 	dma_addr_t assoclen_dma;
 	struct caam_drv_req drv_req;
-	struct qm_sg_entry sgt[0];
+	struct qm_sg_entry sgt[];
 };
 
 /*
@@ -1020,7 +1006,7 @@ struct skcipher_edesc {
 	int qm_sg_bytes;
 	dma_addr_t qm_sg_dma;
 	struct caam_drv_req drv_req;
-	struct qm_sg_entry sgt[0];
+	struct qm_sg_entry sgt[];
 };
 
 static struct caam_drv_ctx *get_drv_ctx(struct caam_ctx *ctx,
@@ -1410,10 +1396,8 @@ static void tls_done(struct caam_drv_req *drv_req, u32 status)
 
 	qidev = caam_ctx->qidev;
 
-	if (unlikely(status)) {
-		caam_jr_strstatus(qidev, status);
-		ecode = -EIO;
-	}
+	if (unlikely(status))
+		ecode = caam_jr_strstatus(qidev, status);
 
 	edesc = container_of(drv_req, typeof(*edesc), drv_req);
 	tls_unmap(qidev, edesc, aead_req);
@@ -1439,10 +1423,10 @@ static struct tls_edesc *tls_edesc_alloc(struct aead_request *req, bool encrypt)
 	int src_nents, mapped_src_nents, dst_nents = 0, mapped_dst_nents = 0;
 	struct tls_edesc *edesc;
 	dma_addr_t qm_sg_dma, iv_dma = 0;
-	int ivsize = 0;
+	int ivsize = crypto_aead_ivsize(aead);
 	u8 *iv;
 	int qm_sg_index, qm_sg_ents = 0, qm_sg_bytes;
-	int in_len, out_len;
+	int src_len, dst_len, data_len;
 	struct qm_sg_entry *sg_table, *fd_sgt;
 	struct caam_drv_ctx *drv_ctx;
 	struct scatterlist *dst;
@@ -1466,14 +1450,16 @@ static struct tls_edesc *tls_edesc_alloc(struct aead_request *req, bool encrypt)
 		return ERR_PTR(-ENOMEM);
 	}
 
+	data_len = req->assoclen + req->cryptlen;
+	dst_len = req->cryptlen + (encrypt ? authsize : 0);
+
 	if (likely(req->src == req->dst)) {
-		src_nents = sg_nents_for_len(req->src, req->assoclen +
-					     req->cryptlen +
-					     (encrypt ? authsize : 0));
+		src_len = req->assoclen + dst_len;
+
+		src_nents = sg_nents_for_len(req->src, src_len);
 		if (unlikely(src_nents < 0)) {
 			dev_err(qidev, "Insufficient bytes (%d) in src S/G\n",
-				req->assoclen + req->cryptlen +
-				(encrypt ? authsize : 0));
+				src_len);
 			qi_cache_free(edesc);
 			return ERR_PTR(src_nents);
 		}
@@ -1487,22 +1473,22 @@ static struct tls_edesc *tls_edesc_alloc(struct aead_request *req, bool encrypt)
 		}
 		dst = req->dst;
 	} else {
-		src_nents = sg_nents_for_len(req->src, req->assoclen +
-					     req->cryptlen);
+		src_len = data_len;
+
+		src_nents = sg_nents_for_len(req->src, src_len);
 		if (unlikely(src_nents < 0)) {
 			dev_err(qidev, "Insufficient bytes (%d) in src S/G\n",
-				req->assoclen + req->cryptlen);
+				src_len);
 			qi_cache_free(edesc);
 			return ERR_PTR(src_nents);
 		}
 
 		dst = scatterwalk_ffwd(edesc->tmp, req->dst, req->assoclen);
-		dst_nents = sg_nents_for_len(dst, req->cryptlen +
-					     (encrypt ? authsize : 0));
+
+		dst_nents = sg_nents_for_len(dst, dst_len);
 		if (unlikely(dst_nents < 0)) {
 			dev_err(qidev, "Insufficient bytes (%d) in dst S/G\n",
-				req->cryptlen +
-				(encrypt ? authsize : 0));
+				dst_len);
 			qi_cache_free(edesc);
 			return ERR_PTR(dst_nents);
 		}
@@ -1538,7 +1524,6 @@ static struct tls_edesc *tls_edesc_alloc(struct aead_request *req, bool encrypt)
 	sg_table = &edesc->sgt[0];
 	qm_sg_bytes = qm_sg_ents * sizeof(*sg_table);
 
-	ivsize = crypto_aead_ivsize(aead);
 	iv = (u8 *)(sg_table + qm_sg_ents);
 	/* Make sure IV is located in a DMAable area */
 	memcpy(iv, req->iv, ivsize);
@@ -1562,12 +1547,11 @@ static struct tls_edesc *tls_edesc_alloc(struct aead_request *req, bool encrypt)
 	dma_to_qm_sg_one(sg_table, iv_dma, ivsize, 0);
 	qm_sg_index = 1;
 
-	sg_to_qm_sg_last(req->src, mapped_src_nents, sg_table + qm_sg_index, 0);
+	sg_to_qm_sg_last(req->src, src_len, sg_table + qm_sg_index, 0);
 	qm_sg_index += mapped_src_nents;
 
 	if (mapped_dst_nents > 1)
-		sg_to_qm_sg_last(dst, mapped_dst_nents, sg_table +
-				 qm_sg_index, 0);
+		sg_to_qm_sg_last(dst, dst_len, sg_table + qm_sg_index, 0);
 
 	qm_sg_dma = dma_map_single(qidev, sg_table, qm_sg_bytes, DMA_TO_DEVICE);
 	if (dma_mapping_error(qidev, qm_sg_dma)) {
@@ -1581,22 +1565,19 @@ static struct tls_edesc *tls_edesc_alloc(struct aead_request *req, bool encrypt)
 	edesc->qm_sg_dma = qm_sg_dma;
 	edesc->qm_sg_bytes = qm_sg_bytes;
 
-	out_len = req->cryptlen + (encrypt ? authsize : 0);
-	in_len = ivsize + req->assoclen + req->cryptlen;
-
 	fd_sgt = &edesc->drv_req.fd_sgt[0];
 
-	dma_to_qm_sg_one_last_ext(&fd_sgt[1], qm_sg_dma, in_len, 0);
+	dma_to_qm_sg_one_last_ext(&fd_sgt[1], qm_sg_dma, ivsize + data_len, 0);
 
 	if (req->dst == req->src)
 		dma_to_qm_sg_one_ext(&fd_sgt[0], qm_sg_dma +
 				    (sg_nents_for_len(req->src, req->assoclen) +
-				     1) * sizeof(*sg_table), out_len, 0);
+				     1) * sizeof(*sg_table), dst_len, 0);
 	else if (mapped_dst_nents == 1)
-		dma_to_qm_sg_one(&fd_sgt[0], sg_dma_address(dst), out_len, 0);
+		dma_to_qm_sg_one(&fd_sgt[0], sg_dma_address(dst), dst_len, 0);
 	else
 		dma_to_qm_sg_one_ext(&fd_sgt[0], qm_sg_dma + sizeof(*sg_table) *
-				     qm_sg_index, out_len, 0);
+				     qm_sg_index, dst_len, 0);
 
 	return edesc;
 }
@@ -1852,12 +1833,19 @@ static inline int skcipher_crypt(struct skcipher_request *req, bool encrypt)
 	struct skcipher_edesc *edesc;
 	struct crypto_skcipher *skcipher = crypto_skcipher_reqtfm(req);
 	struct caam_ctx *ctx = crypto_skcipher_ctx(skcipher);
+	struct caam_drv_private *ctrlpriv = dev_get_drvdata(ctx->jrdev->parent);
 	int ret;
 
-	if (!req->cryptlen)
+	/*
+	 * XTS is expected to return an error even for input length = 0
+	 * Note that the case input length < block size will be caught during
+	 * HW offloading and return an error.
+	 */
+	if (!req->cryptlen && !ctx->fallback)
 		return 0;
 
-	if (ctx->fallback && xts_skcipher_ivsize(req)) {
+	if (ctx->fallback && ((ctrlpriv->era <= 8 && xts_skcipher_ivsize(req)) ||
+			      ctx->xts_key_fallback)) {
 		struct caam_skcipher_req_ctx *rctx = skcipher_request_ctx(req);
 
 		skcipher_request_set_tfm(&rctx->fallback_req, ctx->fallback);
@@ -2986,8 +2974,8 @@ static int caam_cra_init(struct crypto_skcipher *tfm)
 		fallback = crypto_alloc_skcipher(tfm_name, 0,
 						 CRYPTO_ALG_NEED_FALLBACK);
 		if (IS_ERR(fallback)) {
-			dev_err(ctx->jrdev, "Failed to allocate %s fallback: %ld\n",
-				tfm_name, PTR_ERR(fallback));
+			pr_err("Failed to allocate %s fallback: %ld\n",
+			       tfm_name, PTR_ERR(fallback));
 			return PTR_ERR(fallback);
 		}
 
@@ -3064,7 +3052,8 @@ static void caam_skcipher_alg_init(struct caam_skcipher_alg *t_alg)
 	alg->base.cra_module = THIS_MODULE;
 	alg->base.cra_priority = CAAM_CRA_PRIORITY;
 	alg->base.cra_ctxsize = sizeof(struct caam_ctx);
-	alg->base.cra_flags |= CRYPTO_ALG_ASYNC | CRYPTO_ALG_KERN_DRIVER_ONLY;
+	alg->base.cra_flags |= (CRYPTO_ALG_ASYNC | CRYPTO_ALG_ALLOCATES_MEMORY |
+				CRYPTO_ALG_KERN_DRIVER_ONLY);
 
 	alg->init = caam_cra_init;
 	alg->exit = caam_cra_exit;
@@ -3077,7 +3066,8 @@ static void caam_aead_alg_init(struct caam_aead_alg *t_alg)
 	alg->base.cra_module = THIS_MODULE;
 	alg->base.cra_priority = CAAM_CRA_PRIORITY;
 	alg->base.cra_ctxsize = sizeof(struct caam_ctx);
-	alg->base.cra_flags = CRYPTO_ALG_ASYNC | CRYPTO_ALG_KERN_DRIVER_ONLY;
+	alg->base.cra_flags = CRYPTO_ALG_ASYNC | CRYPTO_ALG_ALLOCATES_MEMORY |
+			      CRYPTO_ALG_KERN_DRIVER_ONLY;
 
 	alg->init = caam_aead_init;
 	alg->exit = caam_aead_exit;

@@ -6,6 +6,7 @@ Required properties:
 - compatible:	Should be "fsl,imx23-lcdif" for i.MX23.
 		Should be "fsl,imx28-lcdif" for i.MX28.
 		Should be "fsl,imx6sx-lcdif" for i.MX6SX.
+		Should be "fsl,imx8mq-lcdif" for i.MX8MQ.
 - reg:		Address and length of the register set for LCDIF
 - interrupts:	Should contain LCDIF interrupt
 - clocks:	A list of phandle + clock-specifier pairs, one for each
@@ -13,6 +14,11 @@ Required properties:
 - clock-names:	A list of clock names. For MXSFB it should contain:
     - "pix" for the LCDIF block clock
     - (MX6SX-only) "axi", "disp_axi" for the bus interface clock
+
+Optional properties:
+- max-memory-bandwidth: maximum bandwidth in bytes per second that the
+	controller can handle; if not present, the memory
+	interface is fast enough to handle all possible video modes
 
 Required sub-nodes:
   - port: The connection to an encoder chip.

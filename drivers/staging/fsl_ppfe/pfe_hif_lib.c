@@ -29,6 +29,7 @@ MODULE_PARM_DESC(tx_qos, "0: disable ,\n"
 unsigned int pfe_pkt_size;
 unsigned int pfe_pkt_headroom;
 unsigned int emac_txq_cnt;
+extern int NUM_GEMAC_SUPPORT;
 
 /*
  * @pfe_hal_lib.c.

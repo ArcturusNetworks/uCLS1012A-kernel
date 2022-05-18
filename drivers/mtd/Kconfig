@@ -12,25 +12,6 @@ menuconfig MTD
 
 if MTD
 
-menu "OpenWrt specific MTD options"
-
-config MTD_ROOTFS_ROOT_DEV
-	bool "Automatically set 'rootfs' partition to be root filesystem"
-	default y
-
-config MTD_SPLIT_FIRMWARE
-	bool "Automatically split firmware partition for kernel+rootfs"
-	default y
-
-config MTD_SPLIT_FIRMWARE_NAME
-	string "Firmware partition name"
-	depends on MTD_SPLIT_FIRMWARE
-	default "firmware"
-
-source "drivers/mtd/mtdsplit/Kconfig"
-
-endmenu
-
 config MTD_TESTS
 	tristate "MTD tests support (DANGEROUS)"
 	depends on m
@@ -189,6 +170,16 @@ config MTD_OOPS
 	  buffer in a flash partition where it can be read back at some
 	  later point.
 
+config MTD_PSTORE
+	tristate "Log panic/oops to an MTD buffer based on pstore"
+	depends on PSTORE_BLK
+	help
+	  This enables panic and oops messages to be logged to a circular
+	  buffer in a flash partition where it can be read back as files after
+	  mounting pstore filesystem.
+
+	  If unsure, say N.
+
 config MTD_SWAP
 	tristate "Swap on MTD device support"
 	depends on MTD && SWAP
@@ -227,7 +218,5 @@ source "drivers/mtd/spi-nor/Kconfig"
 source "drivers/mtd/ubi/Kconfig"
 
 source "drivers/mtd/hyperbus/Kconfig"
-
-source "drivers/mtd/composite/Kconfig"
 
 endif # MTD

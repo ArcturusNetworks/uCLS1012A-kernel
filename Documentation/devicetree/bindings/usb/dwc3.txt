@@ -4,18 +4,31 @@ DWC3- USB3 CONTROLLER. Complies to the generic USB binding properties
       as described in 'usb/generic.txt'
 
 Required properties:
- - compatible: must be "snps,dwc3"
+ - compatible: must be "snps,dwc3" and (if applicable) may contain a
+	chip-specific compatible string in front of it to allow dwc3 driver be
+	able to update cache type configuration accordingly, otherwise
+	Layerscape SoC will encounter USB init failure when adding property
+	dma-coherent on device tree.
+	Example:
+	* "fsl,ls1012a-dwc3", "snps,dwc3"
+	* "fsl,ls1021a-dwc3", "snps,dwc3"
+	* "fsl,ls1028a-dwc3", "snps,dwc3"
+	* "fsl,ls1043a-dwc3", "snps,dwc3"
+	* "fsl,ls1046a-dwc3", "snps,dwc3"
+	* "fsl,ls1088a-dwc3", "snps,dwc3"
+	* "fsl,ls2088a-dwc3", "snps,dwc3"
+	* "fsl,lx2160a-dwc3", "snps,dwc3"
+
  - reg : Address and length of the register set for the device
  - interrupts: Interrupts used by the dwc3 controller.
- - clock-names: should contain "ref", "bus_early", "suspend"
+ - clock-names: list of clock names. Ideally should be "ref",
+                "bus_early", "suspend" but may be less or more.
  - clocks: list of phandle and clock specifier pairs corresponding to
            entries in the clock-names property.
 
 Exception for clocks:
   clocks are optional if the parent node (i.e. glue-layer) is compatible to
   one of the following:
-    "amlogic,meson-axg-dwc3"
-    "amlogic,meson-gxl-dwc3"
     "cavium,octeon-7130-usb-uctl"
     "qcom,dwc3"
     "samsung,exynos5250-dwusb3"
@@ -36,7 +49,7 @@ Optional properties:
  - phys: from the *Generic PHY* bindings
  - phy-names: from the *Generic PHY* bindings; supported names are "usb2-phy"
 	or "usb3-phy".
- - resets: a single pair of phandle and reset specifier
+ - resets: set of phandle and reset specifier pairs
  - snps,usb2-lpm-disable: indicate if we don't want to enable USB2 HW LPM
  - snps,usb3_lpm_capable: determines if platform is USB3 LPM capable
  - snps,dis-start-transfer-quirk: when set, disable isoc START TRANSFER command
@@ -79,6 +92,9 @@ Optional properties:
 			park mode are disabled.
  - snps,dis_metastability_quirk: when set, disable metastability workaround.
 			CAUTION: use only if you are absolutely sure of it.
+ - snps,dis-split-quirk: when set, change the way URBs are handled by the
+			 driver. Needed to avoid -EPROTO errors with usbhid
+			 on some devices (Hikey 970).
  - snps,is-utmi-l1-suspend: true when DWC3 asserts output signal
 			utmi_l1_suspend_n, false when asserts utmi_sleep_n
  - snps,hird-threshold: HIRD threshold
@@ -110,6 +126,10 @@ Optional properties:
 			When just one value, which means INCRX burst mode enabled. When
 			more than one value, which means undefined length INCR burst type
 			enabled. The values can be 1, 4, 8, 16, 32, 64, 128 and 256.
+
+ - snps,host-vbus-glitches: Power off all Root Hub ports immediately after
+			setting host mode to avoid vbus (negative) glitch happen in later
+			xhci reset. And the vbus will back to 5V automatically when reset done.
 
  - in addition all properties from usb-xhci.txt from the current directory are
    supported as well

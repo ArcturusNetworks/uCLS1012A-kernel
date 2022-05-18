@@ -279,21 +279,14 @@ static int parse_redboot_partitions(struct mtd_info *master,
 #endif
 		names += strlen(names)+1;
 
-		if(fl->next && fl->img->flash_base + fl->img->size + master->erasesize <= fl->next->img->flash_base) {
-			if (!strcmp(parts[i].name, "rootfs")) {
-				parts[i].size = fl->next->img->flash_base;
-				parts[i].size &= ~(master->erasesize - 1);
-				parts[i].size -= parts[i].offset;
 #ifdef CONFIG_MTD_REDBOOT_PARTS_UNALLOCATED
-				nrparts--;
-			} else {
-				i++;
-				parts[i].offset = parts[i-1].size + parts[i-1].offset;
-				parts[i].size = fl->next->img->flash_base - parts[i].offset;
-				parts[i].name = nullname;
-#endif
-			}
+		if(fl->next && fl->img->flash_base + fl->img->size + master->erasesize <= fl->next->img->flash_base) {
+			i++;
+			parts[i].offset = parts[i-1].size + parts[i-1].offset;
+			parts[i].size = fl->next->img->flash_base - parts[i].offset;
+			parts[i].name = nullname;
 		}
+#endif
 		tmp_fl = fl;
 		fl = fl->next;
 		kfree(tmp_fl);
@@ -312,7 +305,6 @@ static int parse_redboot_partitions(struct mtd_info *master,
 
 static const struct of_device_id mtd_parser_redboot_of_match_table[] = {
 	{ .compatible = "redboot-fis" },
-	{ .compatible = "ecoscentric,redboot-fis-partitions" },
 	{},
 };
 MODULE_DEVICE_TABLE(of, mtd_parser_redboot_of_match_table);

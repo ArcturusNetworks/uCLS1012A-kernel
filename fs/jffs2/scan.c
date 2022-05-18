@@ -148,14 +148,8 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 		/* reset summary info for next eraseblock scan */
 		jffs2_sum_reset_collected(s);
 
-		if (c->flags & (1 << 7)) {
-			if (mtd_block_isbad(c->mtd, jeb->offset))
-				ret = BLK_STATE_BADBLOCK;
-			else
-				ret = BLK_STATE_ALLFF;
-		} else
-			ret = jffs2_scan_eraseblock(c, jeb, buf_size?flashbuf:(flashbuf+jeb->offset),
-							buf_size, s);
+		ret = jffs2_scan_eraseblock(c, jeb, buf_size?flashbuf:(flashbuf+jeb->offset),
+						buf_size, s);
 
 		if (ret < 0)
 			goto out;
@@ -267,7 +261,8 @@ int jffs2_scan_medium(struct jffs2_sb_info *c)
 	}
 #endif
 	if (c->nr_erasing_blocks) {
-		if ( !c->used_size && ((c->nr_free_blocks+empty_blocks+bad_blocks)!= c->nr_blocks || bad_blocks == c->nr_blocks) ) {
+		if (!c->used_size && !c->unchecked_size &&
+			((c->nr_free_blocks+empty_blocks+bad_blocks) != c->nr_blocks || bad_blocks == c->nr_blocks)) {
 			pr_notice("Cowardly refusing to erase blocks on filesystem with no valid JFFS2 nodes\n");
 			pr_notice("empty_blocks %d, bad_blocks %d, c->nr_blocks %d\n",
 				  empty_blocks, bad_blocks, c->nr_blocks);
@@ -568,17 +563,6 @@ full_scan:
 		err = jffs2_fill_scan_buf(c, buf, buf_ofs, buf_len);
 		if (err)
 			return err;
-	}
-
-	if ((buf[0] == 0xde) &&
-		(buf[1] == 0xad) &&
-		(buf[2] == 0xc0) &&
-		(buf[3] == 0xde)) {
-		/* end of filesystem. erase everything after this point */
-		printk("%s(): End of filesystem marker found at 0x%x\n", __func__, jeb->offset);
-		c->flags |= (1 << 7);
-
-		return BLK_STATE_ALLFF;
 	}
 
 	/* We temporarily use 'ofs' as a pointer into the buffer/jeb */

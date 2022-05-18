@@ -4,5 +4,4 @@
 #
 
 obj-$(CONFIG_FSL_DPAA2_ETHSW)		+= ethsw/
-obj-$(CONFIG_FSL_DPAA2_MAC)		+= mac/
 obj-$(CONFIG_FSL_DPAA2_EVB)		+= evb/

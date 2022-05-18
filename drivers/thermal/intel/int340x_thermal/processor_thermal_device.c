@@ -42,6 +42,12 @@
 /* IceLake thermal reporting device */
 #define PCI_DEVICE_ID_PROC_ICL_THERMAL	0x8a03
 
+/* JasperLake thermal reporting device */
+#define PCI_DEVICE_ID_PROC_JSL_THERMAL	0x4E03
+
+/* TigerLake thermal reporting device */
+#define PCI_DEVICE_ID_PROC_TGL_THERMAL	0x9A03
+
 #define DRV_NAME "proc_thermal"
 
 struct power_config {
@@ -179,7 +185,7 @@ static int tcc_offset_update(unsigned int tcc)
 	return 0;
 }
 
-static unsigned int tcc_offset_save;
+static int tcc_offset_save = -1;
 
 static ssize_t tcc_offset_degree_celsius_store(struct device *dev,
 				struct device_attribute *attr, const char *buf,
@@ -703,7 +709,8 @@ static int proc_thermal_resume(struct device *dev)
 	proc_dev = dev_get_drvdata(dev);
 	proc_thermal_read_ppcc(proc_dev);
 
-	tcc_offset_update(tcc_offset_save);
+	if (tcc_offset_save >= 0)
+		tcc_offset_update(tcc_offset_save);
 
 	return 0;
 }
@@ -727,6 +734,9 @@ static const struct pci_device_id proc_thermal_pci_ids[] = {
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_PROC_CFL_THERMAL)},
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_PROC_GLK_THERMAL)},
 	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_PROC_ICL_THERMAL),
+		.driver_data = (kernel_ulong_t)&rapl_mmio_hsw, },
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_PROC_JSL_THERMAL)},
+	{ PCI_DEVICE(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_PROC_TGL_THERMAL),
 		.driver_data = (kernel_ulong_t)&rapl_mmio_hsw, },
 	{ 0, },
 };

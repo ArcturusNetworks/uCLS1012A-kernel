@@ -27,19 +27,6 @@ SECTIONS
 
 	. = CONFIG_LINUX_LINK_BASE;
 
-	/*
-	* In OpenWRT we want to patch built binary embedding .dtb of choice.
-	* This is implemented with "patch-dtb" utility which searches for
-	* "OWRTDTB:" string in first 16k of image and if it is found
-	* copies .dtb right after mentioned string.
-	*
-	* Note: "OWRTDTB:" won't be overwritten with .dtb, .dtb will follow it.
-	*/
- 	.owrt : {
-		*(.owrt)
-	. = ALIGN(PAGE_SIZE);
-	}
-
 	_int_vec_base_lds = .;
 	.vector : {
 		*(.vector)
@@ -101,6 +88,8 @@ SECTIONS
 		CPUIDLE_TEXT
 		LOCK_TEXT
 		KPROBES_TEXT
+		IRQENTRY_TEXT
+		SOFTIRQENTRY_TEXT
 		*(.fixup)
 		*(.gnu.warning)
 	}
@@ -108,13 +97,13 @@ SECTIONS
 	_etext = .;
 
 	_sdata = .;
-	RO_DATA_SECTION(PAGE_SIZE)
+	RO_DATA(PAGE_SIZE)
 
 	/*
 	 * 1. this is .data essentially
 	 * 2. THREAD_SIZE for init.task, must be kernel-stk sz aligned
 	 */
-	RW_DATA_SECTION(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
+	RW_DATA(L1_CACHE_BYTES, PAGE_SIZE, THREAD_SIZE)
 
 	_edata = .;
 
@@ -131,12 +120,11 @@ SECTIONS
 	/DISCARD/ : {	*(.eh_frame) }
 #endif
 
-	NOTES
-
 	. = ALIGN(PAGE_SIZE);
 	_end = . ;
 
 	STABS_DEBUG
+	ELF_DETAILS
 	DISCARDS
 
 	.arcextmap 0 : {

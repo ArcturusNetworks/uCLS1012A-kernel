@@ -790,7 +790,7 @@ static void w5100_restart_work(struct work_struct *work)
 	w5100_restart(priv->ndev);
 }
 
-static void w5100_tx_timeout(struct net_device *ndev)
+static void w5100_tx_timeout(struct net_device *ndev, unsigned int txqueue)
 {
 	struct w5100_priv *priv = netdev_priv(ndev);
 
@@ -1052,6 +1052,8 @@ static int w5100_mmio_probe(struct platform_device *pdev)
 		mac_addr = data->mac_addr;
 
 	mem = platform_get_resource(pdev, IORESOURCE_MEM, 0);
+	if (!mem)
+		return -EINVAL;
 	if (resource_size(mem) < W5100_BUS_DIRECT_SIZE)
 		ops = &w5100_mmio_indirect_ops;
 	else

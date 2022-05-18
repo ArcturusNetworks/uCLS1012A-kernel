@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2019 NXP Semiconductor, Inc.
+ * Copyright 2019-2021 NXP
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -7,9 +7,10 @@
  * (at your option) any later version.
  */
 
-#include <drm/drmP.h>
+#include <drm/drm_vblank.h>
+#include <drm/drm_print.h>
 #include <linux/io.h>
-#include <drm/bridge/cdns-mhdp-common.h>
+#include <drm/bridge/cdns-mhdp.h>
 #include <linux/regmap.h>
 
 void cdns_mhdp_infoframe_set(struct cdns_mhdp_device *mhdp,
@@ -204,7 +205,7 @@ int cdns_hdmi_ctrl_init(struct cdns_mhdp_device *mhdp,
 
 	/* set hdmi mode and preemble mode data enable */
 	val = F_HDMI_MODE(protocol) | F_HDMI2_PREAMBLE_EN(1) |  F_DATA_EN(1) |
-			F_HDMI2_CTRL_IL_MODE(1) | F_BCH_EN(1) | F_PIC_3D(0XF);
+			F_HDMI2_CTRL_IL_MODE(1) | F_BCH_EN(1) | F_PIC_3D(0XF) | F_CLEAR_AVMUTE(1);
 	ret = cdns_mhdp_reg_write(mhdp, HDTX_CONTROLLER, val);
 
 	return ret;

@@ -373,7 +373,7 @@ unsigned int acpi_dev_get_irq_type(int triggering, int polarity)
 	case ACPI_ACTIVE_BOTH:
 		if (triggering == ACPI_EDGE_SENSITIVE)
 			return IRQ_TYPE_EDGE_BOTH;
-		/* fall through */
+		fallthrough;
 	default:
 		return IRQ_TYPE_NONE;
 	}
@@ -413,8 +413,8 @@ static void acpi_dev_get_irqresource(struct resource *res, u32 gsi,
 		u8 pol = p ? ACPI_ACTIVE_LOW : ACPI_ACTIVE_HIGH;
 
 		if (triggering != trig || polarity != pol) {
-			pr_warning("ACPI: IRQ %d override to %s, %s\n", gsi,
-				   t ? "level" : "edge", p ? "low" : "high");
+			pr_warn("ACPI: IRQ %d override to %s, %s\n", gsi,
+				t ? "level" : "edge", p ? "low" : "high");
 			triggering = trig;
 			polarity = pol;
 		}
@@ -428,13 +428,6 @@ static void acpi_dev_get_irqresource(struct resource *res, u32 gsi,
 	} else {
 		acpi_dev_irqresource_disabled(res, gsi);
 	}
-}
-
-static bool irq_is_legacy(struct acpi_resource_irq *irq)
-{
-	return irq->triggering == ACPI_EDGE_SENSITIVE &&
-		irq->polarity == ACPI_ACTIVE_HIGH &&
-		irq->shareable == ACPI_EXCLUSIVE;
 }
 
 /**
@@ -475,7 +468,7 @@ bool acpi_dev_resource_interrupt(struct acpi_resource *ares, int index,
 		}
 		acpi_dev_get_irqresource(res, irq->interrupts[index],
 					 irq->triggering, irq->polarity,
-					 irq->shareable, irq_is_legacy(irq));
+					 irq->shareable, true);
 		break;
 	case ACPI_RESOURCE_TYPE_EXTENDED_IRQ:
 		ext_irq = &ares->data.extended_irq;

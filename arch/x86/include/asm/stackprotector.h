@@ -65,7 +65,7 @@
  */
 static __always_inline void boot_init_stack_canary(void)
 {
-	u64 canary;
+	u64 canary = 0;
 	u64 tsc;
 
 #ifdef CONFIG_X86_64
@@ -76,8 +76,14 @@ static __always_inline void boot_init_stack_canary(void)
 	 * of randomness. The TSC only matters for very early init,
 	 * there it already has some randomness on most systems. Later
 	 * on during the bootup the random pool has true entropy too.
+	 * For preempt-rt we need to weaken the randomness a bit, as
+	 * we can't call into the random generator from atomic context
+	 * due to locking constraints. We just leave canary
+	 * uninitialized and use the TSC based randomness on top of it.
 	 */
+#ifndef CONFIG_PREEMPT_RT
 	get_random_bytes(&canary, sizeof(canary));
+#endif
 	tsc = rdtsc();
 	canary += tsc + (tsc << 32UL);
 	canary &= CANARY_MASK;
@@ -87,6 +93,15 @@ static __always_inline void boot_init_stack_canary(void)
 	this_cpu_write(fixed_percpu_data.stack_canary, canary);
 #else
 	this_cpu_write(stack_canary.canary, canary);
+#endif
+}
+
+static inline void cpu_init_stack_canary(int cpu, struct task_struct *idle)
+{
+#ifdef CONFIG_X86_64
+	per_cpu(fixed_percpu_data.stack_canary, cpu) = idle->stack_canary;
+#else
+	per_cpu(stack_canary.canary, cpu) = idle->stack_canary;
 #endif
 }
 
@@ -117,6 +132,9 @@ static inline void load_stack_canary_segment(void)
 /* dummy boot_init_stack_canary() is defined in linux/stackprotector.h */
 
 static inline void setup_stack_canary_segment(int cpu)
+{ }
+
+static inline void cpu_init_stack_canary(int cpu, struct task_struct *idle)
 { }
 
 static inline void load_stack_canary_segment(void)

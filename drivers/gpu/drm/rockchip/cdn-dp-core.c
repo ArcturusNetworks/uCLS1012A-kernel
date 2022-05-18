@@ -20,6 +20,7 @@
 #include <drm/drm_edid.h>
 #include <drm/drm_of.h>
 #include <drm/drm_probe_helper.h>
+#include <drm/drm_simple_kms_helper.h>
 
 #include "cdn-dp-core.h"
 #include "rockchip_drm_vop.h"
@@ -169,7 +170,7 @@ static int cdn_dp_get_sink_count(struct cdn_dp_device *dp, u8 *sink_count)
 	u8 value;
 
 	*sink_count = 0;
-	ret = cdns_mhdp_dpcd_read(&dp->mhdp, DP_SINK_COUNT, &value, 1);
+	ret = drm_dp_dpcd_read(&dp->mhdp.dp.aux, DP_SINK_COUNT, &value, 1);
 	if (ret)
 		return ret;
 
@@ -306,10 +307,12 @@ static int cdn_dp_connector_mode_valid(struct drm_connector *connector,
 	requested = mode->clock * bpc * 3 / 1000;
 
 	source_max = dp->lanes;
-	sink_max = dp->mhdp.dp.link.num_lanes;
+	sink_max = drm_dp_max_lane_count(dp->mhdp.dp.dpcd);
 	lanes = min(source_max, sink_max);
 
-	rate = dp->mhdp.dp.link.rate;
+	source_max = CDNS_DP_MAX_LINK_RATE;
+	sink_max = drm_dp_max_link_rate(dp->mhdp.dp.dpcd);
+	rate = min(source_max, sink_max);
 
 	actual = rate * lanes / 100;
 
@@ -365,20 +368,17 @@ static int cdn_dp_firmware_init(struct cdn_dp_device *dp)
 static int cdn_dp_get_sink_capability(struct cdn_dp_device *dp)
 {
 	struct cdns_mhdp_device *mhdp = &dp->mhdp;
-	struct drm_dp_link *link = &mhdp->dp.link;
 	int ret;
 
 	if (!cdn_dp_check_sink_connection(dp))
 		return -ENODEV;
 
-	ret = drm_dp_link_probe(&mhdp->dp.aux, link);
+	ret = drm_dp_dpcd_read(&mhdp->dp.aux, DP_DPCD_REV, mhdp->dp.dpcd,
+			       DP_RECEIVER_CAP_SIZE);
 	if (ret) {
 		DRM_DEV_ERROR(mhdp->dev, "Failed to get caps %d\n", ret);
 		return ret;
 	}
-
-	if (link->rate > CDNS_DP_MAX_LINK_RATE)
-		link->rate = CDNS_DP_MAX_LINK_RATE;
 
 	kfree(dp->edid);
 	dp->edid = drm_do_get_edid(&mhdp->connector.base,
@@ -409,7 +409,7 @@ static int cdn_dp_enable_phy(struct cdn_dp_device *dp, struct cdn_dp_port *port)
 		goto err_power_on;
 	}
 
-	ret = cdns_mhdp_get_hpd_status(&dp->mhdp);
+	ret = cdns_mhdp_read_hpd(&dp->mhdp);
 	if (ret <= 0) {
 		if (!ret)
 			DRM_DEV_ERROR(dev, "hpd does not exist\n");
@@ -424,8 +424,12 @@ static int cdn_dp_enable_phy(struct cdn_dp_device *dp, struct cdn_dp_port *port)
 	}
 
 	port->lanes = cdn_dp_get_port_lanes(port);
-	dp->mhdp.dp.link.num_lanes = port->lanes;
-	ret = cdns_mhdp_set_host_cap(&dp->mhdp, property.intval);
+
+	if (property.intval)
+		dp->mhdp.lane_mapping = LANE_MAPPING_FLIPPED;
+	else
+		dp->mhdp.lane_mapping = LANE_MAPPING_NORMAL;
+	ret = cdns_mhdp_set_host_cap(&dp->mhdp);
 	if (ret) {
 		DRM_DEV_ERROR(dev, "set host capabilities failed: %d\n",
 			      ret);
@@ -488,8 +492,8 @@ static int cdn_dp_disable(struct cdn_dp_device *dp)
 	cdns_mhdp_set_firmware_active(&dp->mhdp, false);
 	cdn_dp_clk_disable(dp);
 	dp->active = false;
-	dp->mhdp.dp.link.rate = 0;
-	dp->mhdp.dp.link.num_lanes = 0;
+	dp->mhdp.dp.rate = 0;
+	dp->mhdp.dp.num_lanes = 0;
 	if (!dp->connected) {
 		kfree(dp->edid);
 		dp->edid = NULL;
@@ -580,12 +584,12 @@ static bool cdn_dp_check_link_status(struct cdn_dp_device *dp)
 {
 	u8 link_status[DP_LINK_STATUS_SIZE];
 	struct cdn_dp_port *port = cdn_dp_connected_port(dp);
-	u8 sink_lanes = dp->mhdp.dp.link.num_lanes;
+	u8 sink_lanes = drm_dp_max_lane_count(dp->mhdp.dp.dpcd);
 
-	if (!port || !dp->mhdp.dp.link.rate || !sink_lanes)
+	if (!port || !dp->mhdp.dp.rate || !dp->mhdp.dp.num_lanes)
 		return false;
 
-	if (cdns_mhdp_dpcd_read(&dp->mhdp, DP_LANE0_1_STATUS, link_status,
+	if (drm_dp_dpcd_read(&dp->mhdp.dp.aux, DP_LANE0_1_STATUS, link_status,
 				DP_LINK_STATUS_SIZE)) {
 		DRM_ERROR("Failed to get link status\n");
 		return false;
@@ -701,10 +705,6 @@ static const struct drm_encoder_helper_funcs cdn_dp_encoder_helper_funcs = {
 	.enable = cdn_dp_encoder_enable,
 	.disable = cdn_dp_encoder_disable,
 	.atomic_check = cdn_dp_encoder_atomic_check,
-};
-
-static const struct drm_encoder_funcs cdn_dp_encoder_funcs = {
-	.destroy = drm_encoder_cleanup,
 };
 
 static int cdn_dp_parse_dt(struct cdn_dp_device *dp)
@@ -834,8 +834,8 @@ out:
 	mutex_unlock(&dp->lock);
 }
 
-static int cdn_dp_audio_digital_mute(struct device *dev, void *data,
-				     bool enable)
+static int cdn_dp_audio_mute_stream(struct device *dev, void *data,
+				    bool enable, int direction)
 {
 	struct cdn_dp_device *dp = dev_get_drvdata(dev);
 	int ret;
@@ -867,8 +867,9 @@ static int cdn_dp_audio_get_eld(struct device *dev, void *data,
 static const struct hdmi_codec_ops audio_codec_ops = {
 	.hw_params = cdn_dp_audio_hw_params,
 	.audio_shutdown = cdn_dp_audio_shutdown,
-	.digital_mute = cdn_dp_audio_digital_mute,
+	.mute_stream = cdn_dp_audio_mute_stream,
 	.get_eld = cdn_dp_audio_get_eld,
+	.no_capture_mute = 1,
 };
 
 static int cdn_dp_audio_codec_init(struct cdn_dp_device *dp,
@@ -969,8 +970,8 @@ static void cdn_dp_pd_event_work(struct work_struct *work)
 
 	/* Enabled and connected with a sink, re-train if requested */
 	} else if (!cdn_dp_check_link_status(dp)) {
-		unsigned int rate = dp->mhdp.dp.link.rate;
-		unsigned int lanes = dp->mhdp.dp.link.num_lanes;
+		unsigned int rate = dp->mhdp.dp.rate;
+		unsigned int lanes = dp->mhdp.dp.num_lanes;
 		struct drm_display_mode *mode = &dp->mhdp.mode;
 
 		DRM_DEV_INFO(dev, "Connected with sink. Re-train link\n");
@@ -983,8 +984,8 @@ static void cdn_dp_pd_event_work(struct work_struct *work)
 
 		/* If training result is changed, update the video config */
 		if (mode->clock &&
-		    (rate != dp->mhdp.dp.link.rate ||
-		     lanes != dp->mhdp.dp.link.num_lanes)) {
+		    (rate != dp->mhdp.dp.rate ||
+		     lanes != dp->mhdp.dp.num_lanes)) {
 			ret = cdns_mhdp_config_video(&dp->mhdp);
 			if (ret) {
 				dp->connected = false;
@@ -1048,8 +1049,8 @@ static int cdn_dp_bind(struct device *dev, struct device *master, void *data)
 							     dev->of_node);
 	DRM_DEBUG_KMS("possible_crtcs = 0x%x\n", encoder->possible_crtcs);
 
-	ret = drm_encoder_init(drm_dev, encoder, &cdn_dp_encoder_funcs,
-			       DRM_MODE_ENCODER_TMDS, NULL);
+	ret = drm_simple_encoder_init(drm_dev, encoder,
+				      DRM_MODE_ENCODER_TMDS);
 	if (ret) {
 		DRM_ERROR("failed to initialize encoder with drm\n");
 		return ret;
@@ -1127,7 +1128,7 @@ static const struct component_ops cdn_dp_component_ops = {
 	.unbind = cdn_dp_unbind,
 };
 
-int cdn_dp_suspend(struct device *dev)
+static int cdn_dp_suspend(struct device *dev)
 {
 	struct cdn_dp_device *dp = dev_get_drvdata(dev);
 	int ret = 0;
@@ -1141,7 +1142,7 @@ int cdn_dp_suspend(struct device *dev)
 	return ret;
 }
 
-int cdn_dp_resume(struct device *dev)
+static __maybe_unused int cdn_dp_resume(struct device *dev)
 {
 	struct cdn_dp_device *dp = dev_get_drvdata(dev);
 

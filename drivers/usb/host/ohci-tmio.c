@@ -97,13 +97,13 @@ static void tmio_stop_hc(struct platform_device *dev)
 	switch (ohci->num_ports) {
 		default:
 			dev_err(&dev->dev, "Unsupported amount of ports: %d\n", ohci->num_ports);
-			/* fall through */
+			fallthrough;
 		case 3:
 			pm |= CCR_PM_USBPW3;
-			/* fall through */
+			fallthrough;
 		case 2:
 			pm |= CCR_PM_USBPW2;
-			/* fall through */
+			fallthrough;
 		case 1:
 			pm |= CCR_PM_USBPW1;
 	}
@@ -201,6 +201,9 @@ static int ohci_hcd_tmio_drv_probe(struct platform_device *dev)
 
 	if (!cell)
 		return -EINVAL;
+
+	if (irq < 0)
+		return irq;
 
 	hcd = usb_create_hcd(&ohci_tmio_hc_driver, &dev->dev, dev_name(&dev->dev));
 	if (!hcd) {

@@ -1120,11 +1120,10 @@ static void setup_txtime(struct taprio_sched *q,
 
 static struct tc_taprio_qopt_offload *taprio_offload_alloc(int num_entries)
 {
-	size_t size = sizeof(struct tc_taprio_sched_entry) * num_entries +
-		      sizeof(struct __tc_taprio_qopt_offload);
 	struct __tc_taprio_qopt_offload *__offload;
 
-	__offload = kzalloc(size, GFP_KERNEL);
+	__offload = kzalloc(struct_size(__offload, offload.entries, num_entries),
+			    GFP_KERNEL);
 	if (!__offload)
 		return NULL;
 
@@ -1503,7 +1502,9 @@ static int taprio_change(struct Qdisc *sch, struct nlattr *opt,
 	taprio_set_picos_per_byte(dev, q);
 
 	if (mqprio) {
-		netdev_set_num_tc(dev, mqprio->num_tc);
+		err = netdev_set_num_tc(dev, mqprio->num_tc);
+		if (err)
+			goto free_sched;
 		for (i = 0; i < mqprio->num_tc; i++)
 			netdev_set_tc_queue(dev, i,
 					    mqprio->count[i],
@@ -1611,8 +1612,9 @@ static void taprio_reset(struct Qdisc *sch)
 
 	hrtimer_cancel(&q->advance_timer);
 	if (q->qdiscs) {
-		for (i = 0; i < dev->num_tx_queues && q->qdiscs[i]; i++)
-			qdisc_reset(q->qdiscs[i]);
+		for (i = 0; i < dev->num_tx_queues; i++)
+			if (q->qdiscs[i])
+				qdisc_reset(q->qdiscs[i]);
 	}
 	sch->qstats.backlog = 0;
 	sch->q.qlen = 0;

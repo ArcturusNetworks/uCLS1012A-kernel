@@ -11,6 +11,7 @@
 #define INTERN_H
 
 #include "ctrl.h"
+#include <crypto/engine.h>
 
 /* Currently comes from Kconfig param as a ^2 (driver-required) */
 #define JOBR_DEPTH (1 << CONFIG_CRYPTO_DEV_FSL_CAAM_RINGSIZE)
@@ -59,6 +60,7 @@ struct caam_drv_private_jr {
 	struct tasklet_struct irqtask;
 	struct caam_jr_dequeue_params tasklet_params;
 	int irq;			/* One per queue */
+	bool hwrng;
 
 	/* Number of scatterlist crypt transforms active on the JobR */
 	atomic_t tfm_count ____cacheline_aligned;
@@ -73,6 +75,7 @@ struct caam_drv_private_jr {
 	int out_ring_read_index;	/* Output index "tail" */
 	int tail;			/* entinfo (s/w ring) tail index */
 	void *outring;			/* Base of output ring, DMA-safe */
+	struct crypto_engine *engine;
 
 #ifdef CONFIG_PM_SLEEP
 	struct caam_jr_state state;	/* State of the JR during PM */
@@ -102,7 +105,6 @@ struct caam_drv_private {
 	struct caam_job_ring __iomem *jr[4];	/* JobR's register space */
 	dma_addr_t __iomem *sm_base;	/* Secure memory storage base */
 	phys_addr_t sm_phy;		/* Secure memory storage physical */
-	u32 sm_size;
 
 	struct iommu_domain *domain;
 
@@ -116,6 +118,7 @@ struct caam_drv_private {
 	u8 mc_en;		/* Nonzero if MC f/w is active */
 	u8 scu_en;		/* Nonzero if SCU f/w is active */
 	u8 optee_en;		/* Nonzero if OP-TEE f/w is active */
+	bool pr_support;	/* RNG prediction resistance available */
 	int virt_en;		/* Virtualization enabled in CAAM */
 	int era;		/* CAAM Era (internal HW revision) */
 
@@ -199,7 +202,7 @@ static inline void caam_pkc_exit(void)
 #ifdef CONFIG_CRYPTO_DEV_FSL_CAAM_RNG_API
 
 int caam_rng_init(struct device *dev);
-void caam_rng_exit(void);
+void caam_rng_exit(struct device *dev);
 
 #else
 
@@ -208,9 +211,7 @@ static inline int caam_rng_init(struct device *dev)
 	return 0;
 }
 
-static inline void caam_rng_exit(void)
-{
-}
+static inline void caam_rng_exit(struct device *dev) {}
 
 #endif /* CONFIG_CRYPTO_DEV_FSL_CAAM_RNG_API */
 
@@ -250,22 +251,23 @@ static inline void caam_sm_shutdown(struct device *dev)
 
 #endif /* CONFIG_CRYPTO_DEV_FSL_CAAM_SM */
 
-#ifdef CONFIG_DEBUG_FS
-static int caam_debugfs_u64_get(void *data, u64 *val)
+#ifdef CONFIG_CRYPTO_DEV_FSL_CAAM_TK_API
+
+int caam_keygen_init(void);
+void caam_keygen_exit(void);
+
+#else
+
+static inline int caam_keygen_init(void)
 {
-	*val = caam64_to_cpu(*(u64 *)data);
 	return 0;
 }
 
-static int caam_debugfs_u32_get(void *data, u64 *val)
+static inline void caam_keygen_exit(void)
 {
-	*val = caam32_to_cpu(*(u32 *)data);
-	return 0;
 }
 
-DEFINE_SIMPLE_ATTRIBUTE(caam_fops_u32_ro, caam_debugfs_u32_get, NULL, "%llu\n");
-DEFINE_SIMPLE_ATTRIBUTE(caam_fops_u64_ro, caam_debugfs_u64_get, NULL, "%llu\n");
-#endif
+#endif /* CONFIG_CRYPTO_DEV_FSL_CAAM_TK_API */
 
 static inline u64 caam_get_dma_mask(struct device *dev)
 {

@@ -48,7 +48,7 @@
 	.fixup_map_array_48b = { 8 },
 	.result = ACCEPT,
 	.result_unpriv = REJECT,
-	.errstr_unpriv = "R0 min value is outside of the array range",
+	.errstr_unpriv = "R0 min value is outside of the allowed memory range",
 	.retval = 1,
 },
 {
@@ -120,7 +120,7 @@
 	.fixup_map_array_48b = { 1 },
 	.result = ACCEPT,
 	.result_unpriv = REJECT,
-	.errstr_unpriv = "R2 tried to add from different maps, paths or scalars",
+	.errstr_unpriv = "R2 pointer comparison prohibited",
 	.retval = 0,
 },
 {
@@ -159,7 +159,8 @@
 	BPF_MOV64_IMM(BPF_REG_0, 0),
 	BPF_EXIT_INSN(),
 	// fake-dead code; targeted from branch A to
-	// prevent dead code sanitization
+	// prevent dead code sanitization, rejected
+	// via branch B however
 	BPF_LDX_MEM(BPF_B, BPF_REG_0, BPF_REG_0, 0),
 	BPF_MOV64_IMM(BPF_REG_0, 0),
 	BPF_EXIT_INSN(),
@@ -167,7 +168,7 @@
 	.fixup_map_array_48b = { 1 },
 	.result = ACCEPT,
 	.result_unpriv = REJECT,
-	.errstr_unpriv = "R2 tried to add from different maps, paths or scalars",
+	.errstr_unpriv = "R0 invalid mem access 'inv'",
 	.retval = 0,
 },
 {
@@ -300,8 +301,6 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = ACCEPT,
-	.result_unpriv = REJECT,
-	.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 	.retval = 1,
 },
 {
@@ -323,7 +322,7 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = REJECT,
-	.errstr = "R0 min value is outside of the array range",
+	.errstr = "R0 min value is outside of the allowed memory range",
 	.result_unpriv = REJECT,
 	.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 },
@@ -371,8 +370,6 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = ACCEPT,
-	.result_unpriv = REJECT,
-	.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 	.retval = 1,
 },
 {
@@ -472,8 +469,6 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = ACCEPT,
-	.result_unpriv = REJECT,
-	.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 	.retval = 1,
 },
 {
@@ -620,7 +615,7 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = REJECT,
-	.errstr = "R1 max value is outside of the array range",
+	.errstr = "R1 max value is outside of the allowed memory range",
 	.errstr_unpriv = "R1 pointer arithmetic of map value goes out of range",
 	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },
@@ -745,7 +740,7 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = REJECT,
-	.errstr = "R0 min value is outside of the array range",
+	.errstr = "R0 min value is outside of the allowed memory range",
 },
 {
 	"map access: value_ptr -= known scalar, 2",
@@ -766,8 +761,6 @@
 	},
 	.fixup_map_array_48b = { 3 },
 	.result = ACCEPT,
-	.result_unpriv = REJECT,
-	.errstr_unpriv = "R0 pointer arithmetic of map value goes out of range",
 	.retval = 1,
 },
 {
@@ -854,4 +847,42 @@
 	.result = REJECT,
 	.errstr = "R0 invalid mem access 'inv'",
 	.errstr_unpriv = "R0 pointer -= pointer prohibited",
+},
+{
+	"32bit pkt_ptr -= scalar",
+	.insns = {
+	BPF_LDX_MEM(BPF_W, BPF_REG_8, BPF_REG_1,
+		    offsetof(struct __sk_buff, data_end)),
+	BPF_LDX_MEM(BPF_W, BPF_REG_7, BPF_REG_1,
+		    offsetof(struct __sk_buff, data)),
+	BPF_MOV64_REG(BPF_REG_6, BPF_REG_7),
+	BPF_ALU64_IMM(BPF_ADD, BPF_REG_6, 40),
+	BPF_JMP_REG(BPF_JGT, BPF_REG_6, BPF_REG_8, 2),
+	BPF_ALU32_REG(BPF_MOV, BPF_REG_4, BPF_REG_7),
+	BPF_ALU32_REG(BPF_SUB, BPF_REG_6, BPF_REG_4),
+	BPF_MOV64_IMM(BPF_REG_0, 0),
+	BPF_EXIT_INSN(),
+	},
+	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	.result = ACCEPT,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
+},
+{
+	"32bit scalar -= pkt_ptr",
+	.insns = {
+	BPF_LDX_MEM(BPF_W, BPF_REG_8, BPF_REG_1,
+		    offsetof(struct __sk_buff, data_end)),
+	BPF_LDX_MEM(BPF_W, BPF_REG_7, BPF_REG_1,
+		    offsetof(struct __sk_buff, data)),
+	BPF_MOV64_REG(BPF_REG_6, BPF_REG_7),
+	BPF_ALU64_IMM(BPF_ADD, BPF_REG_6, 40),
+	BPF_JMP_REG(BPF_JGT, BPF_REG_6, BPF_REG_8, 2),
+	BPF_ALU32_REG(BPF_MOV, BPF_REG_4, BPF_REG_6),
+	BPF_ALU32_REG(BPF_SUB, BPF_REG_4, BPF_REG_7),
+	BPF_MOV64_IMM(BPF_REG_0, 0),
+	BPF_EXIT_INSN(),
+	},
+	.prog_type = BPF_PROG_TYPE_SCHED_CLS,
+	.result = ACCEPT,
+	.flags = F_NEEDS_EFFICIENT_UNALIGNED_ACCESS,
 },

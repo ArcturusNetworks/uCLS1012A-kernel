@@ -270,11 +270,11 @@ static void regulator_disable_action(void *_data)
 static int ktd2692_parse_dt(struct ktd2692_context *led, struct device *dev,
 			    struct ktd2692_led_config_data *cfg)
 {
-	struct device_node *np = dev->of_node;
+	struct device_node *np = dev_of_node(dev);
 	struct device_node *child_node;
 	int ret;
 
-	if (!dev->of_node)
+	if (!dev_of_node(dev))
 		return -ENXIO;
 
 	led->ctrl_gpio = devm_gpiod_get(dev, "ctrl", GPIOD_ASIS);

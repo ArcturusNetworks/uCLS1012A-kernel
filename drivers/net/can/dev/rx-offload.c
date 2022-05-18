@@ -51,11 +51,11 @@ static int can_rx_offload_napi_poll(struct napi_struct *napi, int quota)
 
 	while ((work_done < quota) &&
 	       (skb = skb_dequeue(&offload->skb_queue))) {
-		struct canfd_frame *cfd = (struct canfd_frame *)skb->data;
+		struct can_frame *cf = (struct can_frame *)skb->data;
 
 		work_done++;
 		stats->rx_packets++;
-		stats->rx_bytes += cfd->len;
+		stats->rx_bytes += cf->can_dlc;
 		netif_receive_skb(skb);
 	}
 
@@ -350,6 +350,17 @@ int can_rx_offload_add_fifo(struct net_device *dev,
 	return can_rx_offload_init_queue(dev, offload, weight);
 }
 EXPORT_SYMBOL_GPL(can_rx_offload_add_fifo);
+
+int can_rx_offload_add_manual(struct net_device *dev,
+			      struct can_rx_offload *offload,
+			      unsigned int weight)
+{
+	if (offload->mailbox_read)
+		return -EINVAL;
+
+	return can_rx_offload_init_queue(dev, offload, weight);
+}
+EXPORT_SYMBOL_GPL(can_rx_offload_add_manual);
 
 void can_rx_offload_enable(struct can_rx_offload *offload)
 {

@@ -19,6 +19,7 @@
 #include <linux/i2c.h>
 #include <linux/platform_data/max732x.h>
 #include <linux/of.h>
+#include <linux/reset.h>
 
 
 /*
@@ -75,6 +76,12 @@
 #define INT_MERGED_MASK 0x3	/* Has interrupts, merged mask */
 
 #define INT_CAPS(x)	(((uint64_t)(x)) << 32)
+
+enum {
+	OUTPUT_MASK,
+	OUTPUT_VAL,
+	OUTPUT_NUM,
+};
 
 enum {
 	MAX7319,
@@ -503,6 +510,8 @@ static int max732x_irq_setup(struct max732x_chip *chip,
 
 	if (((pdata && pdata->irq_base) || client->irq)
 			&& has_irq != INT_NONE) {
+		struct gpio_irq_chip *girq;
+
 		if (pdata)
 			irq_base = pdata->irq_base;
 		chip->irq_features = has_irq;
@@ -517,19 +526,17 @@ static int max732x_irq_setup(struct max732x_chip *chip,
 				client->irq);
 			return ret;
 		}
-		ret =  gpiochip_irqchip_add_nested(&chip->gpio_chip,
-						   &max732x_irq_chip,
-						   irq_base,
-						   handle_simple_irq,
-						   IRQ_TYPE_NONE);
-		if (ret) {
-			dev_err(&client->dev,
-				"could not connect irqchip to gpiochip\n");
-			return ret;
-		}
-		gpiochip_set_nested_irqchip(&chip->gpio_chip,
-					    &max732x_irq_chip,
-					    client->irq);
+
+		girq = &chip->gpio_chip.irq;
+		girq->chip = &max732x_irq_chip;
+		/* This will let us handle the parent IRQ in the driver */
+		girq->parent_handler = NULL;
+		girq->num_parents = 0;
+		girq->parents = NULL;
+		girq->default_type = IRQ_TYPE_NONE;
+		girq->handler = handle_simple_irq;
+		girq->threaded = true;
+		girq->first = irq_base; /* FIXME: get rid of this */
 	}
 
 	return 0;
@@ -622,6 +629,8 @@ static int max732x_probe(struct i2c_client *client,
 	struct i2c_client *c;
 	uint16_t addr_a, addr_b;
 	int ret, nr_port;
+	u16 out_set[OUTPUT_NUM];
+	unsigned long mask, val;
 
 	pdata = dev_get_platdata(&client->dev);
 	node = client->dev.of_node;
@@ -638,6 +647,10 @@ static int max732x_probe(struct i2c_client *client,
 	if (chip == NULL)
 		return -ENOMEM;
 	chip->client = client;
+
+	ret = device_reset(&client->dev);
+	if (ret == -EPROBE_DEFER)
+		return ret;
 
 	nr_port = max732x_setup_gpio(chip, id, pdata->gpio_base);
 	chip->gpio_chip.parent = &client->dev;
@@ -695,15 +708,15 @@ static int max732x_probe(struct i2c_client *client,
 			return ret;
 	}
 
-	ret = devm_gpiochip_add_data(&client->dev, &chip->gpio_chip, chip);
-	if (ret)
-		return ret;
-
 	ret = max732x_irq_setup(chip, id);
 	if (ret)
 		return ret;
 
-	if (pdata && pdata->setup) {
+	ret = devm_gpiochip_add_data(&client->dev, &chip->gpio_chip, chip);
+	if (ret)
+		return ret;
+
+	if (pdata->setup) {
 		ret = pdata->setup(client, chip->gpio_chip.base,
 				chip->gpio_chip.ngpio, pdata->context);
 		if (ret < 0)
@@ -711,6 +724,15 @@ static int max732x_probe(struct i2c_client *client,
 	}
 
 	i2c_set_clientdata(client, chip);
+
+	/* set the output IO default voltage */
+	if (!of_property_read_u16_array(node, "out-default", out_set,
+					ARRAY_SIZE(out_set))) {
+		mask = out_set[OUTPUT_MASK] & chip->dir_output;
+		val = out_set[OUTPUT_VAL];
+		max732x_gpio_set_multiple(&chip->gpio_chip, &mask, &val);
+	}
+
 	return 0;
 }
 

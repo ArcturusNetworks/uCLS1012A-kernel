@@ -31,9 +31,6 @@
 #include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
 #include <net/netfilter/ipv6/nf_conntrack_ipv6.h>
 
-/* Do not check the TCP window for incoming packets  */
-static int nf_ct_tcp_no_window_check __read_mostly = 1;
-
 /* "Be conservative in what you do,
     be liberal in what you accept from others."
     If it's non-zero, we mark only out of window RST segments as INVALID. */
@@ -479,9 +476,6 @@ static bool tcp_in_window(const struct nf_conn *ct,
 	s32 receiver_offset;
 	bool res, in_recv_win;
 
-	if (nf_ct_tcp_no_window_check)
-		return true;
-
 	/*
 	 * Get the required data from the packet.
 	 */
@@ -913,7 +907,7 @@ int nf_conntrack_tcp_packet(struct nf_conn *ct,
 				return -NF_REPEAT;
 			return NF_DROP;
 		}
-		/* Fall through */
+		fallthrough;
 	case TCP_CONNTRACK_IGNORE:
 		/* Ignored packets:
 		 *
@@ -1136,7 +1130,7 @@ int nf_conntrack_tcp_packet(struct nf_conn *ct,
 		 IP_CT_TCP_FLAG_DATA_UNACKNOWLEDGED &&
 		 timeouts[new_state] > timeouts[TCP_CONNTRACK_UNACK])
 		timeout = timeouts[TCP_CONNTRACK_UNACK];
-	else if (!nf_ct_tcp_no_window_check && ct->proto.tcp.last_win == 0 &&
+	else if (ct->proto.tcp.last_win == 0 &&
 		 timeouts[new_state] > timeouts[TCP_CONNTRACK_RETRANS])
 		timeout = timeouts[TCP_CONNTRACK_RETRANS];
 	else
@@ -1165,7 +1159,7 @@ int nf_conntrack_tcp_packet(struct nf_conn *ct,
 		   && (old_state == TCP_CONNTRACK_SYN_RECV
 		       || old_state == TCP_CONNTRACK_ESTABLISHED)
 		   && new_state == TCP_CONNTRACK_ESTABLISHED) {
-		/* Set ASSURED if we see see valid ack in ESTABLISHED
+		/* Set ASSURED if we see valid ack in ESTABLISHED
 		   after SYN_RECV or a valid answer for a picked up
 		   connection. */
 		set_bit(IPS_ASSURED_BIT, &ct->status);

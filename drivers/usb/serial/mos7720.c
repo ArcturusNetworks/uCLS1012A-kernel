@@ -226,8 +226,10 @@ static int read_mos_reg(struct usb_serial *serial, unsigned int serial_portnum,
 	int status;
 
 	buf = kmalloc(1, GFP_KERNEL);
-	if (!buf)
+	if (!buf) {
+		*data = 0;
 		return -ENOMEM;
+	}
 
 	status = usb_control_msg(usbdev, pipe, request, requesttype, value,
 				     index, buf, 1, MOS_WDR_TIMEOUT);
@@ -282,11 +284,12 @@ static void destroy_urbtracker(struct kref *kref)
  * port callback had to be deferred because the disconnect mutex could not be
  * obtained at the time.
  */
-static void send_deferred_urbs(unsigned long _mos_parport)
+static void send_deferred_urbs(struct tasklet_struct *t)
 {
 	int ret_val;
 	unsigned long flags;
-	struct mos7715_parport *mos_parport = (void *)_mos_parport;
+	struct mos7715_parport *mos_parport = from_tasklet(mos_parport, t,
+							   urb_tasklet);
 	struct urbtracker *urbtrack, *tmp;
 	struct list_head *cursor, *next;
 	struct device *dev;
@@ -718,8 +721,7 @@ static int mos7715_parport_init(struct usb_serial *serial)
 	INIT_LIST_HEAD(&mos_parport->deferred_urbs);
 	usb_set_serial_data(serial, mos_parport); /* hijack private pointer */
 	mos_parport->serial = serial;
-	tasklet_init(&mos_parport->urb_tasklet, send_deferred_urbs,
-		     (unsigned long) mos_parport);
+	tasklet_setup(&mos_parport->urb_tasklet, send_deferred_urbs);
 	init_completion(&mos_parport->syncmsg_compl);
 
 	/* cycle parallel port reset bit */

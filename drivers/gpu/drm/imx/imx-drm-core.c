@@ -13,6 +13,7 @@
 
 #include <video/imx-ipu-v3.h>
 #include <video/imx-lcdif.h>
+#include <video/imx-lcdifv3.h>
 
 #include <drm/drm_atomic.h>
 #include <drm/drm_atomic_helper.h>
@@ -21,6 +22,7 @@
 #include <drm/drm_fb_helper.h>
 #include <drm/drm_gem_cma_helper.h>
 #include <drm/drm_gem_framebuffer_helper.h>
+#include <drm/drm_managed.h>
 #include <drm/drm_of.h>
 #include <drm/drm_plane_helper.h>
 #include <drm/drm_probe_helper.h>
@@ -28,9 +30,6 @@
 #include <video/dpu.h>
 
 #include "imx-drm.h"
-#include "ipuv3-plane.h"
-
-#define MAX_CRTC	4
 
 static int legacyfb_depth = 16;
 module_param(legacyfb_depth, int, 0444);
@@ -50,81 +49,6 @@ void imx_drm_encoder_destroy(struct drm_encoder *encoder)
 }
 EXPORT_SYMBOL_GPL(imx_drm_encoder_destroy);
 
-static int imx_drm_atomic_check(struct drm_device *dev,
-				struct drm_atomic_state *state)
-{
-	int ret;
-
-	ret = drm_atomic_helper_check(dev, state);
-	if (ret)
-		return ret;
-
-	/*
-	 * Check modeset again in case crtc_state->mode_changed is
-	 * updated in plane's ->atomic_check callback.
-	 */
-	ret = drm_atomic_helper_check_modeset(dev, state);
-	if (ret)
-		return ret;
-
-	/* Assign PRG/PRE channels and check if all constrains are satisfied. */
-	ret = ipu_planes_assign_pre(dev, state);
-	if (ret)
-		return ret;
-
-	return ret;
-}
-
-static const struct drm_mode_config_funcs imx_drm_mode_config_funcs = {
-	.fb_create = drm_gem_fb_create,
-	.atomic_check = imx_drm_atomic_check,
-	.atomic_commit = drm_atomic_helper_commit,
-};
-
-static void imx_drm_atomic_commit_tail(struct drm_atomic_state *state)
-{
-	struct drm_device *dev = state->dev;
-	struct drm_plane *plane;
-	struct drm_plane_state *old_plane_state, *new_plane_state;
-	bool plane_disabling = false;
-	int i;
-
-	drm_atomic_helper_commit_modeset_disables(dev, state);
-
-	drm_atomic_helper_commit_planes(dev, state,
-				DRM_PLANE_COMMIT_ACTIVE_ONLY |
-				DRM_PLANE_COMMIT_NO_DISABLE_AFTER_MODESET);
-
-	drm_atomic_helper_commit_modeset_enables(dev, state);
-
-	for_each_oldnew_plane_in_state(state, plane, old_plane_state, new_plane_state, i) {
-		if (drm_atomic_plane_disabling(old_plane_state, new_plane_state))
-			plane_disabling = true;
-	}
-
-	/*
-	 * The flip done wait is only strictly required by imx-drm if a deferred
-	 * plane disable is in-flight. As the core requires blocking commits
-	 * to wait for the flip it is done here unconditionally. This keeps the
-	 * workitem around a bit longer than required for the majority of
-	 * non-blocking commits, but we accept that for the sake of simplicity.
-	 */
-	drm_atomic_helper_wait_for_flip_done(dev, state);
-
-	if (plane_disabling) {
-		for_each_old_plane_in_state(state, plane, old_plane_state, i)
-			ipu_plane_disable_deferred(plane);
-
-	}
-
-	drm_atomic_helper_commit_hw_done(state);
-}
-
-static const struct drm_mode_config_helper_funcs imx_drm_mode_config_helpers = {
-	.atomic_commit_tail = imx_drm_atomic_commit_tail,
-};
-
-
 int imx_drm_encoder_parse_of(struct drm_device *drm,
 	struct drm_encoder *encoder, struct device_node *np)
 {
@@ -141,8 +65,8 @@ int imx_drm_encoder_parse_of(struct drm_device *drm,
 
 	encoder->possible_crtcs = crtc_mask;
 
-	/* FIXME: this is the mask of outputs which can clone this output. */
-	encoder->possible_clones = ~0;
+	/* FIXME: cloning support not clear, disable it all for now */
+	encoder->possible_clones = 0;
 
 	return 0;
 }
@@ -154,17 +78,7 @@ static const struct drm_ioctl_desc imx_drm_ioctls[] = {
 
 static struct drm_driver imx_drm_driver = {
 	.driver_features	= DRIVER_MODESET | DRIVER_GEM | DRIVER_ATOMIC,
-	.gem_free_object_unlocked = drm_gem_cma_free_object,
-	.gem_vm_ops		= &drm_gem_cma_vm_ops,
-	.dumb_create		= drm_gem_cma_dumb_create,
-
-	.prime_handle_to_fd	= drm_gem_prime_handle_to_fd,
-	.prime_fd_to_handle	= drm_gem_prime_fd_to_handle,
-	.gem_prime_get_sg_table	= drm_gem_cma_prime_get_sg_table,
-	.gem_prime_import_sg_table = drm_gem_cma_prime_import_sg_table,
-	.gem_prime_vmap		= drm_gem_cma_prime_vmap,
-	.gem_prime_vunmap	= drm_gem_cma_prime_vunmap,
-	.gem_prime_mmap		= drm_gem_cma_prime_mmap,
+	DRM_GEM_CMA_DRIVER_OPS,
 	.ioctls			= imx_drm_ioctls,
 	.num_ioctls		= ARRAY_SIZE(imx_drm_ioctls),
 	.fops			= &imx_drm_driver_fops,
@@ -189,7 +103,8 @@ static int compare_of(struct device *dev, void *data)
 		struct dpu_client_platformdata *pdata = dev->platform_data;
 
 		return pdata->of_node == np;
-	} else if (strcmp(dev->driver->name, "imx-lcdif-crtc") == 0) {
+	} else if (strcmp(dev->driver->name, "imx-lcdif-crtc") == 0 ||
+		   strcmp(dev->driver->name, "imx-lcdifv3-crtc") == 0) {
 		struct lcdif_client_platformdata *pdata = dev->platform_data;
 #if IS_ENABLED(CONFIG_DRM_FBDEV_EMULATION)
 		/* set legacyfb_depth to be 32 for lcdif, since
@@ -203,6 +118,13 @@ static int compare_of(struct device *dev, void *data)
 		return pdata->of_node == np;
 	}
 
+	/* This is a special case for dpu bliteng. */
+	if (strcmp(dev->driver->name, "imx-drm-dpu-bliteng") == 0) {
+		struct dpu_client_platformdata *pdata = dev->platform_data;
+
+		return pdata->of_node == np;
+	}
+
 	/* Special case for LDB, one device for two channels */
 	if (of_node_name_eq(np, "lvds-channel")) {
 		np = of_get_parent(np);
@@ -212,10 +134,103 @@ static int compare_of(struct device *dev, void *data)
 	return dev->of_node == np;
 }
 
+static const char *const imx_drm_dpu_comp_parents[] = {
+	"fsl,imx8qm-dpu",
+	"fsl,imx8qxp-dpu",
+};
+
+static bool imx_drm_parent_is_compatible(struct device *dev,
+					 const char *const comp_parents[],
+					 int comp_parents_size)
+{
+	struct device_node *port, *parent;
+	bool ret = false;
+	int i;
+
+	port = of_parse_phandle(dev->of_node, "ports", 0);
+	if (!port)
+		return ret;
+
+	parent = of_get_parent(port);
+
+	for (i = 0; i < comp_parents_size; i++) {
+		if (of_device_is_compatible(parent, comp_parents[i])) {
+			ret = true;
+			break;
+		}
+	}
+
+	of_node_put(parent);
+
+	of_node_put(port);
+
+	return ret;
+}
+
+static inline bool has_dpu(struct device *dev)
+{
+	return imx_drm_parent_is_compatible(dev, imx_drm_dpu_comp_parents,
+					ARRAY_SIZE(imx_drm_dpu_comp_parents));
+}
+
+static void add_dpu_bliteng_components(struct device *dev,
+				       struct component_match **matchptr)
+{
+	/*
+	 * As there may be two dpu bliteng device,
+	 * so need add something in compare data to distinguish.
+	 * Use its parent dpu's of_node as the data here.
+	 */
+	struct device_node *port, *parent;
+	/* assume max dpu number is 8 */
+	struct device_node *dpu[8];
+	int num_dpu = 0;
+	int i, j;
+	bool found = false;
+
+	for (i = 0; ; i++) {
+		port = of_parse_phandle(dev->of_node, "ports", i);
+		if (!port)
+			break;
+
+		parent = of_get_parent(port);
+
+		for (j = 0; j < num_dpu; j++) {
+			if (dpu[j] == parent) {
+				found = true;
+				break;
+			}
+		}
+
+		if (found) {
+			found = false;
+		} else {
+			if (num_dpu >= ARRAY_SIZE(dpu)) {
+				dev_err(dev, "The number of found dpu is greater than max [%ld].\n",
+					ARRAY_SIZE(dpu));
+				of_node_put(parent);
+				of_node_put(port);
+				break;
+			}
+
+			dpu[num_dpu] = parent;
+			num_dpu++;
+
+			component_match_add(dev, matchptr, compare_of, parent);
+		}
+
+		of_node_put(parent);
+		of_node_put(port);
+	}
+}
+
 static int imx_drm_bind(struct device *dev)
 {
 	struct drm_device *drm;
 	int ret;
+
+	if (has_dpu(dev))
+		imx_drm_driver.driver_features |= DRIVER_RENDER;
 
 	drm = drm_dev_alloc(&imx_drm_driver, dev);
 	if (IS_ERR(drm))
@@ -241,12 +256,11 @@ static int imx_drm_bind(struct device *dev)
 	drm->mode_config.min_height = 1;
 	drm->mode_config.max_width = 4096;
 	drm->mode_config.max_height = 4096;
-	drm->mode_config.funcs = &imx_drm_mode_config_funcs;
-	drm->mode_config.helper_private = &imx_drm_mode_config_helpers;
-	drm->mode_config.allow_fb_modifiers = true;
 	drm->mode_config.normalize_zpos = true;
 
-	drm_mode_config_init(drm);
+	ret = drmm_mode_config_init(drm);
+	if (ret)
+		goto err_kms;
 
 	ret = drm_vblank_init(drm, MAX_CRTC);
 	if (ret)
@@ -285,7 +299,6 @@ err_poll_fini:
 	drm_kms_helper_poll_fini(drm);
 	component_unbind_all(drm->dev, drm);
 err_kms:
-	drm_mode_config_cleanup(drm);
 	drm_dev_put(drm);
 
 	return ret;
@@ -295,17 +308,18 @@ static void imx_drm_unbind(struct device *dev)
 {
 	struct drm_device *drm = dev_get_drvdata(dev);
 
+	if (has_dpu(dev))
+		imx_drm_driver.driver_features &= ~DRIVER_RENDER;
+
 	drm_dev_unregister(drm);
 
 	drm_kms_helper_poll_fini(drm);
 
 	component_unbind_all(drm->dev, drm);
 
-	drm_mode_config_cleanup(drm);
+	drm_dev_put(drm);
 
 	dev_set_drvdata(dev, NULL);
-
-	drm_dev_put(drm);
 }
 
 static const struct component_master_ops imx_drm_ops = {
@@ -315,7 +329,14 @@ static const struct component_master_ops imx_drm_ops = {
 
 static int imx_drm_platform_probe(struct platform_device *pdev)
 {
-	int ret = drm_of_component_probe(&pdev->dev, compare_of, &imx_drm_ops);
+	struct component_match *match = NULL;
+	int ret;
+
+	if (has_dpu(&pdev->dev))
+		add_dpu_bliteng_components(&pdev->dev, &match);
+
+	ret = drm_of_component_probe_with_match(&pdev->dev, match, compare_of,
+						&imx_drm_ops);
 
 	if (!ret)
 		ret = dma_set_coherent_mask(&pdev->dev, DMA_BIT_MASK(32));
@@ -362,23 +383,7 @@ static struct platform_driver imx_drm_pdrv = {
 		.of_match_table = imx_drm_dt_ids,
 	},
 };
-
-static struct platform_driver * const drivers[] = {
-	&imx_drm_pdrv,
-	&ipu_drm_driver,
-};
-
-static int __init imx_drm_init(void)
-{
-	return platform_register_drivers(drivers, ARRAY_SIZE(drivers));
-}
-module_init(imx_drm_init);
-
-static void __exit imx_drm_exit(void)
-{
-	platform_unregister_drivers(drivers, ARRAY_SIZE(drivers));
-}
-module_exit(imx_drm_exit);
+module_platform_driver(imx_drm_pdrv);
 
 MODULE_AUTHOR("Sascha Hauer <s.hauer@pengutronix.de>");
 MODULE_DESCRIPTION("i.MX drm driver core");

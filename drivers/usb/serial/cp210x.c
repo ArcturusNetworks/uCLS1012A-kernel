@@ -50,6 +50,9 @@ static void cp210x_release(struct usb_serial *);
 static int cp210x_port_probe(struct usb_serial_port *);
 static int cp210x_port_remove(struct usb_serial_port *);
 static void cp210x_dtr_rts(struct usb_serial_port *p, int on);
+static void cp210x_process_read_urb(struct urb *urb);
+static void cp210x_enable_event_mode(struct usb_serial_port *port);
+static void cp210x_disable_event_mode(struct usb_serial_port *port);
 
 static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x045B, 0x0053) }, /* Renesas RX610 RX-Stick */
@@ -234,6 +237,7 @@ static const struct usb_device_id id_table[] = {
 	{ USB_DEVICE(0x1FB9, 0x0602) }, /* Lake Shore Model 648 Magnet Power Supply */
 	{ USB_DEVICE(0x1FB9, 0x0700) }, /* Lake Shore Model 737 VSM Controller */
 	{ USB_DEVICE(0x1FB9, 0x0701) }, /* Lake Shore Model 776 Hall Matrix */
+	{ USB_DEVICE(0x2184, 0x0030) }, /* GW Instek GDM-834x Digital Multimeter */
 	{ USB_DEVICE(0x2626, 0xEA60) }, /* Aruba Networks 7xxx USB Serial Console */
 	{ USB_DEVICE(0x3195, 0xF190) }, /* Link Instruments MSO-19 */
 	{ USB_DEVICE(0x3195, 0xF280) }, /* Link Instruments MSO-28 */
@@ -257,11 +261,24 @@ struct cp210x_serial_private {
 	speed_t			min_speed;
 	speed_t			max_speed;
 	bool			use_actual_rate;
+	bool			no_event_mode;
+};
+
+enum cp210x_event_state {
+	ES_DATA,
+	ES_ESCAPE,
+	ES_LSR,
+	ES_LSR_DATA_0,
+	ES_LSR_DATA_1,
+	ES_MSR
 };
 
 struct cp210x_port_private {
-	__u8			bInterfaceNumber;
+	u8			bInterfaceNumber;
 	bool			has_swapped_line_ctl;
+	bool			event_mode;
+	enum cp210x_event_state event_state;
+	u8 lsr;
 };
 
 static struct usb_serial_driver cp210x_device = {
@@ -282,12 +299,14 @@ static struct usb_serial_driver cp210x_device = {
 	.unthrottle		= usb_serial_generic_unthrottle,
 	.tiocmget		= cp210x_tiocmget,
 	.tiocmset		= cp210x_tiocmset,
+	.get_icount		= usb_serial_generic_get_icount,
 	.attach			= cp210x_attach,
 	.disconnect		= cp210x_disconnect,
 	.release		= cp210x_release,
 	.port_probe		= cp210x_port_probe,
 	.port_remove		= cp210x_port_remove,
-	.dtr_rts		= cp210x_dtr_rts
+	.dtr_rts		= cp210x_dtr_rts,
+	.process_read_urb	= cp210x_process_read_urb,
 };
 
 static struct usb_serial_driver * const serial_drivers[] = {
@@ -409,13 +428,22 @@ struct cp210x_comm_status {
  */
 #define PURGE_ALL		0x000f
 
+/* CP210X_EMBED_EVENTS */
+#define CP210X_ESCCHAR		0xec
+
+#define CP210X_LSR_OVERRUN	BIT(1)
+#define CP210X_LSR_PARITY	BIT(2)
+#define CP210X_LSR_FRAME	BIT(3)
+#define CP210X_LSR_BREAK	BIT(4)
+
+
 /* CP210X_GET_FLOW/CP210X_SET_FLOW read/write these 0x10 bytes */
 struct cp210x_flow_ctl {
 	__le32	ulControlHandshake;
 	__le32	ulFlowReplace;
 	__le32	ulXonLimit;
 	__le32	ulXoffLimit;
-} __packed;
+};
 
 /* cp210x_flow_ctl::ulControlHandshake */
 #define CP210X_SERIAL_DTR_MASK		GENMASK(1, 0)
@@ -449,7 +477,7 @@ struct cp210x_flow_ctl {
 struct cp210x_pin_mode {
 	u8	eci;
 	u8	sci;
-} __packed;
+};
 
 #define CP210X_PIN_MODE_MODEM		0
 #define CP210X_PIN_MODE_GPIO		BIT(0)
@@ -518,7 +546,7 @@ struct cp210x_single_port_config {
 struct cp210x_gpio_write {
 	u8	mask;
 	u8	state;
-} __packed;
+};
 
 /*
  * Helper to get interface number when we only have struct usb_serial.
@@ -821,6 +849,7 @@ static int cp210x_get_line_ctl(struct usb_serial_port *port, u16 *ctl)
 
 static int cp210x_open(struct tty_struct *tty, struct usb_serial_port *port)
 {
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
 	int result;
 
 	result = cp210x_write_u16_reg(port, CP210X_IFC_ENABLE, UART_ENABLE);
@@ -832,21 +861,144 @@ static int cp210x_open(struct tty_struct *tty, struct usb_serial_port *port)
 	/* Configure the termios structure */
 	cp210x_get_termios(tty, port);
 
-	/* The baud rate must be initialised on cp2104 */
-	if (tty)
+	if (tty) {
+		/* The baud rate must be initialised on cp2104 */
 		cp210x_change_speed(tty, port, NULL);
 
-	return usb_serial_generic_open(tty, port);
+		if (I_INPCK(tty))
+			cp210x_enable_event_mode(port);
+	}
+
+	result = usb_serial_generic_open(tty, port);
+	if (result)
+		goto err_disable;
+
+	return 0;
+
+err_disable:
+	cp210x_write_u16_reg(port, CP210X_IFC_ENABLE, UART_DISABLE);
+	port_priv->event_mode = false;
+
+	return result;
 }
 
 static void cp210x_close(struct usb_serial_port *port)
 {
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+
 	usb_serial_generic_close(port);
 
 	/* Clear both queues; cp2108 needs this to avoid an occasional hang */
 	cp210x_write_u16_reg(port, CP210X_PURGE, PURGE_ALL);
 
 	cp210x_write_u16_reg(port, CP210X_IFC_ENABLE, UART_DISABLE);
+
+	/* Disabling the interface disables event-insertion mode. */
+	port_priv->event_mode = false;
+}
+
+static void cp210x_process_lsr(struct usb_serial_port *port, unsigned char lsr, char *flag)
+{
+	if (lsr & CP210X_LSR_BREAK) {
+		port->icount.brk++;
+		*flag = TTY_BREAK;
+	} else if (lsr & CP210X_LSR_PARITY) {
+		port->icount.parity++;
+		*flag = TTY_PARITY;
+	} else if (lsr & CP210X_LSR_FRAME) {
+		port->icount.frame++;
+		*flag = TTY_FRAME;
+	}
+
+	if (lsr & CP210X_LSR_OVERRUN) {
+		port->icount.overrun++;
+		tty_insert_flip_char(&port->port, 0, TTY_OVERRUN);
+	}
+}
+
+static bool cp210x_process_char(struct usb_serial_port *port, unsigned char *ch, char *flag)
+{
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+
+	switch (port_priv->event_state) {
+	case ES_DATA:
+		if (*ch == CP210X_ESCCHAR) {
+			port_priv->event_state = ES_ESCAPE;
+			break;
+		}
+		return false;
+	case ES_ESCAPE:
+		switch (*ch) {
+		case 0:
+			dev_dbg(&port->dev, "%s - escape char\n", __func__);
+			*ch = CP210X_ESCCHAR;
+			port_priv->event_state = ES_DATA;
+			return false;
+		case 1:
+			port_priv->event_state = ES_LSR_DATA_0;
+			break;
+		case 2:
+			port_priv->event_state = ES_LSR;
+			break;
+		case 3:
+			port_priv->event_state = ES_MSR;
+			break;
+		default:
+			dev_err(&port->dev, "malformed event 0x%02x\n", *ch);
+			port_priv->event_state = ES_DATA;
+			break;
+		}
+		break;
+	case ES_LSR_DATA_0:
+		port_priv->lsr = *ch;
+		port_priv->event_state = ES_LSR_DATA_1;
+		break;
+	case ES_LSR_DATA_1:
+		dev_dbg(&port->dev, "%s - lsr = 0x%02x, data = 0x%02x\n",
+				__func__, port_priv->lsr, *ch);
+		cp210x_process_lsr(port, port_priv->lsr, flag);
+		port_priv->event_state = ES_DATA;
+		return false;
+	case ES_LSR:
+		dev_dbg(&port->dev, "%s - lsr = 0x%02x\n", __func__, *ch);
+		port_priv->lsr = *ch;
+		cp210x_process_lsr(port, port_priv->lsr, flag);
+		port_priv->event_state = ES_DATA;
+		break;
+	case ES_MSR:
+		dev_dbg(&port->dev, "%s - msr = 0x%02x\n", __func__, *ch);
+		/* unimplemented */
+		port_priv->event_state = ES_DATA;
+		break;
+	}
+
+	return true;
+}
+
+static void cp210x_process_read_urb(struct urb *urb)
+{
+	struct usb_serial_port *port = urb->context;
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+	unsigned char *ch = urb->transfer_buffer;
+	char flag;
+	int i;
+
+	if (!urb->actual_length)
+		return;
+
+	if (port_priv->event_mode) {
+		for (i = 0; i < urb->actual_length; i++, ch++) {
+			flag = TTY_NORMAL;
+
+			if (cp210x_process_char(port, ch, &flag))
+				continue;
+
+			tty_insert_flip_char(&port->port, *ch, flag);
+		}
+	} else {
+		tty_insert_flip_string(&port->port, ch, urb->actual_length);
+	}
+	tty_flip_buffer_push(&port->port);
 }
 
 /*
@@ -1179,6 +1331,45 @@ static void cp210x_change_speed(struct tty_struct *tty,
 	tty_encode_baud_rate(tty, baud, baud);
 }
 
+static void cp210x_enable_event_mode(struct usb_serial_port *port)
+{
+	struct cp210x_serial_private *priv = usb_get_serial_data(port->serial);
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+	int ret;
+
+	if (port_priv->event_mode)
+		return;
+
+	if (priv->no_event_mode)
+		return;
+
+	port_priv->event_state = ES_DATA;
+	port_priv->event_mode = true;
+
+	ret = cp210x_write_u16_reg(port, CP210X_EMBED_EVENTS, CP210X_ESCCHAR);
+	if (ret) {
+		dev_err(&port->dev, "failed to enable events: %d\n", ret);
+		port_priv->event_mode = false;
+	}
+}
+
+static void cp210x_disable_event_mode(struct usb_serial_port *port)
+{
+	struct cp210x_port_private *port_priv = usb_get_serial_port_data(port);
+	int ret;
+
+	if (!port_priv->event_mode)
+		return;
+
+	ret = cp210x_write_u16_reg(port, CP210X_EMBED_EVENTS, 0);
+	if (ret) {
+		dev_err(&port->dev, "failed to disable events: %d\n", ret);
+		return;
+	}
+
+	port_priv->event_mode = false;
+}
+
 static void cp210x_set_termios(struct tty_struct *tty,
 		struct usb_serial_port *port, struct ktermios *old_termios)
 {
@@ -1301,6 +1492,14 @@ static void cp210x_set_termios(struct tty_struct *tty,
 				sizeof(flow_ctl));
 	}
 
+	/*
+	 * Enable event-insertion mode only if input parity checking is
+	 * enabled for now.
+	 */
+	if (I_INPCK(tty))
+		cp210x_enable_event_mode(port);
+	else
+		cp210x_disable_event_mode(port);
 }
 
 static int cp210x_tiocmset(struct tty_struct *tty,
@@ -1893,6 +2092,46 @@ static void cp210x_init_max_speed(struct usb_serial *serial)
 	priv->use_actual_rate = use_actual_rate;
 }
 
+static void cp2102_determine_quirks(struct usb_serial *serial)
+{
+	struct cp210x_serial_private *priv = usb_get_serial_data(serial);
+	u8 *buf;
+	int ret;
+
+	buf = kmalloc(2, GFP_KERNEL);
+	if (!buf)
+		return;
+	/*
+	 * Some (possibly counterfeit) CP2102 do not support event-insertion
+	 * mode and respond differently to malformed vendor requests.
+	 * Specifically, they return one instead of two bytes when sent a
+	 * two-byte part-number request.
+	 */
+	ret = usb_control_msg(serial->dev, usb_rcvctrlpipe(serial->dev, 0),
+			CP210X_VENDOR_SPECIFIC, REQTYPE_DEVICE_TO_HOST,
+			CP210X_GET_PARTNUM, 0, buf, 2, USB_CTRL_GET_TIMEOUT);
+	if (ret == 1) {
+		dev_dbg(&serial->interface->dev,
+				"device does not support event-insertion mode\n");
+		priv->no_event_mode = true;
+	}
+
+	kfree(buf);
+}
+
+static void cp210x_determine_quirks(struct usb_serial *serial)
+{
+	struct cp210x_serial_private *priv = usb_get_serial_data(serial);
+
+	switch (priv->partnum) {
+	case CP210X_PARTNUM_CP2102:
+		cp2102_determine_quirks(serial);
+		break;
+	default:
+		break;
+	}
+}
+
 static int cp210x_attach(struct usb_serial *serial)
 {
 	int result;
@@ -1913,6 +2152,7 @@ static int cp210x_attach(struct usb_serial *serial)
 
 	usb_set_serial_data(serial, priv);
 
+	cp210x_determine_quirks(serial);
 	cp210x_init_max_speed(serial);
 
 	result = cp210x_gpio_init(serial);

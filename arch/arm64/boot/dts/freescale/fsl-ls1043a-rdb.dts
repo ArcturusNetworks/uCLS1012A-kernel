@@ -117,22 +117,6 @@
 	};
 };
 
-&uqe {
-	ucc_hdlc: ucc@2000 {
-		compatible = "fsl,ucc-hdlc";
-		rx-clock-name = "clk8";
-		tx-clock-name = "clk9";
-		fsl,rx-sync-clock = "rsync_pin";
-		fsl,tx-sync-clock = "tsync_pin";
-		fsl,tx-timeslot-mask = <0xfffffffe>;
-		fsl,rx-timeslot-mask = <0xfffffffe>;
-		fsl,tdm-framer-type = "e1";
-		fsl,tdm-id = <0>;
-		fsl,siram-entry-id = <0>;
-		fsl,tdm-interface;
-	};
-};
-
 &duart0 {
 	status = "okay";
 };
@@ -182,10 +166,12 @@
 	mdio@fc000 {
 		rgmii_phy1: ethernet-phy@1 {
 			reg = <0x1>;
+			rtl821x,aldps-disable;
 		};
 
 		rgmii_phy2: ethernet-phy@2 {
 			reg = <0x2>;
+			rtl821x,aldps-disable;
 		};
 
 		qsgmii_phy1: ethernet-phy@4 {
@@ -211,6 +197,22 @@
 			interrupts = <0 132 4>;
 			reg = <0x1>;
 		};
+	};
+};
+
+&uqe {
+	ucc_hdlc: ucc@2000 {
+		compatible = "fsl,ucc-hdlc";
+		rx-clock-name = "clk8";
+		tx-clock-name = "clk9";
+		fsl,rx-sync-clock = "rsync_pin";
+		fsl,tx-sync-clock = "tsync_pin";
+		fsl,tx-timeslot-mask = <0xfffffffe>;
+		fsl,rx-timeslot-mask = <0xfffffffe>;
+		fsl,tdm-framer-type = "e1";
+		fsl,tdm-id = <0>;
+		fsl,siram-entry-id = <0>;
+		fsl,tdm-interface;
 	};
 };
 

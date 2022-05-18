@@ -351,7 +351,7 @@
 #define BGMAC_DESC_CTL0_IOC			0x20000000	/* IRQ on complete */
 #define BGMAC_DESC_CTL0_EOF			0x40000000	/* End of frame */
 #define BGMAC_DESC_CTL0_SOF			0x80000000	/* Start of frame */
-#define BGMAC_DESC_CTL1_LEN			0x00001FFF
+#define BGMAC_DESC_CTL1_LEN			0x00003FFF
 
 #define BGMAC_PHY_NOREGS			BRCM_PSEUDO_PHY_ADDR
 #define BGMAC_PHY_MASK				0x1F
@@ -366,7 +366,8 @@
 #define BGMAC_RX_FRAME_OFFSET			30		/* There are 2 unused bytes between header and real data */
 #define BGMAC_RX_BUF_OFFSET			(NET_SKB_PAD + NET_IP_ALIGN - \
 						 BGMAC_RX_FRAME_OFFSET)
-#define BGMAC_RX_MAX_FRAME_SIZE			1536		/* Copied from b44/tg3 */
+/* Jumbo frame size with FCS */
+#define BGMAC_RX_MAX_FRAME_SIZE			9724
 #define BGMAC_RX_BUF_SIZE			(BGMAC_RX_FRAME_OFFSET + BGMAC_RX_MAX_FRAME_SIZE)
 #define BGMAC_RX_ALLOC_SIZE			(SKB_DATA_ALIGN(BGMAC_RX_BUF_SIZE + BGMAC_RX_BUF_OFFSET) + \
 						 SKB_DATA_ALIGN(sizeof(struct skb_shared_info)))
@@ -427,7 +428,6 @@
 #define BGMAC_FEAT_CC4_IF_SW_TYPE_RGMII	BIT(18)
 #define BGMAC_FEAT_CC7_IF_TYPE_RGMII	BIT(19)
 #define BGMAC_FEAT_IDM_MASK		BIT(20)
-#define BGMAC_FEAT_SRAB			BIT(21)
 
 struct bgmac_slot_info {
 	union {
@@ -533,9 +533,6 @@ struct bgmac {
 	void (*cmn_maskset32)(struct bgmac *bgmac, u16 offset, u32 mask,
 			      u32 set);
 	int (*phy_connect)(struct bgmac *bgmac);
-
-	/* platform device for associated switch */
-	struct platform_device *b53_device;
 };
 
 struct bgmac *bgmac_alloc(struct device *dev);

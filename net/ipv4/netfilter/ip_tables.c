@@ -50,12 +50,9 @@ ip_packet_match(const struct iphdr *ip,
 {
 	unsigned long ret;
 
-	if (ipinfo->flags & IPT_F_NO_DEF_MATCH)
-		return true;
-
-	if (NF_INVF(ipinfo, IPT_INV_SRCIP, ipinfo->smsk.s_addr &&
+	if (NF_INVF(ipinfo, IPT_INV_SRCIP,
 		    (ip->saddr & ipinfo->smsk.s_addr) != ipinfo->src.s_addr) ||
-	    NF_INVF(ipinfo, IPT_INV_DSTIP, ipinfo->dmsk.s_addr &&
+	    NF_INVF(ipinfo, IPT_INV_DSTIP,
 		    (ip->daddr & ipinfo->dmsk.s_addr) != ipinfo->dst.s_addr))
 		return false;
 
@@ -81,29 +78,6 @@ ip_packet_match(const struct iphdr *ip,
 		return false;
 
 	return true;
-}
-
-static void
-ip_checkdefault(struct ipt_ip *ip)
-{
-	static const char iface_mask[IFNAMSIZ] = {};
-
-	if (ip->invflags || ip->flags & IPT_F_FRAG)
-		return;
-
-	if (memcmp(ip->iniface_mask, iface_mask, IFNAMSIZ) != 0)
-		return;
-
-	if (memcmp(ip->outiface_mask, iface_mask, IFNAMSIZ) != 0)
-		return;
-
-	if (ip->smsk.s_addr || ip->dmsk.s_addr)
-		return;
-
-	if (ip->proto)
-		return;
-
-	ip->flags |= IPT_F_NO_DEF_MATCH;
 }
 
 static bool
@@ -246,33 +220,6 @@ struct ipt_entry *ipt_next_entry(const struct ipt_entry *entry)
 	return (void *)entry + entry->next_offset;
 }
 
-static bool
-ipt_handle_default_rule(struct ipt_entry *e, unsigned int *verdict)
-{
-	struct xt_entry_target *t;
-	struct xt_standard_target *st;
-
-	if (e->target_offset != sizeof(struct ipt_entry))
-		return false;
-
-	if (!(e->ip.flags & IPT_F_NO_DEF_MATCH))
-		return false;
-
-	t = ipt_get_target(e);
-	if (t->u.kernel.target->target)
-		return false;
-
-	st = (struct xt_standard_target *) t;
-	if (st->verdict == XT_RETURN)
-		return false;
-
-	if (st->verdict >= 0)
-		return false;
-
-	*verdict = (unsigned)(-st->verdict) - 1;
-	return true;
-}
-
 /* Returns one of the generic firewall policies, like NF_ACCEPT. */
 unsigned int
 ipt_do_table(struct sk_buff *skb,
@@ -293,28 +240,27 @@ ipt_do_table(struct sk_buff *skb,
 	unsigned int addend;
 
 	/* Initialization */
-	WARN_ON(!(table->valid_hooks & (1 << hook)));
-	local_bh_disable();
-	private = READ_ONCE(table->private); /* Address dependency. */
-	cpu        = smp_processor_id();
-	table_base = private->entries;
-
-	e = get_entry(table_base, private->hook_entry[hook]);
-	if (ipt_handle_default_rule(e, &verdict)) {
-		struct xt_counters *counter;
-
-		counter = xt_get_this_cpu_counter(&e->counters);
-		ADD_COUNTER(*counter, skb->len, 1);
-		local_bh_enable();
-		return verdict;
-	}
-
 	stackidx = 0;
 	ip = ip_hdr(skb);
 	indev = state->in ? state->in->name : nulldevname;
 	outdev = state->out ? state->out->name : nulldevname;
+	/* We handle fragments by dealing with the first fragment as
+	 * if it was a normal packet.  All other fragments are treated
+	 * normally, except that they will NEVER match rules that ask
+	 * things we don't know, ie. tcp syn flag or ports).  If the
+	 * rule is also a fragment-specific rule, non-fragments won't
+	 * match it. */
+	acpar.fragoff = ntohs(ip->frag_off) & IP_OFFSET;
+	acpar.thoff   = ip_hdrlen(skb);
+	acpar.hotdrop = false;
+	acpar.state   = state;
 
+	WARN_ON(!(table->valid_hooks & (1 << hook)));
+	local_bh_disable();
 	addend = xt_write_recseq_begin();
+	private = READ_ONCE(table->private); /* Address dependency. */
+	cpu        = smp_processor_id();
+	table_base = private->entries;
 	jumpstack  = (struct ipt_entry **)private->jumpstack[cpu];
 
 	/* Switch to alternate jumpstack if we're being invoked via TEE.
@@ -327,16 +273,7 @@ ipt_do_table(struct sk_buff *skb,
 	if (static_key_false(&xt_tee_enabled))
 		jumpstack += private->stacksize * __this_cpu_read(nf_skb_duplicated);
 
-	/* We handle fragments by dealing with the first fragment as
-	 * if it was a normal packet.  All other fragments are treated
-	 * normally, except that they will NEVER match rules that ask
-	 * things we don't know, ie. tcp syn flag or ports).  If the
-	 * rule is also a fragment-specific rule, non-fragments won't
-	 * match it. */
-	acpar.fragoff = ntohs(ip->frag_off) & IP_OFFSET;
-	acpar.thoff   = ip_hdrlen(skb);
-	acpar.hotdrop = false;
-	acpar.state   = state;
+	e = get_entry(table_base, private->hook_entry[hook]);
 
 	do {
 		const struct xt_entry_target *t;
@@ -586,8 +523,6 @@ find_check_entry(struct ipt_entry *e, struct net *net, const char *name,
 	unsigned int j;
 	struct xt_mtchk_param mtpar;
 	struct xt_entry_match *ematch;
-
-	ip_checkdefault(&e->ip);
 
 	if (!xt_percpu_counter_alloc(alloc_state, &e->counters))
 		return -ENOMEM;
@@ -883,7 +818,6 @@ copy_entries_to_user(unsigned int total_size,
 	const struct xt_table_info *private = table->private;
 	int ret = 0;
 	const void *loc_cpu_entry;
-	u8 flags;
 
 	counters = alloc_counters(table);
 	if (IS_ERR(counters))
@@ -907,14 +841,6 @@ copy_entries_to_user(unsigned int total_size,
 				 + offsetof(struct ipt_entry, counters),
 				 &counters[num],
 				 sizeof(counters[num])) != 0) {
-			ret = -EFAULT;
-			goto free_counters;
-		}
-
-		flags = e->ip.flags & IPT_F_MASK;
-		if (copy_to_user(userptr + off
-				 + offsetof(struct ipt_entry, ip.flags),
-				 &flags, sizeof(flags)) != 0) {
 			ret = -EFAULT;
 			goto free_counters;
 		}
@@ -1018,8 +944,7 @@ static int compat_table_info(const struct xt_table_info *info,
 }
 #endif
 
-static int get_info(struct net *net, void __user *user,
-		    const int *len, int compat)
+static int get_info(struct net *net, void __user *user, const int *len)
 {
 	char name[XT_TABLE_MAXNAMELEN];
 	struct xt_table *t;
@@ -1033,7 +958,7 @@ static int get_info(struct net *net, void __user *user,
 
 	name[XT_TABLE_MAXNAMELEN-1] = '\0';
 #ifdef CONFIG_COMPAT
-	if (compat)
+	if (in_compat_syscall())
 		xt_compat_lock(AF_INET);
 #endif
 	t = xt_request_find_table_lock(net, AF_INET, name);
@@ -1043,7 +968,7 @@ static int get_info(struct net *net, void __user *user,
 #ifdef CONFIG_COMPAT
 		struct xt_table_info tmp;
 
-		if (compat) {
+		if (in_compat_syscall()) {
 			ret = compat_table_info(private, &tmp);
 			xt_compat_flush_offsets(AF_INET);
 			private = &tmp;
@@ -1069,7 +994,7 @@ static int get_info(struct net *net, void __user *user,
 	} else
 		ret = PTR_ERR(t);
 #ifdef CONFIG_COMPAT
-	if (compat)
+	if (in_compat_syscall())
 		xt_compat_unlock(AF_INET);
 #endif
 	return ret;
@@ -1177,7 +1102,7 @@ __do_replace(struct net *net, const char *name, unsigned int valid_hooks,
 }
 
 static int
-do_replace(struct net *net, const void __user *user, unsigned int len)
+do_replace(struct net *net, sockptr_t arg, unsigned int len)
 {
 	int ret;
 	struct ipt_replace tmp;
@@ -1185,7 +1110,7 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 	void *loc_cpu_entry;
 	struct ipt_entry *iter;
 
-	if (copy_from_user(&tmp, user, sizeof(tmp)) != 0)
+	if (copy_from_sockptr(&tmp, arg, sizeof(tmp)) != 0)
 		return -EFAULT;
 
 	/* overflow check */
@@ -1201,8 +1126,8 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 		return -ENOMEM;
 
 	loc_cpu_entry = newinfo->entries;
-	if (copy_from_user(loc_cpu_entry, user + sizeof(tmp),
-			   tmp.size) != 0) {
+	if (copy_from_sockptr_offset(loc_cpu_entry, arg, sizeof(tmp),
+			tmp.size) != 0) {
 		ret = -EFAULT;
 		goto free_newinfo;
 	}
@@ -1226,8 +1151,7 @@ do_replace(struct net *net, const void __user *user, unsigned int len)
 }
 
 static int
-do_add_counters(struct net *net, const void __user *user,
-		unsigned int len, int compat)
+do_add_counters(struct net *net, sockptr_t arg, unsigned int len)
 {
 	unsigned int i;
 	struct xt_counters_info tmp;
@@ -1238,7 +1162,7 @@ do_add_counters(struct net *net, const void __user *user,
 	struct ipt_entry *iter;
 	unsigned int addend;
 
-	paddc = xt_copy_counters_from_user(user, len, &tmp, compat);
+	paddc = xt_copy_counters(arg, len, &tmp);
 	if (IS_ERR(paddc))
 		return PTR_ERR(paddc);
 
@@ -1285,7 +1209,7 @@ struct compat_ipt_replace {
 	u32			underflow[NF_INET_NUMHOOKS];
 	u32			num_counters;
 	compat_uptr_t		counters;	/* struct xt_counters * */
-	struct compat_ipt_entry	entries[0];
+	struct compat_ipt_entry	entries[];
 };
 
 static int
@@ -1299,15 +1223,12 @@ compat_copy_entry_to_user(struct ipt_entry *e, void __user **dstptr,
 	compat_uint_t origsize;
 	const struct xt_entry_match *ematch;
 	int ret = 0;
-	u8 flags = e->ip.flags & IPT_F_MASK;
 
 	origsize = *size;
 	ce = *dstptr;
 	if (copy_to_user(ce, e, sizeof(struct ipt_entry)) != 0 ||
 	    copy_to_user(&ce->counters, &counters[i],
-	    sizeof(counters[i])) != 0 ||
-	    copy_to_user(&ce->ip.flags, &flags,
-	    sizeof(flags)) != 0)
+	    sizeof(counters[i])) != 0)
 		return -EFAULT;
 
 	*dstptr += sizeof(struct compat_ipt_entry);
@@ -1565,7 +1486,7 @@ out_unlock:
 }
 
 static int
-compat_do_replace(struct net *net, void __user *user, unsigned int len)
+compat_do_replace(struct net *net, sockptr_t arg, unsigned int len)
 {
 	int ret;
 	struct compat_ipt_replace tmp;
@@ -1573,7 +1494,7 @@ compat_do_replace(struct net *net, void __user *user, unsigned int len)
 	void *loc_cpu_entry;
 	struct ipt_entry *iter;
 
-	if (copy_from_user(&tmp, user, sizeof(tmp)) != 0)
+	if (copy_from_sockptr(&tmp, arg, sizeof(tmp)) != 0)
 		return -EFAULT;
 
 	/* overflow check */
@@ -1589,8 +1510,8 @@ compat_do_replace(struct net *net, void __user *user, unsigned int len)
 		return -ENOMEM;
 
 	loc_cpu_entry = newinfo->entries;
-	if (copy_from_user(loc_cpu_entry, user + sizeof(tmp),
-			   tmp.size) != 0) {
+	if (copy_from_sockptr_offset(loc_cpu_entry, arg, sizeof(tmp),
+			tmp.size) != 0) {
 		ret = -EFAULT;
 		goto free_newinfo;
 	}
@@ -1613,35 +1534,10 @@ compat_do_replace(struct net *net, void __user *user, unsigned int len)
 	return ret;
 }
 
-static int
-compat_do_ipt_set_ctl(struct sock *sk,	int cmd, void __user *user,
-		      unsigned int len)
-{
-	int ret;
-
-	if (!ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))
-		return -EPERM;
-
-	switch (cmd) {
-	case IPT_SO_SET_REPLACE:
-		ret = compat_do_replace(sock_net(sk), user, len);
-		break;
-
-	case IPT_SO_SET_ADD_COUNTERS:
-		ret = do_add_counters(sock_net(sk), user, len, 1);
-		break;
-
-	default:
-		ret = -EINVAL;
-	}
-
-	return ret;
-}
-
 struct compat_ipt_get_entries {
 	char name[XT_TABLE_MAXNAMELEN];
 	compat_uint_t size;
-	struct compat_ipt_entry entrytable[0];
+	struct compat_ipt_entry entrytable[];
 };
 
 static int
@@ -1713,33 +1609,10 @@ compat_get_entries(struct net *net, struct compat_ipt_get_entries __user *uptr,
 	xt_compat_unlock(AF_INET);
 	return ret;
 }
-
-static int do_ipt_get_ctl(struct sock *, int, void __user *, int *);
-
-static int
-compat_do_ipt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
-{
-	int ret;
-
-	if (!ns_capable(sock_net(sk)->user_ns, CAP_NET_ADMIN))
-		return -EPERM;
-
-	switch (cmd) {
-	case IPT_SO_GET_INFO:
-		ret = get_info(sock_net(sk), user, len, 1);
-		break;
-	case IPT_SO_GET_ENTRIES:
-		ret = compat_get_entries(sock_net(sk), user, len);
-		break;
-	default:
-		ret = do_ipt_get_ctl(sk, cmd, user, len);
-	}
-	return ret;
-}
 #endif
 
 static int
-do_ipt_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
+do_ipt_set_ctl(struct sock *sk, int cmd, sockptr_t arg, unsigned int len)
 {
 	int ret;
 
@@ -1748,11 +1621,16 @@ do_ipt_set_ctl(struct sock *sk, int cmd, void __user *user, unsigned int len)
 
 	switch (cmd) {
 	case IPT_SO_SET_REPLACE:
-		ret = do_replace(sock_net(sk), user, len);
+#ifdef CONFIG_COMPAT
+		if (in_compat_syscall())
+			ret = compat_do_replace(sock_net(sk), arg, len);
+		else
+#endif
+			ret = do_replace(sock_net(sk), arg, len);
 		break;
 
 	case IPT_SO_SET_ADD_COUNTERS:
-		ret = do_add_counters(sock_net(sk), user, len, 0);
+		ret = do_add_counters(sock_net(sk), arg, len);
 		break;
 
 	default:
@@ -1772,11 +1650,16 @@ do_ipt_get_ctl(struct sock *sk, int cmd, void __user *user, int *len)
 
 	switch (cmd) {
 	case IPT_SO_GET_INFO:
-		ret = get_info(sock_net(sk), user, len, 0);
+		ret = get_info(sock_net(sk), user, len);
 		break;
 
 	case IPT_SO_GET_ENTRIES:
-		ret = get_entries(sock_net(sk), user, len);
+#ifdef CONFIG_COMPAT
+		if (in_compat_syscall())
+			ret = compat_get_entries(sock_net(sk), user, len);
+		else
+#endif
+			ret = get_entries(sock_net(sk), user, len);
 		break;
 
 	case IPT_SO_GET_REVISION_MATCH:
@@ -1876,11 +1759,22 @@ out_free:
 	return ret;
 }
 
+void ipt_unregister_table_pre_exit(struct net *net, struct xt_table *table,
+				   const struct nf_hook_ops *ops)
+{
+	nf_unregister_net_hooks(net, ops, hweight32(table->valid_hooks));
+}
+
+void ipt_unregister_table_exit(struct net *net, struct xt_table *table)
+{
+	__ipt_unregister_table(net, table);
+}
+
 void ipt_unregister_table(struct net *net, struct xt_table *table,
 			  const struct nf_hook_ops *ops)
 {
 	if (ops)
-		nf_unregister_net_hooks(net, ops, hweight32(table->valid_hooks));
+		ipt_unregister_table_pre_exit(net, table, ops);
 	__ipt_unregister_table(net, table);
 }
 
@@ -1954,15 +1848,9 @@ static struct nf_sockopt_ops ipt_sockopts = {
 	.set_optmin	= IPT_BASE_CTL,
 	.set_optmax	= IPT_SO_SET_MAX+1,
 	.set		= do_ipt_set_ctl,
-#ifdef CONFIG_COMPAT
-	.compat_set	= compat_do_ipt_set_ctl,
-#endif
 	.get_optmin	= IPT_BASE_CTL,
 	.get_optmax	= IPT_SO_GET_MAX+1,
 	.get		= do_ipt_get_ctl,
-#ifdef CONFIG_COMPAT
-	.compat_get	= compat_do_ipt_get_ctl,
-#endif
 	.owner		= THIS_MODULE,
 };
 
@@ -2037,6 +1925,8 @@ static void __exit ip_tables_fini(void)
 
 EXPORT_SYMBOL(ipt_register_table);
 EXPORT_SYMBOL(ipt_unregister_table);
+EXPORT_SYMBOL(ipt_unregister_table_pre_exit);
+EXPORT_SYMBOL(ipt_unregister_table_exit);
 EXPORT_SYMBOL(ipt_do_table);
 module_init(ip_tables_init);
 module_exit(ip_tables_fini);

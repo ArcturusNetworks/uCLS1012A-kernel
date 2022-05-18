@@ -221,7 +221,7 @@ pcie@3600000 {
 	dma-coherent;
 };
 
-&ftm_alarm0 {
+&ftm0 {
 	dma-coherent;
 };
 

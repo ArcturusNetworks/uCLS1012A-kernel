@@ -1183,7 +1183,7 @@ EXPORT_SYMBOL(nci_free_device);
 /**
  * nci_register_device - register a nci device in the nfc subsystem
  *
- * @dev: The nci device to register
+ * @ndev: The nci device to register
  */
 int nci_register_device(struct nci_dev *ndev)
 {
@@ -1229,9 +1229,12 @@ int nci_register_device(struct nci_dev *ndev)
 
 	rc = nfc_register_device(ndev->nfc_dev);
 	if (rc)
-		goto destroy_rx_wq_exit;
+		goto destroy_tx_wq_exit;
 
 	goto exit;
+
+destroy_tx_wq_exit:
+	destroy_workqueue(ndev->tx_wq);
 
 destroy_rx_wq_exit:
 	destroy_workqueue(ndev->rx_wq);
@@ -1247,7 +1250,7 @@ EXPORT_SYMBOL(nci_register_device);
 /**
  * nci_unregister_device - unregister a nci device in the nfc subsystem
  *
- * @dev: The nci device to unregister
+ * @ndev: The nci device to unregister
  */
 void nci_unregister_device(struct nci_dev *ndev)
 {

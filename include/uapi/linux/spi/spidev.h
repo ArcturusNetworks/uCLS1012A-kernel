@@ -48,6 +48,10 @@
 #define SPI_TX_QUAD		0x200
 #define SPI_RX_DUAL		0x400
 #define SPI_RX_QUAD		0x800
+#define SPI_CS_WORD		0x1000
+#define SPI_TX_OCTAL		0x2000
+#define SPI_RX_OCTAL		0x4000
+#define SPI_3WIRE_HIZ		0x8000
 
 /*---------------------------------------------------------------------------*/
 
@@ -117,7 +121,7 @@ struct spi_ioc_transfer {
 
 /* not all platforms use <asm-generic/ioctl.h> or _IOC_TYPECHECK() ... */
 #define SPI_MSGSIZE(N) \
-	((((N)*(sizeof (struct spi_ioc_transfer))) < (1 << 13)) \
+	((((N)*(sizeof (struct spi_ioc_transfer))) < (1 << _IOC_SIZEBITS)) \
 		? ((N)*(sizeof (struct spi_ioc_transfer))) : 0)
 #define SPI_IOC_MESSAGE(N) _IOW(SPI_IOC_MAGIC, 0, char[SPI_MSGSIZE(N)])
 

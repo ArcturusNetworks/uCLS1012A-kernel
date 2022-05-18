@@ -143,18 +143,6 @@ u32 eth_get_headlen(const struct net_device *dev, void *data, unsigned int len)
 }
 EXPORT_SYMBOL(eth_get_headlen);
 
-static inline bool
-eth_check_local_mask(const void *addr1, const void *addr2, const void *mask)
-{
-	const u16 *a1 = addr1;
-	const u16 *a2 = addr2;
-	const u16 *m = mask;
-
-	return (((a1[0] ^ a2[0]) & ~m[0]) |
-		((a1[1] ^ a2[1]) & ~m[1]) |
-		((a1[2] ^ a2[2]) & ~m[2]));
-}
-
 /**
  * eth_type_trans - determine the packet's protocol ID.
  * @skb: received socket data
@@ -171,12 +159,6 @@ __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 	const struct ethhdr *eth;
 
 	skb->dev = dev;
-
-#ifdef CONFIG_ETHERNET_PACKET_MANGLE
-	if (dev->eth_mangle_rx)
-		dev->eth_mangle_rx(dev, skb);
-#endif
-
 	skb_reset_mac_header(skb);
 
 	eth = (struct ethhdr *)skb->data;
@@ -192,10 +174,6 @@ __be16 eth_type_trans(struct sk_buff *skb, struct net_device *dev)
 		} else {
 			skb->pkt_type = PACKET_OTHERHOST;
 		}
-
-		if (eth_check_local_mask(eth->h_dest, dev->dev_addr,
-					 dev->local_addr_mask))
-			skb->gro_skip = 1;
 	}
 
 	/*
@@ -357,22 +335,6 @@ int eth_mac_addr(struct net_device *dev, void *p)
 }
 EXPORT_SYMBOL(eth_mac_addr);
 
-/**
- * eth_change_mtu - set new MTU size
- * @dev: network device
- * @new_mtu: new Maximum Transfer Unit
- *
- * Allow changing MTU size. Needs to be overridden for devices
- * supporting jumbo frames.
- */
-int eth_change_mtu(struct net_device *dev, int new_mtu)
-{
-	netdev_warn(dev, "%s is deprecated\n", __func__);
-	dev->mtu = new_mtu;
-	return 0;
-}
-EXPORT_SYMBOL(eth_change_mtu);
-
 int eth_validate_addr(struct net_device *dev)
 {
 	if (!is_valid_ether_addr(dev->dev_addr))
@@ -437,34 +399,6 @@ struct net_device *alloc_etherdev_mqs(int sizeof_priv, unsigned int txqs,
 				ether_setup, txqs, rxqs);
 }
 EXPORT_SYMBOL(alloc_etherdev_mqs);
-
-static void devm_free_netdev(struct device *dev, void *res)
-{
-	free_netdev(*(struct net_device **)res);
-}
-
-struct net_device *devm_alloc_etherdev_mqs(struct device *dev, int sizeof_priv,
-					   unsigned int txqs, unsigned int rxqs)
-{
-	struct net_device **dr;
-	struct net_device *netdev;
-
-	dr = devres_alloc(devm_free_netdev, sizeof(*dr), GFP_KERNEL);
-	if (!dr)
-		return NULL;
-
-	netdev = alloc_etherdev_mqs(sizeof_priv, txqs, rxqs);
-	if (!netdev) {
-		devres_free(dr);
-		return NULL;
-	}
-
-	*dr = netdev;
-	devres_add(dev, dr);
-
-	return netdev;
-}
-EXPORT_SYMBOL(devm_alloc_etherdev_mqs);
 
 ssize_t sysfs_format_mac(char *buf, const unsigned char *addr, int len)
 {
@@ -600,8 +534,10 @@ EXPORT_SYMBOL(eth_platform_get_mac_address);
 int nvmem_get_mac_address(struct device *dev, void *addrbuf)
 {
 	struct nvmem_cell *cell;
-	const void *mac;
+	const unsigned char *mac;
+	unsigned char macaddr[ETH_ALEN];
 	size_t len;
+	int i = 0;
 
 	cell = nvmem_cell_get(dev, "mac-address");
 	if (IS_ERR(cell))
@@ -613,14 +549,27 @@ int nvmem_get_mac_address(struct device *dev, void *addrbuf)
 	if (IS_ERR(mac))
 		return PTR_ERR(mac);
 
-	if (len != ETH_ALEN || !is_valid_ether_addr(mac)) {
-		kfree(mac);
-		return -EINVAL;
+	if (len != ETH_ALEN)
+		goto invalid_addr;
+
+	if (dev->of_node &&
+	    of_property_read_bool(dev->of_node, "nvmem_macaddr_swap")) {
+		for (i = 0; i < ETH_ALEN; i++)
+			macaddr[i] = mac[ETH_ALEN - i - 1];
+	} else {
+		ether_addr_copy(macaddr, mac);
 	}
 
-	ether_addr_copy(addrbuf, mac);
+	if (!is_valid_ether_addr(macaddr))
+		goto invalid_addr;
+
+	ether_addr_copy(addrbuf, macaddr);
 	kfree(mac);
 
 	return 0;
+
+invalid_addr:
+	kfree(mac);
+	return -EINVAL;
 }
 EXPORT_SYMBOL(nvmem_get_mac_address);

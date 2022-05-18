@@ -7,9 +7,12 @@
 #include <linux/clk-provider.h>
 #include <linux/delay.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
+#include <linux/imx_sema4.h>
 #include <linux/slab.h>
 #include <linux/jiffies.h>
 #include <linux/err.h>
+#include <soc/imx/src.h>
 #include "clk.h"
 
 #define PLL_NUM_OFFSET		0x10
@@ -25,14 +28,19 @@
 #define IMX7_ENET_PLL_POWER	(0x1 << 5)
 #define IMX7_DDR_PLL_POWER	(0x1 << 20)
 
+#define PLL_LOCK_TIMEOUT	10000
+
 /**
  * struct clk_pllv3 - IMX PLL clock version 3
- * @clk_hw:	 clock source
+ * @hw:		clock source
  * @base:	 base address of PLL registers
  * @power_bit:	 pll power bit mask
  * @powerup_set: set power_bit to power up the PLL
  * @div_mask:	 mask of divider bits
  * @div_shift:	 shift of divider bits
+ * @ref_clock:	reference clock rate
+ * @num_offset:	num register offset
+ * @denom_offset: denom register offset
  *
  * IMX PLL clock version 3, found on i.MX6 series.  Divider for pllv3
  * is actually a multiplier, and always sits at bit 0.
@@ -53,51 +61,88 @@ struct clk_pllv3 {
 
 static int clk_pllv3_wait_lock(struct clk_pllv3 *pll)
 {
-	unsigned long timeout = jiffies + msecs_to_jiffies(10);
 	u32 val = readl_relaxed(pll->base) & pll->power_bit;
 
 	/* No need to wait for lock when pll is not powered up */
 	if ((pll->powerup_set && !val) || (!pll->powerup_set && val))
 		return 0;
 
-	/* Wait for PLL to lock */
-	do {
-		if (readl_relaxed(pll->base) & BM_PLL_LOCK)
-			break;
-		if (time_after(jiffies, timeout))
-			break;
-		usleep_range(50, 500);
-	} while (1);
+	if (!(imx_src_is_m4_enabled() && clk_on_imx6sx()))
+		return readl_relaxed_poll_timeout(pll->base, val, val & BM_PLL_LOCK,
+						  500, PLL_LOCK_TIMEOUT);
+	else
+		return readl_relaxed_poll_timeout_atomic(pll->base, val, val & BM_PLL_LOCK,
+						  10, PLL_LOCK_TIMEOUT);
+}
 
-	return readl_relaxed(pll->base) & BM_PLL_LOCK ? 0 : -ETIMEDOUT;
+static int clk_pllv3_do_hardware(struct clk_hw *hw, bool enable)
+{
+	struct clk_pllv3 *pll = to_clk_pllv3(hw);
+	int ret;
+	u32 val;
+
+	val = readl_relaxed(pll->base);
+	if (enable) {
+		if (pll->powerup_set)
+			val |= pll->power_bit;
+		else
+			val &= ~pll->power_bit;
+		writel_relaxed(val, pll->base);
+
+		ret = clk_pllv3_wait_lock(pll);
+		if (ret)
+			return ret;
+	} else {
+		if (pll->powerup_set)
+			val &= ~pll->power_bit;
+		else
+			val |= pll->power_bit;
+		writel_relaxed(val, pll->base);
+	}
+
+	return 0;
+}
+
+static void clk_pllv3_do_shared_clks(struct clk_hw *hw, bool enable)
+{
+	if (imx_src_is_m4_enabled() && clk_on_imx6sx()) {
+#ifdef CONFIG_SOC_IMX6SX
+		if (!amp_power_mutex || !shared_mem) {
+			if (enable)
+				clk_pllv3_do_hardware(hw, enable);
+			return;
+		}
+
+		imx_sema4_mutex_lock(amp_power_mutex);
+		if (shared_mem->ca9_valid != SHARED_MEM_MAGIC_NUMBER ||
+			shared_mem->cm4_valid != SHARED_MEM_MAGIC_NUMBER) {
+			imx_sema4_mutex_unlock(amp_power_mutex);
+			return;
+		}
+
+		if (!imx_update_shared_mem(hw, enable)) {
+			imx_sema4_mutex_unlock(amp_power_mutex);
+			return;
+		}
+		clk_pllv3_do_hardware(hw, enable);
+
+		imx_sema4_mutex_unlock(amp_power_mutex);
+#endif
+	} else {
+		clk_pllv3_do_hardware(hw, enable);
+	}
 }
 
 static int clk_pllv3_prepare(struct clk_hw *hw)
 {
-	struct clk_pllv3 *pll = to_clk_pllv3(hw);
-	u32 val;
+	clk_pllv3_do_shared_clks(hw, true);
 
-	val = readl_relaxed(pll->base);
-	if (pll->powerup_set)
-		val |= pll->power_bit;
-	else
-		val &= ~pll->power_bit;
-	writel_relaxed(val, pll->base);
-
-	return clk_pllv3_wait_lock(pll);
+	return 0;
 }
 
 static void clk_pllv3_unprepare(struct clk_hw *hw)
 {
-	struct clk_pllv3 *pll = to_clk_pllv3(hw);
-	u32 val;
-
-	val = readl_relaxed(pll->base);
-	if (pll->powerup_set)
-		val &= ~pll->power_bit;
-	else
-		val |= pll->power_bit;
-	writel_relaxed(val, pll->base);
+	clk_pllv3_do_shared_clks(hw, false);
 }
 
 static int clk_pllv3_is_prepared(struct clk_hw *hw)
@@ -439,7 +484,7 @@ struct clk_hw *imx_clk_hw_pllv3(enum imx_pllv3_type type, const char *name,
 		break;
 	case IMX_PLLV3_USB_VF610:
 		pll->div_shift = 1;
-		/* fall through */
+		fallthrough;
 	case IMX_PLLV3_USB:
 		ops = &clk_pllv3_ops;
 		pll->powerup_set = true;
@@ -447,7 +492,7 @@ struct clk_hw *imx_clk_hw_pllv3(enum imx_pllv3_type type, const char *name,
 	case IMX_PLLV3_AV_IMX7:
 		pll->num_offset = PLL_IMX7_NUM_OFFSET;
 		pll->denom_offset = PLL_IMX7_DENOM_OFFSET;
-		/* fall through */
+		fallthrough;
 	case IMX_PLLV3_AV:
 		ops = &clk_pllv3_av_ops;
 		break;

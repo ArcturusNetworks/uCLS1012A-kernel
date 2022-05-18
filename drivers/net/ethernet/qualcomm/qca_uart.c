@@ -107,7 +107,7 @@ qca_tty_receive(struct serdev_device *serdev, const unsigned char *data,
 			skb_put(qca->rx_skb, retcode);
 			qca->rx_skb->protocol = eth_type_trans(
 						qca->rx_skb, qca->rx_skb->dev);
-			qca->rx_skb->ip_summed = CHECKSUM_UNNECESSARY;
+			skb_checksum_none_assert(qca->rx_skb);
 			netif_rx_ni(qca->rx_skb);
 			qca->rx_skb = netdev_alloc_skb_ip_align(netdev,
 								netdev->mtu +
@@ -167,7 +167,7 @@ static void qca_tty_wakeup(struct serdev_device *serdev)
 	schedule_work(&qca->tx_work);
 }
 
-static struct serdev_device_ops qca_serdev_ops = {
+static const struct serdev_device_ops qca_serdev_ops = {
 	.receive_buf = qca_tty_receive,
 	.write_wakeup = qca_tty_wakeup,
 };
@@ -248,7 +248,7 @@ out:
 	return NETDEV_TX_OK;
 }
 
-static void qcauart_netdev_tx_timeout(struct net_device *dev)
+static void qcauart_netdev_tx_timeout(struct net_device *dev, unsigned int txqueue)
 {
 	struct qcauart *qca = netdev_priv(dev);
 

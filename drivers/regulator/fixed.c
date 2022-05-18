@@ -27,7 +27,7 @@
 #include <linux/regulator/of_regulator.h>
 #include <linux/regulator/machine.h>
 #include <linux/clk.h>
-
+#include <linux/pinctrl/consumer.h>
 
 struct fixed_voltage_data {
 	struct regulator_desc desc;
@@ -39,14 +39,6 @@ struct fixed_voltage_data {
 
 struct fixed_dev_type {
 	bool has_enable_clock;
-};
-
-static const struct fixed_dev_type fixed_voltage_data = {
-	.has_enable_clock = false,
-};
-
-static const struct fixed_dev_type fixed_clkenable_data = {
-	.has_enable_clock = true,
 };
 
 static int reg_clock_enable(struct regulator_dev *rdev)
@@ -123,6 +115,7 @@ of_get_fixed_voltage_config(struct device *dev,
 		config->enabled_at_boot = true;
 
 	of_property_read_u32(np, "startup-delay-us", &config->startup_delay);
+	of_property_read_u32(np, "off-on-delay-us", &config->off_on_delay);
 
 	if (of_find_property(np, "vin-supply", NULL))
 		config->input_supply = "vin";
@@ -130,10 +123,10 @@ of_get_fixed_voltage_config(struct device *dev,
 	return config;
 }
 
-static struct regulator_ops fixed_voltage_ops = {
+static const struct regulator_ops fixed_voltage_ops = {
 };
 
-static struct regulator_ops fixed_voltage_clkenabled_ops = {
+static const struct regulator_ops fixed_voltage_clkenabled_ops = {
 	.enable = reg_clock_enable,
 	.disable = reg_clock_disable,
 	.is_enabled = reg_clock_is_enabled,
@@ -181,7 +174,7 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 
 		drvdata->enable_clock = devm_clk_get(dev, NULL);
 		if (IS_ERR(drvdata->enable_clock)) {
-			dev_err(dev, "Cant get enable-clock from devicetree\n");
+			dev_err(dev, "Can't get enable-clock from devicetree\n");
 			return -ENOENT;
 		}
 	} else {
@@ -189,6 +182,7 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 	}
 
 	drvdata->desc.enable_time = config->startup_delay;
+	drvdata->desc.off_on_delay = config->off_on_delay;
 
 	if (config->input_supply) {
 		drvdata->desc.supply_name = devm_kstrdup(&pdev->dev,
@@ -208,7 +202,7 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 
 	/*
 	 * The signal will be inverted by the GPIO core if flagged so in the
-	 * decriptor.
+	 * descriptor.
 	 */
 	if (config->enabled_at_boot)
 		gflags = GPIOD_OUT_HIGH;
@@ -258,6 +252,14 @@ static int reg_fixed_voltage_probe(struct platform_device *pdev)
 }
 
 #if defined(CONFIG_OF)
+static const struct fixed_dev_type fixed_voltage_data = {
+	.has_enable_clock = false,
+};
+
+static const struct fixed_dev_type fixed_clkenable_data = {
+	.has_enable_clock = true,
+};
+
 static const struct of_device_id fixed_of_match[] = {
 	{
 		.compatible = "regulator-fixed",
@@ -273,11 +275,32 @@ static const struct of_device_id fixed_of_match[] = {
 MODULE_DEVICE_TABLE(of, fixed_of_match);
 #endif
 
+#ifdef CONFIG_PM_SLEEP
+static int reg_fixed_voltage_suspend(struct device *dev)
+{
+	pinctrl_pm_select_sleep_state(dev);
+
+	return 0;
+}
+static int reg_fixed_voltage_resume(struct device *dev)
+{
+	pinctrl_pm_select_default_state(dev);
+
+	return 0;
+}
+#endif
+
+static const struct dev_pm_ops reg_fixed_voltage_pm_ops = {
+	SET_LATE_SYSTEM_SLEEP_PM_OPS(reg_fixed_voltage_suspend,
+		reg_fixed_voltage_resume)
+};
+
 static struct platform_driver regulator_fixed_voltage_driver = {
 	.probe		= reg_fixed_voltage_probe,
 	.driver		= {
 		.name		= "reg-fixed-voltage",
 		.of_match_table = of_match_ptr(fixed_of_match),
+		.pm = &reg_fixed_voltage_pm_ops,
 	},
 };
 

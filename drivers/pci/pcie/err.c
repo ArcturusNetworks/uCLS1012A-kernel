@@ -10,6 +10,8 @@
  *	Zhang Yanmin (yanmin.zhang@intel.com)
  */
 
+#define dev_fmt(fmt) "AER: " fmt
+
 #include <linux/pci.h>
 #include <linux/module.h>
 #include <linux/kernel.h>
@@ -44,7 +46,7 @@ static pci_ers_result_t merge_result(enum pci_ers_result orig,
 }
 
 static int report_error_detected(struct pci_dev *dev,
-				 enum pci_channel_state state,
+				 pci_channel_state_t state,
 				 enum pci_ers_result *result)
 {
 	pci_ers_result_t vote;
@@ -61,10 +63,12 @@ static int report_error_detected(struct pci_dev *dev,
 		 * error callbacks of "any" device in the subtree, and will
 		 * exit in the disconnected error state.
 		 */
-		if (dev->hdr_type != PCI_HEADER_TYPE_BRIDGE)
+		if (dev->hdr_type != PCI_HEADER_TYPE_BRIDGE) {
 			vote = PCI_ERS_RESULT_NO_AER_DRIVER;
-		else
+			pci_info(dev, "can't recover (no error_detected callback)\n");
+		} else {
 			vote = PCI_ERS_RESULT_NONE;
+		}
 	} else {
 		err_handler = dev->driver->err_handler;
 		vote = err_handler->error_detected(dev, state);
@@ -142,49 +146,9 @@ out:
 	return 0;
 }
 
-/**
- * default_reset_link - default reset function
- * @dev: pointer to pci_dev data structure
- *
- * Invoked when performing link reset on a Downstream Port or a
- * Root Port with no aer driver.
- */
-static pci_ers_result_t default_reset_link(struct pci_dev *dev)
-{
-	int rc;
-
-	rc = pci_bus_error_reset(dev);
-	pci_printk(KERN_DEBUG, dev, "downstream link has been reset\n");
-	return rc ? PCI_ERS_RESULT_DISCONNECT : PCI_ERS_RESULT_RECOVERED;
-}
-
-static pci_ers_result_t reset_link(struct pci_dev *dev, u32 service)
-{
-	pci_ers_result_t status;
-	struct pcie_port_service_driver *driver = NULL;
-
-	driver = pcie_port_find_service(dev, service);
-	if (driver && driver->reset_link) {
-		status = driver->reset_link(dev);
-	} else if (pcie_downstream_port(dev)) {
-		status = default_reset_link(dev);
-	} else {
-		pci_printk(KERN_DEBUG, dev, "no link-reset support at upstream device %s\n",
-			pci_name(dev));
-		return PCI_ERS_RESULT_DISCONNECT;
-	}
-
-	if (status != PCI_ERS_RESULT_RECOVERED) {
-		pci_printk(KERN_DEBUG, dev, "link reset at upstream device %s failed\n",
-			pci_name(dev));
-		return PCI_ERS_RESULT_DISCONNECT;
-	}
-
-	return status;
-}
-
-void pcie_do_recovery(struct pci_dev *dev, enum pci_channel_state state,
-		      u32 service)
+pci_ers_result_t pcie_do_recovery(struct pci_dev *dev,
+			pci_channel_state_t state,
+			pci_ers_result_t (*reset_link)(struct pci_dev *pdev))
 {
 	pci_ers_result_t status = PCI_ERS_RESULT_CAN_RECOVER;
 	struct pci_bus *bus;
@@ -199,14 +163,37 @@ void pcie_do_recovery(struct pci_dev *dev, enum pci_channel_state state,
 	bus = dev->subordinate;
 
 	pci_dbg(dev, "broadcast error_detected message\n");
-	if (state == pci_channel_io_frozen)
+	if (state == pci_channel_io_frozen) {
 		pci_walk_bus(bus, report_frozen_detected, &status);
-	else
+		/*
+		 * After resetting the link using reset_link() call, the
+		 * possible value of error status is either
+		 * PCI_ERS_RESULT_DISCONNECT (failure case) or
+		 * PCI_ERS_RESULT_NEED_RESET (success case).
+		 * So ignore the return value of report_error_detected()
+		 * call for fatal errors.
+		 *
+		 * In EDR mode, since AER and DPC Capabilities are owned by
+		 * firmware, reported_error_detected() will return error
+		 * status PCI_ERS_RESULT_NO_AER_DRIVER. Continuing
+		 * pcie_do_recovery() with error status as
+		 * PCI_ERS_RESULT_NO_AER_DRIVER will report recovery failure
+		 * irrespective of recovery status. But successful reset_link()
+		 * call usually recovers all fatal errors. So ignoring the
+		 * status result of report_error_detected() also helps EDR based
+		 * error recovery.
+		 */
+		status = reset_link(dev);
+		if (status == PCI_ERS_RESULT_RECOVERED) {
+			status = PCI_ERS_RESULT_NEED_RESET;
+		} else {
+			status = PCI_ERS_RESULT_DISCONNECT;
+			pci_warn(dev, "link reset failed\n");
+			goto failed;
+		}
+	} else {
 		pci_walk_bus(bus, report_normal_detected, &status);
-
-	if (state == pci_channel_io_frozen &&
-	    reset_link(dev, service) != PCI_ERS_RESULT_RECOVERED)
-		goto failed;
+	}
 
 	if (status == PCI_ERS_RESULT_CAN_RECOVER) {
 		status = PCI_ERS_RESULT_RECOVERED;
@@ -216,10 +203,22 @@ void pcie_do_recovery(struct pci_dev *dev, enum pci_channel_state state,
 
 	if (status == PCI_ERS_RESULT_NEED_RESET) {
 		/*
-		 * TODO: Should call platform-specific
-		 * functions to reset slot before calling
-		 * drivers' slot_reset callbacks?
+		 * TODO: Optimize the call to pci_reset_bus()
+		 *
+		 * There are two components to pci_reset_bus().
+		 *
+		 * 1. Do platform specific slot/bus reset.
+		 * 2. Save/Restore all devices in the bus.
+		 *
+		 * For hotplug capable devices and fatal errors,
+		 * device is already in reset state due to link
+		 * reset. So repeating platform specific slot/bus
+		 * reset via pci_reset_bus() call is redundant. So
+		 * can optimize this logic and conditionally call
+		 * pci_reset_bus().
 		 */
+		pci_reset_bus(dev);
+
 		status = PCI_ERS_RESULT_RECOVERED;
 		pci_dbg(dev, "broadcast slot_reset message\n");
 		pci_walk_bus(bus, report_slot_reset, &status);
@@ -231,14 +230,17 @@ void pcie_do_recovery(struct pci_dev *dev, enum pci_channel_state state,
 	pci_dbg(dev, "broadcast resume message\n");
 	pci_walk_bus(bus, report_resume, &status);
 
-	pci_aer_clear_device_status(dev);
-	pci_cleanup_aer_uncorrect_error_status(dev);
-	pci_info(dev, "AER: Device recovery successful\n");
-	return;
+	if (pcie_aer_is_native(dev))
+		pcie_clear_device_status(dev);
+	pci_aer_clear_nonfatal_status(dev);
+	pci_info(dev, "device recovery successful\n");
+	return status;
 
 failed:
 	pci_uevent_ers(dev, PCI_ERS_RESULT_DISCONNECT);
 
 	/* TODO: Should kernel panic here? */
-	pci_info(dev, "AER: Device recovery failed\n");
+	pci_info(dev, "device recovery failed\n");
+
+	return status;
 }

@@ -395,6 +395,7 @@ static int drm_legacy_infobufs32(struct drm_device *dev, void *data,
 			struct drm_file *file_priv)
 {
 	drm_buf_info32_t *request = data;
+
 	return __drm_legacy_infobufs(dev, data, &request->count, copy_one_buf32);
 }
 
@@ -820,6 +821,7 @@ static int compat_drm_update_draw(struct file *file, unsigned int cmd,
 				  unsigned long arg)
 {
 	drm_update_draw32_t update32;
+
 	if (copy_from_user(&update32, (void __user *)arg, sizeof(update32)))
 		return -EFAULT;
 
@@ -863,8 +865,6 @@ static int compat_drm_wait_vblank(struct file *file, unsigned int cmd,
 	req.request.sequence = req32.request.sequence;
 	req.request.signal = req32.request.signal;
 	err = drm_ioctl_kernel(file, drm_wait_vblank_ioctl, &req, DRM_UNLOCKED);
-	if (err)
-		return err;
 
 	req32.reply.type = req.reply.type;
 	req32.reply.sequence = req.reply.sequence;
@@ -873,7 +873,7 @@ static int compat_drm_wait_vblank(struct file *file, unsigned int cmd,
 	if (copy_to_user(argp, &req32, sizeof(req32)))
 		return -EFAULT;
 
-	return 0;
+	return err;
 }
 
 #if defined(CONFIG_X86)
@@ -996,8 +996,8 @@ long drm_compat_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 	if (!fn)
 		return drm_ioctl(filp, cmd, arg);
 
-	DRM_DEBUG("pid=%d, dev=0x%lx, auth=%d, %s\n",
-		  task_pid_nr(current),
+	DRM_DEBUG("comm=\"%s\", pid=%d, dev=0x%lx, auth=%d, %s\n",
+		  current->comm, task_pid_nr(current),
 		  (long)old_encode_dev(file_priv->minor->kdev->devt),
 		  file_priv->authenticated,
 		  drm_compat_ioctls[nr].name);

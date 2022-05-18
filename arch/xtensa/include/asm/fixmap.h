@@ -13,10 +13,10 @@
 #ifndef _ASM_FIXMAP_H
 #define _ASM_FIXMAP_H
 
-#include <asm/pgtable.h>
 #ifdef CONFIG_HIGHMEM
 #include <linux/threads.h>
-#include <asm/kmap_types.h>
+#include <linux/pgtable.h>
+#include <asm/kmap_size.h>
 #endif
 
 /*
@@ -39,7 +39,7 @@ enum fixed_addresses {
 	/* reserved pte's for temporary kernel mappings */
 	FIX_KMAP_BEGIN,
 	FIX_KMAP_END = FIX_KMAP_BEGIN +
-		(KM_TYPE_NR * NR_CPUS * DCACHE_N_COLORS) - 1,
+		(KM_MAX_IDX * NR_CPUS * DCACHE_N_COLORS) - 1,
 #endif
 	__end_of_fixed_addresses
 };
@@ -75,11 +75,5 @@ static inline unsigned long virt_to_fix(const unsigned long vaddr)
 }
 
 #endif
-
-#define kmap_get_fixmap_pte(vaddr) \
-	pte_offset_kernel( \
-		pmd_offset(pud_offset(pgd_offset_k(vaddr), (vaddr)), (vaddr)), \
-		(vaddr) \
-	)
 
 #endif

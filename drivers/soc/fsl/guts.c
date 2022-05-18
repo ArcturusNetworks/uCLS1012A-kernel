@@ -121,7 +121,7 @@ static const struct fsl_soc_die_attr *fsl_soc_die_match(
 	return NULL;
 }
 
-u32 fsl_guts_get_svr(void)
+static u32 fsl_guts_get_svr(void)
 {
 	u32 svr = 0;
 
@@ -135,13 +135,6 @@ u32 fsl_guts_get_svr(void)
 
 	return svr;
 }
-EXPORT_SYMBOL(fsl_guts_get_svr);
-
-struct soc_device_attribute *fsl_guts_get_soc_dev_attr(void)
-{
-	return &soc_dev_attr;
-}
-EXPORT_SYMBOL(fsl_guts_get_soc_dev_attr);
 
 static int fsl_guts_probe(struct platform_device *pdev)
 {
@@ -175,8 +168,7 @@ static int fsl_guts_probe(struct platform_device *pdev)
 	soc_die = fsl_soc_die_match(svr, fsl_soc_die);
 	if (soc_die) {
 		soc_dev_attr.family = devm_kasprintf(dev, GFP_KERNEL,
-						     "QorIQ %s%c", soc_die->die,
-						     ((svr >> 8) & 0x1) ? ' ' : 'E');
+						     "QorIQ %s", soc_die->die);
 	} else {
 		soc_dev_attr.family = devm_kasprintf(dev, GFP_KERNEL, "QorIQ");
 	}

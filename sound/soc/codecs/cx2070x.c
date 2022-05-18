@@ -138,9 +138,9 @@ static const int apply_dsp_change(struct snd_soc_component *codec)
 	mutex_lock(&cx2070x->update_lock);
 
 	snd_soc_component_write(codec, CXREG_DSP_INIT_NEWC,
-		      snd_soc_component_read32(codec, CXREG_DSP_INIT_NEWC) | 1);
+		      snd_soc_component_read(codec, CXREG_DSP_INIT_NEWC) | 1);
 	for (; try_loop; try_loop--) {
-		if (0 == (snd_soc_component_read32(codec, CXREG_DSP_INIT_NEWC) & 1)) {
+		if (0 == (snd_soc_component_read(codec, CXREG_DSP_INIT_NEWC) & 1)) {
 			mutex_unlock(&cx2070x->update_lock);
 			return 0;
 		}
@@ -685,9 +685,10 @@ static int cx2070x_hw_params(struct snd_pcm_substream *substream,
 	return 0;
 }
 
-static int cx2070x_mute(struct snd_soc_dai *dai, int mute)
+static int cx2070x_mute(struct snd_soc_dai *dai, int mute, int direction)
 {
 	struct snd_soc_component *codec = dai->component;
+
 	return snd_soc_component_update_bits(codec, CXREG_VOLUME_MUTE, 0x03,
 				   mute ? 0x03 : 0);
 }
@@ -701,7 +702,7 @@ static int cx2070x_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 	u8 val;
 
 	dev_dbg(dev, "using MCLK at %uHz\n", freq);
-	val = snd_soc_component_read32(codec, CXREG_I2S_OPTION);
+	val = snd_soc_component_read(codec, CXREG_I2S_OPTION);
 	val &= ~0x10;
 	if (dir == SND_SOC_CLOCK_OUT) {
 		switch (freq) {
@@ -882,14 +883,14 @@ static int cx2070x_probe(struct snd_soc_component *codec)
 
 	cx2070x->codec = codec;
 
-	a1 = snd_soc_component_read32(codec, CXREG_CHIP_VERSION);
-	a2 = snd_soc_component_read32(codec, CXREG_FIRMWARE_VER_HI);
-	a3 = snd_soc_component_read32(codec, CXREG_FIRMWARE_VER_LO);
-	a4 = snd_soc_component_read32(codec, CXREG_PATCH_VER_HI);
-	a5 = snd_soc_component_read32(codec, CXREG_PATCH_VER_LO);
-	a6 = snd_soc_component_read32(codec, CXREG_PATCH_HI);
-	a7 = snd_soc_component_read32(codec, CXREG_PATCH_MED);
-	a8 = snd_soc_component_read32(codec, CXREG_PATCH_LO);
+	a1 = snd_soc_component_read(codec, CXREG_CHIP_VERSION);
+	a2 = snd_soc_component_read(codec, CXREG_FIRMWARE_VER_HI);
+	a3 = snd_soc_component_read(codec, CXREG_FIRMWARE_VER_LO);
+	a4 = snd_soc_component_read(codec, CXREG_PATCH_VER_HI);
+	a5 = snd_soc_component_read(codec, CXREG_PATCH_VER_LO);
+	a6 = snd_soc_component_read(codec, CXREG_PATCH_HI);
+	a7 = snd_soc_component_read(codec, CXREG_PATCH_MED);
+	a8 = snd_soc_component_read(codec, CXREG_PATCH_LO);
 
 	dev_info(codec->dev,
 		 "CX2070%d, Firmware Version %x.%x.%x.%x (%02x.%02x.%02x)\n",
@@ -941,7 +942,7 @@ static bool cx2070x_volatile(struct device *dev, unsigned int reg)
 
 static const struct snd_soc_dai_ops cx2070x_dai_ops = {
 	.hw_params = cx2070x_hw_params,
-	.digital_mute = cx2070x_mute,
+	.mute_stream = cx2070x_mute,
 	.set_fmt = cx2070x_set_dai_fmt,
 	.set_sysclk = cx2070x_set_dai_sysclk,
 };

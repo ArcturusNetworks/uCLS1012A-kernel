@@ -6,7 +6,7 @@
  *           Jamal Hadi Salim
  *           Alexey Kuznetsov, <kuznet@ms2.inr.ac.ru>
  *
- * See Documentation/networking/gen_stats.txt
+ * See Documentation/networking/gen_stats.rst
  */
 
 #include <linux/types.h>
@@ -123,8 +123,7 @@ __gnet_stats_copy_basic_cpu(struct gnet_stats_basic_packed *bstats,
 	for_each_possible_cpu(i) {
 		struct gnet_stats_basic_cpu *bcpu = per_cpu_ptr(cpu, i);
 		unsigned int start;
-		u64 bytes;
-		u32 packets;
+		u64 bytes, packets;
 
 		do {
 			start = u64_stats_fetch_begin_irq(&bcpu->syncp);
@@ -138,7 +137,7 @@ __gnet_stats_copy_basic_cpu(struct gnet_stats_basic_packed *bstats,
 }
 
 void
-__gnet_stats_copy_basic(const seqcount_t *running,
+__gnet_stats_copy_basic(net_seqlock_t *running,
 			struct gnet_stats_basic_packed *bstats,
 			struct gnet_stats_basic_cpu __percpu *cpu,
 			struct gnet_stats_basic_packed *b)
@@ -151,15 +150,15 @@ __gnet_stats_copy_basic(const seqcount_t *running,
 	}
 	do {
 		if (running)
-			seq = read_seqcount_begin(running);
+			seq = net_seq_begin(running);
 		bstats->bytes = b->bytes;
 		bstats->packets = b->packets;
-	} while (running && read_seqcount_retry(running, seq));
+	} while (running && net_seq_retry(running, seq));
 }
 EXPORT_SYMBOL(__gnet_stats_copy_basic);
 
 static int
-___gnet_stats_copy_basic(const seqcount_t *running,
+___gnet_stats_copy_basic(net_seqlock_t *running,
 			 struct gnet_dump *d,
 			 struct gnet_stats_basic_cpu __percpu *cpu,
 			 struct gnet_stats_basic_packed *b,
@@ -176,12 +175,17 @@ ___gnet_stats_copy_basic(const seqcount_t *running,
 
 	if (d->tail) {
 		struct gnet_stats_basic sb;
+		int res;
 
 		memset(&sb, 0, sizeof(sb));
 		sb.bytes = bstats.bytes;
 		sb.packets = bstats.packets;
-		return gnet_stats_copy(d, type, &sb, sizeof(sb),
-				       TCA_STATS_PAD);
+		res = gnet_stats_copy(d, type, &sb, sizeof(sb), TCA_STATS_PAD);
+		if (res < 0 || sb.packets == bstats.packets)
+			return res;
+		/* emit 64bit stats only if needed */
+		return gnet_stats_copy(d, TCA_STATS_PKT64, &bstats.packets,
+				       sizeof(bstats.packets), TCA_STATS_PAD);
 	}
 	return 0;
 }
@@ -200,7 +204,7 @@ ___gnet_stats_copy_basic(const seqcount_t *running,
  * if the room in the socket buffer was not sufficient.
  */
 int
-gnet_stats_copy_basic(const seqcount_t *running,
+gnet_stats_copy_basic(net_seqlock_t *running,
 		      struct gnet_dump *d,
 		      struct gnet_stats_basic_cpu __percpu *cpu,
 		      struct gnet_stats_basic_packed *b)
@@ -224,7 +228,7 @@ EXPORT_SYMBOL(gnet_stats_copy_basic);
  * if the room in the socket buffer was not sufficient.
  */
 int
-gnet_stats_copy_basic_hw(const seqcount_t *running,
+gnet_stats_copy_basic_hw(net_seqlock_t *running,
 			 struct gnet_dump *d,
 			 struct gnet_stats_basic_cpu __percpu *cpu,
 			 struct gnet_stats_basic_packed *b)

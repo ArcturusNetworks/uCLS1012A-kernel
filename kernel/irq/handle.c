@@ -145,6 +145,13 @@ irqreturn_t __handle_irq_event_percpu(struct irq_desc *desc, unsigned int *flags
 	for_each_action_of_desc(desc, action) {
 		irqreturn_t res;
 
+		/*
+		 * If this IRQ would be threaded under force_irqthreads, mark it so.
+		 */
+		if (irq_settings_can_thread(desc) &&
+		    !(action->flags & (IRQF_NO_THREAD | IRQF_PERCPU | IRQF_ONESHOT)))
+			lockdep_hardirq_threaded();
+
 		trace_irq_handler_entry(irq, action);
 		res = action->handler(irq, action->dev_id);
 		trace_irq_handler_exit(irq, action, res);
@@ -166,7 +173,7 @@ irqreturn_t __handle_irq_event_percpu(struct irq_desc *desc, unsigned int *flags
 
 			__irq_wake_thread(desc, action);
 
-			/* Fall through - to add to randomness */
+			fallthrough;	/* to add to randomness */
 		case IRQ_HANDLED:
 			*flags |= action->flags;
 			break;
@@ -185,10 +192,16 @@ irqreturn_t handle_irq_event_percpu(struct irq_desc *desc)
 {
 	irqreturn_t retval;
 	unsigned int flags = 0;
+	struct pt_regs *regs = get_irq_regs();
+	u64 ip = regs ? instruction_pointer(regs) : 0;
 
 	retval = __handle_irq_event_percpu(desc, &flags);
 
-	add_interrupt_randomness(desc->irq_data.irq, flags);
+#ifdef CONFIG_PREEMPT_RT
+	desc->random_ip = ip;
+#else
+	add_interrupt_randomness(desc->irq_data.irq, flags, ip);
+#endif
 
 	if (!noirqdebug)
 		note_interrupt(desc, retval);

@@ -66,7 +66,7 @@ static long vp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 //	unsigned int tmp = 0;
 //	unsigned int stat = 0;
 //	unsigned long flags;
-	struct timespec ktv;
+	struct timespec64 ktv;
 	static long tv_usec;
 	int ptime = 20000;
 
@@ -83,7 +83,7 @@ static long vp_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
 			unsigned int u_wait;
 			long tmp_usec;
 
-			getnstimeofday(&ktv);
+			ktime_get_real_ts64(&ktv);
 			tmp_usec = ktv.tv_nsec/1000 - tv_usec;
 			tv_usec = ktv.tv_nsec/1000;
 			if (tmp_usec < 0)

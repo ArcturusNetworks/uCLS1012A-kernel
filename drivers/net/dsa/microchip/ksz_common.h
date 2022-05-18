@@ -27,6 +27,7 @@ struct ksz_port_mib {
 struct ksz_port {
 	u16 member;
 	u16 vid_member;
+	bool remove_tag;		/* Remove Tag flag set, for ksz8795 only */
 	int stp_state;
 	struct phy_device phydev;
 
@@ -39,6 +40,7 @@ struct ksz_port {
 	u32 freeze:1;			/* MIB counter freeze is enabled */
 
 	struct ksz_port_mib mib;
+	phy_interface_t interface;
 };
 
 struct ksz_device {
@@ -72,7 +74,7 @@ struct ksz_device {
 	int mib_cnt;
 	int mib_port_cnt;
 	int last_port;			/* ports after that not used */
-	phy_interface_t interface;
+	phy_interface_t compat_interface;
 	u32 regs_size;
 	bool phy_errata_9477;
 	bool synclko_125;
@@ -80,15 +82,10 @@ struct ksz_device {
 	struct vlan_table *vlan_cache;
 
 	struct ksz_port *ports;
-	struct timer_list mib_read_timer;
-	struct work_struct mib_read;
+	struct delayed_work mib_read;
 	unsigned long mib_read_interval;
 	u16 br_member;
 	u16 member;
-	u16 live_ports;
-	u16 on_ports;			/* ports enabled by DSA */
-	u16 rx_ports;
-	u16 tx_ports;
 	u16 mirror_rx;
 	u16 mirror_tx;
 	u32 features;			/* chip specific features */
@@ -158,8 +155,8 @@ void ksz_init_mib_timer(struct ksz_device *dev);
 
 int ksz_phy_read16(struct dsa_switch *ds, int addr, int reg);
 int ksz_phy_write16(struct dsa_switch *ds, int addr, int reg, u16 val);
-void ksz_adjust_link(struct dsa_switch *ds, int port,
-		     struct phy_device *phydev);
+void ksz_mac_link_down(struct dsa_switch *ds, int port, unsigned int mode,
+		       phy_interface_t interface);
 int ksz_sset_count(struct dsa_switch *ds, int port, int sset);
 void ksz_get_ethtool_stats(struct dsa_switch *ds, int port, uint64_t *buf);
 int ksz_port_bridge_join(struct dsa_switch *ds, int port,
@@ -178,7 +175,6 @@ void ksz_port_mdb_add(struct dsa_switch *ds, int port,
 int ksz_port_mdb_del(struct dsa_switch *ds, int port,
 		     const struct switchdev_obj_port_mdb *mdb);
 int ksz_enable_port(struct dsa_switch *ds, int port, struct phy_device *phy);
-void ksz_disable_port(struct dsa_switch *ds, int port);
 
 /* Common register access functions */
 
@@ -215,12 +211,8 @@ static inline int ksz_read64(struct ksz_device *dev, u32 reg, u64 *val)
 	int ret;
 
 	ret = regmap_bulk_read(dev->regmap[2], reg, value, 2);
-	if (!ret) {
-		/* Ick! ToDo: Add 64bit R/W to regmap on 32bit systems */
-		value[0] = swab32(value[0]);
-		value[1] = swab32(value[1]);
-		*val = swab64((u64)*value);
-	}
+	if (!ret)
+		*val = (u64)value[0] << 32 | value[1];
 
 	return ret;
 }

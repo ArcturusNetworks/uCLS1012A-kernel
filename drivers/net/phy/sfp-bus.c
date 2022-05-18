@@ -44,6 +44,17 @@ static void sfp_quirk_2500basex(const struct sfp_eeprom_id *id,
 	phylink_set(modes, 2500baseX_Full);
 }
 
+static void sfp_quirk_ubnt_uf_instant(const struct sfp_eeprom_id *id,
+				      unsigned long *modes)
+{
+	/* Ubiquiti U-Fiber Instant module claims that support all transceiver
+	 * types including 10G Ethernet which is not truth. So clear all claimed
+	 * modes and set only one mode which module supports: 1000baseX_Full.
+	 */
+	phylink_zero(modes);
+	phylink_set(modes, 1000baseX_Full);
+}
+
 static const struct sfp_quirk sfp_quirks[] = {
 	{
 		// Alcatel Lucent G-010S-P can operate at 2500base-X, but
@@ -63,6 +74,10 @@ static const struct sfp_quirk sfp_quirks[] = {
 		.vendor = "HUAWEI",
 		.part = "MA5671A",
 		.modes = sfp_quirk_2500basex,
+	}, {
+		.vendor = "UBNT",
+		.part = "UF-INSTANT",
+		.modes = sfp_quirk_ubnt_uf_instant,
 	},
 };
 
@@ -149,7 +164,7 @@ int sfp_parse_port(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
 			port = PORT_TP;
 			break;
 		}
-		/* fallthrough */
+		fallthrough;
 	case SFF8024_CONNECTOR_SG: /* guess */
 	case SFF8024_CONNECTOR_HSSDC_II:
 	case SFF8024_CONNECTOR_NOSEPARATE:
@@ -301,7 +316,7 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
 		break;
 	case SFF8024_ECC_100GBASE_CR4:
 		phylink_set(modes, 100000baseCR4_Full);
-		/* fallthrough */
+		fallthrough;
 	case SFF8024_ECC_25GBASE_CR_S:
 	case SFF8024_ECC_25GBASE_CR_N:
 		phylink_set(modes, 25000baseCR_Full);
@@ -334,14 +349,13 @@ void sfp_parse_support(struct sfp_bus *bus, const struct sfp_eeprom_id *id,
 	}
 
 	/* If we haven't discovered any modes that this module supports, try
-	 * the encoding and bitrate to determine supported modes. Some BiDi
-	 * modules (eg, 1310nm/1550nm) are not 1000BASE-BX compliant due to
-	 * the differing wavelengths, so do not set any transceiver bits.
+	 * the bitrate to determine supported modes. Some BiDi modules (eg,
+	 * 1310nm/1550nm) are not 1000BASE-BX compliant due to the differing
+	 * wavelengths, so do not set any transceiver bits.
 	 */
 	if (bitmap_empty(modes, __ETHTOOL_LINK_MODE_MASK_NBITS)) {
-		/* If the encoding and bit rate allows 1000baseX */
-		if (id->base.encoding == SFF8024_ENCODING_8B10B && br_nom &&
-		    br_min <= 1300 && br_max >= 1200)
+		/* If the bit rate allows 1000baseX */
+		if (br_nom && br_min <= 1300 && br_max >= 1200)
 			phylink_set(modes, 1000baseX_Full);
 	}
 
@@ -373,7 +387,7 @@ phy_interface_t sfp_select_interface(struct sfp_bus *bus,
 	    phylink_test(link_modes, 10000baseLRM_Full) ||
 	    phylink_test(link_modes, 10000baseER_Full) ||
 	    phylink_test(link_modes, 10000baseT_Full))
-		return PHY_INTERFACE_MODE_10GKR;
+		return PHY_INTERFACE_MODE_10GBASER;
 
 	if (phylink_test(link_modes, 2500baseX_Full))
 		return PHY_INTERFACE_MODE_2500BASEX;
@@ -572,13 +586,15 @@ static void sfp_upstream_clear(struct sfp_bus *bus)
  * the sfp_bus structure, incrementing its reference count.  This must
  * be put via sfp_bus_put() when done.
  *
- * Returns: on success, a pointer to the sfp_bus structure,
- *	    %NULL if no SFP is specified,
- * 	    on failure, an error pointer value:
- * 		corresponding to the errors detailed for
- * 		fwnode_property_get_reference_args().
- * 	        %-ENOMEM if we failed to allocate the bus.
- *		an error from the upstream's connect_phy() method.
+ * Returns:
+ * 	    - on success, a pointer to the sfp_bus structure,
+ *	    - %NULL if no SFP is specified,
+ * 	    - on failure, an error pointer value:
+ *
+ * 	      - corresponding to the errors detailed for
+ * 	        fwnode_property_get_reference_args().
+ * 	      - %-ENOMEM if we failed to allocate the bus.
+ *	      - an error from the upstream's connect_phy() method.
  */
 struct sfp_bus *sfp_bus_find_fwnode(struct fwnode_handle *fwnode)
 {
@@ -612,13 +628,15 @@ EXPORT_SYMBOL_GPL(sfp_bus_find_fwnode);
  * the SFP bus using sfp_register_upstream().  This takes a reference on the
  * bus, so it is safe to put the bus after this call.
  *
- * Returns: on success, a pointer to the sfp_bus structure,
- *	    %NULL if no SFP is specified,
- * 	    on failure, an error pointer value:
- * 		corresponding to the errors detailed for
- * 		fwnode_property_get_reference_args().
- * 	        %-ENOMEM if we failed to allocate the bus.
- *		an error from the upstream's connect_phy() method.
+ * Returns:
+ * 	    - on success, a pointer to the sfp_bus structure,
+ *	    - %NULL if no SFP is specified,
+ * 	    - on failure, an error pointer value:
+ *
+ * 	      - corresponding to the errors detailed for
+ * 	        fwnode_property_get_reference_args().
+ * 	      - %-ENOMEM if we failed to allocate the bus.
+ *	      - an error from the upstream's connect_phy() method.
  */
 int sfp_bus_add_upstream(struct sfp_bus *bus, void *upstream,
 			 const struct sfp_upstream_ops *ops)

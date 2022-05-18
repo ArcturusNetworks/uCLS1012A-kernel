@@ -37,6 +37,7 @@
  * 	master MTD flag set for the corresponding MTD partition.
  * 	For example, to force a read-only partition, simply adding
  * 	MTD_WRITEABLE to the mask_flags will do the trick.
+ * add_flags: contains flags to add to the parent flags
  *
  * Note: writeable partitions require their size and offset be
  * erasesize aligned (e.g. use MTDPART_OFS_NEXTBLK).
@@ -48,6 +49,7 @@ struct mtd_partition {
 	uint64_t size;			/* partition size */
 	uint64_t offset;		/* offset within the master MTD space */
 	uint32_t mask_flags;		/* master MTD flags to mask out for this partition */
+	uint32_t add_flags;		/* flags to add to the partition */
 	struct device_node *of_node;
 };
 
@@ -73,12 +75,6 @@ struct mtd_part_parser_data {
  * Functions dealing with the various ways of partitioning the space
  */
 
-enum mtd_parser_type {
-	MTD_PARSER_TYPE_DEVICE = 0,
-	MTD_PARSER_TYPE_ROOTFS,
-	MTD_PARSER_TYPE_FIRMWARE,
-};
-
 struct mtd_part_parser {
 	struct list_head list;
 	struct module *owner;
@@ -87,7 +83,6 @@ struct mtd_part_parser {
 	int (*parse_fn)(struct mtd_info *, const struct mtd_partition **,
 			struct mtd_part_parser_data *);
 	void (*cleanup)(const struct mtd_partition *pparts, int nr_parts);
-	enum mtd_parser_type type;
 };
 
 /* Container for passing around a set of parsed partitions */
@@ -112,12 +107,9 @@ extern void deregister_mtd_parser(struct mtd_part_parser *parser);
 	module_driver(__mtd_part_parser, register_mtd_parser, \
 		      deregister_mtd_parser)
 
-int mtd_is_partition(const struct mtd_info *mtd);
 int mtd_add_partition(struct mtd_info *master, const char *name,
 		      long long offset, long long length);
 int mtd_del_partition(struct mtd_info *master, int partno);
-struct mtd_info *mtd_get_master(const struct mtd_info *mtd);
-uint64_t mtdpart_get_offset(const struct mtd_info *mtd);
 uint64_t mtd_get_device_size(const struct mtd_info *mtd);
 
 #endif

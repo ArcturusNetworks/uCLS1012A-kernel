@@ -30,10 +30,15 @@ static int iomap_swapfile_add_extent(struct iomap_swapfile_info *isi)
 {
 	struct iomap *iomap = &isi->iomap;
 	unsigned long nr_pages;
+	unsigned long max_pages;
 	uint64_t first_ppage;
 	uint64_t first_ppage_reported;
 	uint64_t next_ppage;
 	int error;
+
+	if (unlikely(isi->nr_pages >= isi->sis->max))
+		return 0;
+	max_pages = isi->sis->max - isi->nr_pages;
 
 	/*
 	 * Round the start up and the end down so that the physical
@@ -47,6 +52,7 @@ static int iomap_swapfile_add_extent(struct iomap_swapfile_info *isi)
 	if (first_ppage >= next_ppage)
 		return 0;
 	nr_pages = next_ppage - first_ppage;
+	nr_pages = min(nr_pages, max_pages);
 
 	/*
 	 * Calculate how much swap space we're adding; the first page contains
@@ -76,7 +82,8 @@ static int iomap_swapfile_add_extent(struct iomap_swapfile_info *isi)
  * distinction between written and unwritten extents.
  */
 static loff_t iomap_swapfile_activate_actor(struct inode *inode, loff_t pos,
-		loff_t count, void *data, struct iomap *iomap)
+		loff_t count, void *data, struct iomap *iomap,
+		struct iomap *srcmap)
 {
 	struct iomap_swapfile_info *isi = data;
 	int error;

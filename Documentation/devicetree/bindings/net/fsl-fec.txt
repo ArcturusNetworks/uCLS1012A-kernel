@@ -5,6 +5,19 @@ Required properties:
 - reg : Address and length of the register set for the device
 - interrupts : Should contain fec interrupt
 - phy-mode : See ethernet.txt file in the same directory
+- clock-name: Should be the names of the clocks
+  - "ipg", for MAC ipg_clk_s, ipg_clk_mac_s that are for register accessing
+  - "ahb", for MAC ipg_clk, ipg_clk_mac that are bus clock
+  - "ptp"(option), for IEEE1588 timer clock that requires the clock
+  - "enet_clk_ref"(option), for MAC transmit/receiver reference clock like
+    RGMII TXC clock or RMII reference clock. It depends on board design,
+    the clock is required if RGMII TXC and RMII reference clock source from
+    SOC internal PLL.
+  - "enet_out"(option), output clock for external device, like supply clock
+    for PHY. The clock is required if PHY clock source from SOC.
+  - "enet_2x_txclk"(option), for RGMII sampleing clock which fixed at 250Mhz.
+    The clock is required if SOC RGMII enable clock delay.
+- clocks: Phandles to input clocks.
 
 Optional properties:
 - phy-supply : regulator that powers the Ethernet PHY.
@@ -22,6 +35,11 @@ Optional properties:
 - fsl,err006687-workaround-present: If present indicates that the system has
   the hardware workaround for ERR006687 applied and does not need a software
   workaround.
+- fsl,stop-mode: register bits of stop mode control, the format is
+		 <&gpr req_gpr req_bit>.
+		 gpr is the phandle to general purpose register node.
+		 req_gpr is the gpr register offset for ENET stop request.
+		 req_bit is the gpr bit offset for ENET stop request.
  -interrupt-names:  names of the interrupts listed in interrupts property in
   the same order. The defaults if not specified are
   __Number of interrupts__   __Default__
@@ -34,6 +52,10 @@ Optional properties:
   tx/rx queues 1 and 2. "int0" will be used for queue 0 and ENET_MII interrupts.
   For imx6sx, "int0" handles all 3 queues and ENET_MII. "pps" is for the pulse
   per second interrupt associated with 1588 precision time protocol(PTP).
+
+- fsl,wakeup_irq : The property defines the wakeup irq index in enet irq source.
+- mii-exclusive: If present, each MAC has their exclusive MDIO bus in current board
+  design, otherwise multiple MACs share one MDIO bus to reduce Pins utilize.
 
 Optional subnodes:
 - mdio : specifies the mdio bus in the FEC, used as a container for phy nodes
@@ -80,6 +102,7 @@ ethernet@83fec000 {
 	phy-supply = <&reg_fec_supply>;
 	phy-handle = <&ethphy>;
 	mdio {
+	        clock-frequency = <5000000>;
 		ethphy: ethernet-phy@6 {
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <6>;

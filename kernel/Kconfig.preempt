@@ -1,5 +1,11 @@
 # SPDX-License-Identifier: GPL-2.0-only
 
+config HAVE_PREEMPT_LAZY
+	bool
+
+config PREEMPT_LAZY
+	def_bool y if HAVE_PREEMPT_LAZY && PREEMPT_RT
+
 choice
 	prompt "Preemption Model"
 	default PREEMPT_NONE
@@ -59,13 +65,14 @@ config PREEMPT_RT
 	bool "Fully Preemptible Kernel (Real-Time)"
 	depends on EXPERT && ARCH_SUPPORTS_RT
 	select PREEMPTION
+	select RT_MUTEXES
 	help
 	  This option turns the kernel into a real-time kernel by replacing
 	  various locking primitives (spinlocks, rwlocks, etc.) with
 	  preemptible priority-inheritance aware variants, enforcing
 	  interrupt threading and introducing mechanisms to break up long
 	  non-preemptible sections. This makes the kernel, except for very
-	  low level and critical code pathes (entry code, scheduler, low
+	  low level and critical code paths (entry code, scheduler, low
 	  level interrupt handling) fully preemptible and brings most
 	  execution contexts under scheduler control.
 

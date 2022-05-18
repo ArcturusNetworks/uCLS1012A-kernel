@@ -19,7 +19,7 @@
 #ifndef __B53_H
 #define __B53_H
 
-#include <linux/kernel.h>
+#include <linux/types.h>
 #include <linux/platform_data/dsa.h>
 
 struct b53_platform_data {
@@ -28,9 +28,6 @@ struct b53_platform_data {
 
 	u32 chip_id;
 	u16 enabled_ports;
-
-	/* allow to specify an ethX alias */
-	const char *alias;
 
 	/* only used by MMAP'd driver */
 	unsigned big_endian:1;

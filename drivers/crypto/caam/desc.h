@@ -18,7 +18,7 @@
  */
 
 #define SEC4_SG_LEN_EXT		0x80000000	/* Entry points to table */
-#define SEC4_SG_LEN_FIN		0x40000000	/* Last ent in table */
+#define SEC4_SG_LEN_FIN		0x40000000	/* Last entry in table */
 #define SEC4_SG_BPID_MASK	0x000000ff
 #define SEC4_SG_BPID_SHIFT	16
 #define SEC4_SG_LEN_MASK	0x3fffffff	/* Excludes EXT and FINAL */
@@ -114,7 +114,7 @@
  */
 #define HDR_REVERSE		0x00000800
 
-/* Propogate DNR property to SharedDesc */
+/* Propagate DNR property to SharedDesc */
 #define HDR_PROP_DNR		0x00000800
 
 /* JobDesc/SharedDesc share property */
@@ -153,7 +153,7 @@
  * with the TDKEK if TK is set
  */
 #define KEY_ENC			0x00400000
-
+#define KEY_ENC_OFFSET		22
 /*
  * No Write Back - Do not allow key to be FIFO STOREd
  */
@@ -163,11 +163,13 @@
  * Enhanced Encryption of Key
  */
 #define KEY_EKT			0x00100000
+#define KEY_EKT_OFFSET		20
 
 /*
  * Encrypted with Trusted Key
  */
 #define KEY_TK			0x00008000
+#define KEY_TK_OFFSET		15
 
 /*
  * KDEST - Key Destination: 0 - class key register,
@@ -1276,6 +1278,8 @@
 #define OP_ALG_ICV_MASK		(1 << OP_ALG_ICV_SHIFT)
 #define OP_ALG_ICV_OFF		(0 << OP_ALG_ICV_SHIFT)
 #define OP_ALG_ICV_ON		(1 << OP_ALG_ICV_SHIFT)
+
+#define OP_ALG_PR_ON		BIT(1)
 
 #define OP_ALG_DIR_SHIFT	0
 #define OP_ALG_DIR_MASK		1

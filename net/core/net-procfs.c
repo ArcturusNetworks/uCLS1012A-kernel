@@ -20,8 +20,8 @@ static inline struct net_device *dev_from_same_bucket(struct seq_file *seq, loff
 	struct hlist_head *h;
 	unsigned int count = 0, offset = get_offset(*pos);
 
-	h = &net->dev_name_head[get_bucket(*pos)];
-	hlist_for_each_entry_rcu(dev, h, name_hlist) {
+	h = &net->dev_index_head[get_bucket(*pos)];
+	hlist_for_each_entry_rcu(dev, h, index_hlist) {
 		if (++count == offset)
 			return dev;
 	}
@@ -116,6 +116,12 @@ static int dev_seq_show(struct seq_file *seq, void *v)
 	return 0;
 }
 
+static u32 softnet_backlog_len(struct softnet_data *sd)
+{
+	return skb_queue_len_lockless(&sd->input_pkt_queue) +
+	       skb_queue_len_lockless(&sd->process_queue);
+}
+
 static struct softnet_data *softnet_get_online(loff_t *pos)
 {
 	struct softnet_data *sd = NULL;
@@ -159,12 +165,17 @@ static int softnet_seq_show(struct seq_file *seq, void *v)
 	rcu_read_unlock();
 #endif
 
+	/* the index is the CPU id owing this sd. Since offline CPUs are not
+	 * displayed, it would be othrwise not trivial for the user-space
+	 * mapping the data a specific CPU
+	 */
 	seq_printf(seq,
-		   "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",
+		   "%08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x\n",
 		   sd->processed, sd->dropped, sd->time_squeeze, 0,
 		   0, 0, 0, 0, /* was fastroute */
 		   0,	/* was cpu_collision */
-		   sd->received_rps, flow_limit_count);
+		   sd->received_rps, flow_limit_count,
+		   softnet_backlog_len(sd), (int)seq->index);
 	return 0;
 }
 
@@ -279,12 +290,10 @@ static int __net_init dev_proc_net_init(struct net *net)
 	if (!proc_create_net("dev", 0444, net->proc_net, &dev_seq_ops,
 			sizeof(struct seq_net_private)))
 		goto out;
-	if (!IS_ENABLED(CONFIG_PROC_STRIPPED) &&
-			!proc_create_seq("softnet_stat", 0444, net->proc_net,
+	if (!proc_create_seq("softnet_stat", 0444, net->proc_net,
 			 &softnet_seq_ops))
 		goto out_dev;
-	if (!IS_ENABLED(CONFIG_PROC_STRIPPED) &&
-			!proc_create_net("ptype", 0444, net->proc_net, &ptype_seq_ops,
+	if (!proc_create_net("ptype", 0444, net->proc_net, &ptype_seq_ops,
 			sizeof(struct seq_net_private)))
 		goto out_softnet;
 
@@ -294,11 +303,9 @@ static int __net_init dev_proc_net_init(struct net *net)
 out:
 	return rc;
 out_ptype:
-	if (!IS_ENABLED(CONFIG_PROC_STRIPPED))
-		remove_proc_entry("ptype", net->proc_net);
+	remove_proc_entry("ptype", net->proc_net);
 out_softnet:
-	if (!IS_ENABLED(CONFIG_PROC_STRIPPED))
-		remove_proc_entry("softnet_stat", net->proc_net);
+	remove_proc_entry("softnet_stat", net->proc_net);
 out_dev:
 	remove_proc_entry("dev", net->proc_net);
 	goto out;
@@ -308,10 +315,8 @@ static void __net_exit dev_proc_net_exit(struct net *net)
 {
 	wext_proc_exit(net);
 
-	if (!IS_ENABLED(CONFIG_PROC_STRIPPED)) {
-		remove_proc_entry("ptype", net->proc_net);
-		remove_proc_entry("softnet_stat", net->proc_net);
-	}
+	remove_proc_entry("ptype", net->proc_net);
+	remove_proc_entry("softnet_stat", net->proc_net);
 	remove_proc_entry("dev", net->proc_net);
 }
 

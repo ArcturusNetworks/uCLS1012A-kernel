@@ -1,1 +1,0 @@
-/home/oleks/Projects/uCLS1012A/uCmib.210305-V5.devel/kernel/include/generated/autoconf.h

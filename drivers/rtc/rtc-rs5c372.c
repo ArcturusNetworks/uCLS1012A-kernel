@@ -393,9 +393,7 @@ static int rs5c_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 {
 	struct i2c_client	*client = to_i2c_client(dev);
 	struct rs5c372		*rs5c = i2c_get_clientdata(client);
-	int			status, wday_offs;
-	struct rtc_time 	rtc;
-	unsigned long 		alarm_secs;
+	int			status;
 
 	status = rs5c_get_regs(rs5c);
 	if (status < 0)
@@ -405,30 +403,6 @@ static int rs5c_read_alarm(struct device *dev, struct rtc_wkalrm *t)
 	t->time.tm_sec = 0;
 	t->time.tm_min = bcd2bin(rs5c->regs[RS5C_REG_ALARM_A_MIN] & 0x7f);
 	t->time.tm_hour = rs5c_reg2hr(rs5c, rs5c->regs[RS5C_REG_ALARM_A_HOURS]);
-	t->time.tm_wday = ffs(rs5c->regs[RS5C_REG_ALARM_A_WDAY] & 0x7f) - 1;
-
-	/* determine the day, month and year based on alarm wday, taking as a
-	 * reference the current time from the rtc
-	 */
-	status = rs5c372_rtc_read_time(dev, &rtc);
-	if (status < 0)
-		return status;
-
-	wday_offs = t->time.tm_wday - rtc.tm_wday;
-	alarm_secs = mktime64(rtc.tm_year + 1900,
-			      rtc.tm_mon + 1,
-			      rtc.tm_mday + wday_offs,
-			      t->time.tm_hour,
-			      t->time.tm_min,
-			      t->time.tm_sec);
-
-	if (wday_offs < 0 || (wday_offs == 0 &&
-			      (t->time.tm_hour < rtc.tm_hour ||
-			       (t->time.tm_hour == rtc.tm_hour &&
-				t->time.tm_min <= rtc.tm_min))))
-		alarm_secs += 7 * 86400;
-
-	rtc_time64_to_tm(alarm_secs, &t->time);
 
 	/* ... and status */
 	t->enabled = !!(rs5c->regs[RS5C_REG_CTRL1] & RS5C_CTRL1_AALE);
@@ -443,20 +417,12 @@ static int rs5c_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	struct rs5c372		*rs5c = i2c_get_clientdata(client);
 	int			status, addr, i;
 	unsigned char		buf[3];
-	struct rtc_time 	rtc_tm;
-	unsigned long 		rtc_secs, alarm_secs;
 
-	/* chip only can handle alarms up to one week in the future*/
-	status = rs5c372_rtc_read_time(dev, &rtc_tm);
-	if (status)
-		return status;
-	rtc_secs = rtc_tm_to_time64(&rtc_tm);
-	alarm_secs = rtc_tm_to_time64(&t->time);
-	if (alarm_secs >= rtc_secs + 7 * 86400) {
-		dev_err(dev, "%s: alarm maximum is one week in the future (%d)\n",
-			__func__, status);
+	/* only handle up to 24 hours in the future, like RTC_ALM_SET */
+	if (t->time.tm_mday != -1
+			|| t->time.tm_mon != -1
+			|| t->time.tm_year != -1)
 		return -EINVAL;
-	}
 
 	/* REVISIT: round up tm_sec */
 
@@ -477,9 +443,7 @@ static int rs5c_set_alarm(struct device *dev, struct rtc_wkalrm *t)
 	/* set alarm */
 	buf[0] = bin2bcd(t->time.tm_min);
 	buf[1] = rs5c_hr2reg(rs5c, t->time.tm_hour);
-	/* each bit is the day of the week, 0x7f means all days */
-	buf[2] = (t->time.tm_wday >= 0 && t->time.tm_wday < 7) ?
-		  BIT(t->time.tm_wday) : 0x7f;
+	buf[2] = 0x7f;	/* any/all days */
 
 	for (i = 0; i < sizeof(buf); i++) {
 		addr = RS5C_ADDR(RS5C_REG_ALARM_A_MIN + i);
@@ -654,7 +618,6 @@ static int rs5c372_probe(struct i2c_client *client,
 	int err = 0;
 	int smbus_mode = 0;
 	struct rs5c372 *rs5c372;
-	bool rs5c372_can_wakeup_device = false;
 
 	dev_dbg(&client->dev, "%s\n", __func__);
 
@@ -690,12 +653,6 @@ static int rs5c372_probe(struct i2c_client *client,
 	else
 		rs5c372->type = id->driver_data;
 
-#ifdef CONFIG_OF
-	if(of_property_read_bool(client->dev.of_node,
-					      "wakeup-source"))
-		rs5c372_can_wakeup_device = true;
-#endif
-
 	/* we read registers 0x0f then 0x00-0x0f; skip the first one */
 	rs5c372->regs = &rs5c372->buf[1];
 	rs5c372->smbus = smbus_mode;
@@ -729,8 +686,6 @@ static int rs5c372_probe(struct i2c_client *client,
 		goto exit;
 	}
 
-	rs5c372->has_irq = 1;
-
 	/* if the oscillator lost power and no other software (like
 	 * the bootloader) set it up, do it here.
 	 *
@@ -757,10 +712,6 @@ static int rs5c372_probe(struct i2c_client *client,
 			);
 
 	/* REVISIT use client->irq to register alarm irq ... */
-	if (rs5c372_can_wakeup_device) {
-		device_init_wakeup(&client->dev, true);
-	}
-
 	rs5c372->rtc = devm_rtc_device_register(&client->dev,
 					rs5c372_driver.driver.name,
 					&rs5c372_rtc_ops, THIS_MODULE);
@@ -773,9 +724,6 @@ static int rs5c372_probe(struct i2c_client *client,
 	err = rs5c_sysfs_register(&client->dev);
 	if (err)
 		goto exit;
-
-	/* the rs5c372 alarm only supports a minute accuracy */
-	rs5c372->rtc->uie_unsupported = 1;
 
 	return 0;
 

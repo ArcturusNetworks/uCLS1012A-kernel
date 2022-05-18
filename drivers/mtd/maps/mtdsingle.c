@@ -4,7 +4,7 @@
  *                 `rmmod` will remove this partition
  *                 May be useful to update a non-standart image
  *
- *   Copyright (c) 2021 Arcturus Networks Inc.
+ *   Copyright (c) 2021-2022 Arcturus Networks Inc.
  *                 by Oleksandr Zhadan <www.ArcturusNetworks.com>
  *
  *  This program is free software; you can redistribute  it and/or modify it
@@ -49,13 +49,6 @@ MODULE_PARM_DESC(psize, "Partition Size");
 static struct mtd_info *dev_mtd = NULL;
 static int mtdnr = 0;
 
-struct mtd_part {
-	struct mtd_info mtd;
-	struct mtd_info *parent;
-	uint64_t offset;
-	struct list_head list;
-};
-
 static int __init mtdsingle_init(void)
 {
 	struct mtd_info *mtd;
@@ -77,7 +70,7 @@ static int __init mtdsingle_init(void)
 		 (unsigned long long)mtd->size, mtd->name);
 
 	if (mtd_is_partition(mtd))
-		dev_mtd = (container_of(mtd, struct mtd_part, mtd))->parent;
+		dev_mtd = mtd_get_master(mtd);
 	else
 		dev_mtd = mtd;
 	pr_debug("Parent: mtd%d: %8.8llx \"%s\"\n", dev_mtd->index,

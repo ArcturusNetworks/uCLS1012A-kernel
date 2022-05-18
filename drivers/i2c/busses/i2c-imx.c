@@ -17,6 +17,7 @@
  *	Copyright (C) 2008 Darius Augulis <darius.augulis at teltonika.lt>
  *
  *	Copyright 2013 Freescale Semiconductor, Inc.
+ *	Copyright 2020 NXP
  *
  */
 
@@ -34,6 +35,7 @@
 #include <linux/init.h>
 #include <linux/interrupt.h>
 #include <linux/io.h>
+#include <linux/iopoll.h>
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/of.h>
@@ -55,8 +57,6 @@
 /* This will be the driver name the kernel reports */
 #define DRIVER_NAME "imx-i2c"
 
-/* Default value */
-#define IMX_I2C_BIT_RATE	100000	/* 100kHz */
 #define IMX_I2C_MAX_E_BIT_RATE	384000	/* 384kHz from e7805 errata*/
 
 /*
@@ -164,6 +164,7 @@ static const struct of_device_id scfg_device_ids[] = {
 	{ .compatible = "fsl,ls1046a-scfg", },
 	{}
 };
+
 /*
  * sorted list of clock divider, register value pairs
  * taken from table 26-5, p.26-9, Freescale i.MX
@@ -337,6 +338,10 @@ static const struct acpi_device_id i2c_imx_acpi_ids[] = {
 	{ }
 };
 MODULE_DEVICE_TABLE(acpi, i2c_imx_acpi_ids);
+
+#if IS_ENABLED(CONFIG_I2C_SLAVE)
+static int i2c_imx_slave_init(struct imx_i2c_struct *i2c_imx);
+#endif
 
 static inline int is_imx1_i2c(struct imx_i2c_struct *i2c_imx)
 {
@@ -526,7 +531,7 @@ static void i2c_imx_clr_al_bit(unsigned int status, struct imx_i2c_struct *i2c_i
 	imx_i2c_write_reg(status, i2c_imx, IMX_I2C_I2SR);
 }
 
-static int i2c_imx_bus_busy(struct imx_i2c_struct *i2c_imx, int for_busy)
+static int i2c_imx_bus_busy(struct imx_i2c_struct *i2c_imx, int for_busy, bool atomic)
 {
 	unsigned long orig_jiffies = jiffies;
 	unsigned int temp;
@@ -555,28 +560,41 @@ static int i2c_imx_bus_busy(struct imx_i2c_struct *i2c_imx, int for_busy)
 				"<%s> I2C bus is busy\n", __func__);
 			return -ETIMEDOUT;
 		}
-		schedule();
+		if (atomic)
+			udelay(100);
+		else
+			schedule();
 	}
 
 	return 0;
 }
 
-static int i2c_imx_trx_complete(struct imx_i2c_struct *i2c_imx)
+static int i2c_imx_trx_complete(struct imx_i2c_struct *i2c_imx, bool atomic)
 {
-	wait_event_timeout(i2c_imx->queue, i2c_imx->i2csr & I2SR_IIF, HZ / 10);
+	if (atomic) {
+		void __iomem *addr = i2c_imx->base + (IMX_I2C_I2SR << i2c_imx->hwdata->regshift);
+		unsigned int regval;
+
+		/*
+		 * The formula for the poll timeout is documented in the RM
+		 * Rev.5 on page 1878:
+		 *     T_min = 10/F_scl
+		 * Set the value hard as it is done for the non-atomic use-case.
+		 * Use 10 kHz for the calculation since this is the minimum
+		 * allowed SMBus frequency. Also add an offset of 100us since it
+		 * turned out that the I2SR_IIF bit isn't set correctly within
+		 * the minimum timeout in polling mode.
+		 */
+		readb_poll_timeout_atomic(addr, regval, regval & I2SR_IIF, 5, 1000 + 100);
+		i2c_imx->i2csr = regval;
+		i2c_imx_clear_irq(i2c_imx, I2SR_IIF | I2SR_IAL);
+	} else {
+		wait_event_timeout(i2c_imx->queue, i2c_imx->i2csr & I2SR_IIF, HZ / 10);
+	}
 
 	if (unlikely(!(i2c_imx->i2csr & I2SR_IIF))) {
 		dev_dbg(&i2c_imx->adapter.dev, "<%s> Timeout\n", __func__);
 		return -ETIMEDOUT;
-	}
-
-	/* check for arbitration lost */
-	if (i2c_imx->i2csr & I2SR_IAL) {
-		dev_dbg(&i2c_imx->adapter.dev, "<%s> Arbitration lost\n", __func__);
-		i2c_imx_clear_irq(i2c_imx, I2SR_IAL);
-
-		i2c_imx->i2csr = 0;
-		return -EAGAIN;
 	}
 
 	dev_dbg(&i2c_imx->adapter.dev, "<%s> TRX complete\n", __func__);
@@ -662,7 +680,7 @@ static int i2c_imx_clk_notifier_call(struct notifier_block *nb,
 	return notifier_from_errno(ret);
 }
 
-static int i2c_imx_start(struct imx_i2c_struct *i2c_imx)
+static int i2c_imx_start(struct imx_i2c_struct *i2c_imx, bool atomic)
 {
 	unsigned int temp = 0;
 	int result;
@@ -679,23 +697,30 @@ static int i2c_imx_start(struct imx_i2c_struct *i2c_imx)
 	imx_i2c_write_reg(i2c_imx->hwdata->i2cr_ien_opcode, i2c_imx, IMX_I2C_I2CR);
 
 	/* Wait controller to be stable */
-	usleep_range(50, 150);
+	if (atomic)
+		udelay(50);
+	else
+		usleep_range(50, 150);
 
 	/* Start I2C transaction */
 	temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
 	temp |= I2CR_MSTA;
 	imx_i2c_write_reg(temp, i2c_imx, IMX_I2C_I2CR);
-	result = i2c_imx_bus_busy(i2c_imx, 1);
+	result = i2c_imx_bus_busy(i2c_imx, 1, atomic);
 	if (result)
 		return result;
 
 	temp |= I2CR_IIEN | I2CR_MTX | I2CR_TXAK;
+	if (atomic)
+		temp &= ~I2CR_IIEN; /* Disable interrupt */
+
 	temp &= ~I2CR_DMAEN;
 	imx_i2c_write_reg(temp, i2c_imx, IMX_I2C_I2CR);
+
 	return result;
 }
 
-static void i2c_imx_stop(struct imx_i2c_struct *i2c_imx)
+static void i2c_imx_stop(struct imx_i2c_struct *i2c_imx, bool atomic)
 {
 	unsigned int temp = 0;
 
@@ -719,7 +744,7 @@ static void i2c_imx_stop(struct imx_i2c_struct *i2c_imx)
 	}
 
 	if (!i2c_imx->stopped)
-		i2c_imx_bus_busy(i2c_imx, 0);
+		i2c_imx_bus_busy(i2c_imx, 0, atomic);
 
 	/* Disable I2C controller */
 	temp = i2c_imx->hwdata->i2cr_ien_opcode ^ I2CR_IEN,
@@ -734,12 +759,9 @@ static void i2c_imx_clr_if_bit(unsigned int status, struct imx_i2c_struct *i2c_i
 	imx_i2c_write_reg(status, i2c_imx, IMX_I2C_I2SR);
 }
 
-static irqreturn_t i2c_imx_master_isr(struct imx_i2c_struct *i2c_imx)
+static irqreturn_t i2c_imx_master_isr(struct imx_i2c_struct *i2c_imx, unsigned int status)
 {
-	unsigned int status;
-
 	/* Save status register */
-	status = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2SR);
 	i2c_imx->i2csr = status | I2SR_IIF;
 
 	wake_up(&i2c_imx->queue);
@@ -802,7 +824,7 @@ static int i2c_imx_dma_write(struct imx_i2c_struct *i2c_imx,
 	/* The last data byte must be transferred by the CPU. */
 	imx_i2c_write_reg(msgs->buf[msgs->len-1],
 				i2c_imx, IMX_I2C_I2DR);
-	result = i2c_imx_trx_complete(i2c_imx);
+	result = i2c_imx_trx_complete(i2c_imx, false);
 	if (result)
 		return result;
 
@@ -861,7 +883,7 @@ static int i2c_imx_dma_read(struct imx_i2c_struct *i2c_imx,
 
 	msgs->buf[msgs->len-2] = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2DR);
 	/* read n byte data */
-	result = i2c_imx_trx_complete(i2c_imx);
+	result = i2c_imx_trx_complete(i2c_imx, false);
 	if (result)
 		return result;
 
@@ -877,7 +899,7 @@ static int i2c_imx_dma_read(struct imx_i2c_struct *i2c_imx,
 		temp &= ~(I2CR_MSTA | I2CR_MTX);
 		imx_i2c_write_reg(temp, i2c_imx, IMX_I2C_I2CR);
 		if (!i2c_imx->stopped)
-			i2c_imx_bus_busy(i2c_imx, 0);
+			i2c_imx_bus_busy(i2c_imx, 0, false);
 	} else {
 		/*
 		 * For i2c master receiver repeat restart operation like:
@@ -895,7 +917,8 @@ static int i2c_imx_dma_read(struct imx_i2c_struct *i2c_imx,
 	return 0;
 }
 
-static int i2c_imx_write(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs)
+static int i2c_imx_write(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs,
+			 bool atomic)
 {
 	int i, result;
 
@@ -904,7 +927,7 @@ static int i2c_imx_write(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs)
 
 	/* write slave address */
 	imx_i2c_write_reg(i2c_8bit_addr_from_msg(msgs), i2c_imx, IMX_I2C_I2DR);
-	result = i2c_imx_trx_complete(i2c_imx);
+	result = i2c_imx_trx_complete(i2c_imx, atomic);
 	if (result)
 		return result;
 	result = i2c_imx_acked(i2c_imx);
@@ -918,7 +941,7 @@ static int i2c_imx_write(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs)
 			"<%s> write byte: B%d=0x%X\n",
 			__func__, i, msgs->buf[i]);
 		imx_i2c_write_reg(msgs->buf[i], i2c_imx, IMX_I2C_I2DR);
-		result = i2c_imx_trx_complete(i2c_imx);
+		result = i2c_imx_trx_complete(i2c_imx, atomic);
 		if (result)
 			return result;
 		result = i2c_imx_acked(i2c_imx);
@@ -928,7 +951,8 @@ static int i2c_imx_write(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs)
 	return 0;
 }
 
-static int i2c_imx_read(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs, bool is_lastmsg)
+static int i2c_imx_read(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs,
+			bool is_lastmsg, bool atomic)
 {
 	int i, result;
 	unsigned int temp;
@@ -941,7 +965,7 @@ static int i2c_imx_read(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs, bo
 
 	/* write slave address */
 	imx_i2c_write_reg(i2c_8bit_addr_from_msg(msgs), i2c_imx, IMX_I2C_I2DR);
-	result = i2c_imx_trx_complete(i2c_imx);
+	result = i2c_imx_trx_complete(i2c_imx, atomic);
 	if (result)
 		return result;
 	result = i2c_imx_acked(i2c_imx);
@@ -974,7 +998,7 @@ static int i2c_imx_read(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs, bo
 	for (i = 0; i < msgs->len; i++) {
 		u8 len = 0;
 
-		result = i2c_imx_trx_complete(i2c_imx);
+		result = i2c_imx_trx_complete(i2c_imx, atomic);
 		if (result)
 			return result;
 		/*
@@ -1005,7 +1029,7 @@ static int i2c_imx_read(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs, bo
 				temp &= ~(I2CR_MSTA | I2CR_MTX);
 				imx_i2c_write_reg(temp, i2c_imx, IMX_I2C_I2CR);
 				if (!i2c_imx->stopped)
-					i2c_imx_bus_busy(i2c_imx, 0);
+					i2c_imx_bus_busy(i2c_imx, 0, atomic);
 			} else {
 				/*
 				 * For i2c master receiver repeat restart operation like:
@@ -1034,6 +1058,98 @@ static int i2c_imx_read(struct imx_i2c_struct *i2c_imx, struct i2c_msg *msgs, bo
 			__func__, i, msgs->buf[i]);
 	}
 	return 0;
+}
+
+static int i2c_imx_xfer_common(struct i2c_adapter *adapter,
+			       struct i2c_msg *msgs, int num, bool atomic)
+{
+	unsigned int i, temp;
+	int result;
+	bool is_lastmsg = false;
+	struct imx_i2c_struct *i2c_imx = i2c_get_adapdata(adapter);
+
+	dev_dbg(&i2c_imx->adapter.dev, "<%s>\n", __func__);
+
+	/* Start I2C transfer */
+	result = i2c_imx_start(i2c_imx, atomic);
+	if (result) {
+		/*
+		 * Bus recovery uses gpiod_get_value_cansleep() which is not
+		 * allowed within atomic context.
+		 */
+		if (!atomic && i2c_imx->adapter.bus_recovery_info) {
+			i2c_recover_bus(&i2c_imx->adapter);
+			result = i2c_imx_start(i2c_imx, atomic);
+		}
+	}
+
+	if (result)
+		goto fail0;
+
+	/* read/write data */
+	for (i = 0; i < num; i++) {
+		if (i == num - 1)
+			is_lastmsg = true;
+
+		if (i) {
+			dev_dbg(&i2c_imx->adapter.dev,
+				"<%s> repeated start\n", __func__);
+			temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
+			temp |= I2CR_RSTA;
+			imx_i2c_write_reg(temp, i2c_imx, IMX_I2C_I2CR);
+			result = i2c_imx_bus_busy(i2c_imx, 1, atomic);
+			if (result)
+				goto fail0;
+		}
+		dev_dbg(&i2c_imx->adapter.dev,
+			"<%s> transfer message: %d\n", __func__, i);
+		/* write/read data */
+#ifdef CONFIG_I2C_DEBUG_BUS
+		temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
+		dev_dbg(&i2c_imx->adapter.dev,
+			"<%s> CONTROL: IEN=%d, IIEN=%d, MSTA=%d, MTX=%d, TXAK=%d, RSTA=%d\n",
+			__func__,
+			(temp & I2CR_IEN ? 1 : 0), (temp & I2CR_IIEN ? 1 : 0),
+			(temp & I2CR_MSTA ? 1 : 0), (temp & I2CR_MTX ? 1 : 0),
+			(temp & I2CR_TXAK ? 1 : 0), (temp & I2CR_RSTA ? 1 : 0));
+		temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2SR);
+		dev_dbg(&i2c_imx->adapter.dev,
+			"<%s> STATUS: ICF=%d, IAAS=%d, IBB=%d, IAL=%d, SRW=%d, IIF=%d, RXAK=%d\n",
+			__func__,
+			(temp & I2SR_ICF ? 1 : 0), (temp & I2SR_IAAS ? 1 : 0),
+			(temp & I2SR_IBB ? 1 : 0), (temp & I2SR_IAL ? 1 : 0),
+			(temp & I2SR_SRW ? 1 : 0), (temp & I2SR_IIF ? 1 : 0),
+			(temp & I2SR_RXAK ? 1 : 0));
+#endif
+		if (msgs[i].flags & I2C_M_RD) {
+			result = i2c_imx_read(i2c_imx, &msgs[i], is_lastmsg, atomic);
+		} else {
+			if (!atomic &&
+			    i2c_imx->dma && msgs[i].len >= DMA_THRESHOLD)
+				result = i2c_imx_dma_write(i2c_imx, &msgs[i]);
+			else
+				result = i2c_imx_write(i2c_imx, &msgs[i], atomic);
+		}
+		if (result)
+			goto fail0;
+	}
+
+fail0:
+	/* Stop I2C transfer */
+	i2c_imx_stop(i2c_imx, atomic);
+
+	dev_dbg(&i2c_imx->adapter.dev, "<%s> exit with: %s: %d\n", __func__,
+		(result < 0) ? "error" : "success msg",
+			(result < 0) ? result : num);
+#if IS_ENABLED(CONFIG_I2C_SLAVE)
+	/* After data is transfered, switch to slave mode(as a receiver) */
+	if (i2c_imx->slave) {
+	    if (i2c_imx_slave_init(i2c_imx) < 0)
+		dev_err(&i2c_imx->adapter.dev, "failed to switch to slave mode");
+	}
+#endif
+
+	return (result < 0) ? result : num;
 }
 
 /*
@@ -1110,119 +1226,66 @@ static int i2c_imx_recovery_for_layerscape(struct imx_i2c_struct *i2c_imx)
 }
 
 static int i2c_imx_xfer(struct i2c_adapter *adapter,
-						struct i2c_msg *msgs, int num)
+			struct i2c_msg *msgs, int num)
 {
-	unsigned int i, temp;
-	int result;
-	bool is_lastmsg = false;
-	bool enable_runtime_pm = false;
 	struct imx_i2c_struct *i2c_imx = i2c_get_adapdata(adapter);
-
-	dev_dbg(&i2c_imx->adapter.dev, "<%s>\n", __func__);
-
-#if IS_ENABLED(CONFIG_I2C_SLAVE)
-	if (i2c_imx->slave) {
-		dev_err(&i2c_imx->adapter.dev, "Please not do operations of master mode in slave mode");
-		return -EBUSY;
-	}
-#endif
+	bool enable_runtime_pm = false;
+	int result;
 
 	if (!pm_runtime_enabled(i2c_imx->adapter.dev.parent)) {
 		pm_runtime_enable(i2c_imx->adapter.dev.parent);
 		enable_runtime_pm = true;
 	}
 
-	result = pm_runtime_get_sync(i2c_imx->adapter.dev.parent);
-	if (result < 0)
-		goto out;
+	result = pm_runtime_resume_and_get(i2c_imx->adapter.dev.parent);
+	if (result < 0) {
+		if (enable_runtime_pm)
+			pm_runtime_disable(i2c_imx->adapter.dev.parent);
+		return result;
+	}
 
 	/*
-	 * workround for ERR010027: ensure that the I2C BUS is idle
+	 * workaround for ERR010027: ensure that the I2C BUS is idle
 	 * before switching to master mode and attempting a Start cycle
 	 */
-	result =  i2c_imx_bus_busy(i2c_imx, 0);
+	result =  i2c_imx_bus_busy(i2c_imx, 0, false);
 	if (result) {
 		/* timeout */
 		if ((result == -ETIMEDOUT) && (i2c_imx->layerscape_bus_recover == 1))
 			i2c_imx_recovery_for_layerscape(i2c_imx);
-		else
-			goto out;
-	}
-
-	/* Start I2C transfer */
-	result = i2c_imx_start(i2c_imx);
-	if (result) {
-		if (i2c_imx->adapter.bus_recovery_info) {
-			i2c_recover_bus(&i2c_imx->adapter);
-			result = i2c_imx_start(i2c_imx);
-		}
-	}
-
-	if (result)
-		goto fail0;
-
-	/* read/write data */
-	for (i = 0; i < num; i++) {
-		if (i == num - 1)
-			is_lastmsg = true;
-
-		if (i) {
-			dev_dbg(&i2c_imx->adapter.dev,
-				"<%s> repeated start\n", __func__);
-			temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
-			temp |= I2CR_RSTA;
-			imx_i2c_write_reg(temp, i2c_imx, IMX_I2C_I2CR);
-			result = i2c_imx_bus_busy(i2c_imx, 1);
-			if (result)
-				goto fail0;
-		}
-		dev_dbg(&i2c_imx->adapter.dev,
-			"<%s> transfer message: %d\n", __func__, i);
-		/* write/read data */
-#ifdef CONFIG_I2C_DEBUG_BUS
-		temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
-		dev_dbg(&i2c_imx->adapter.dev,
-			"<%s> CONTROL: IEN=%d, IIEN=%d, MSTA=%d, MTX=%d, TXAK=%d, RSTA=%d\n",
-			__func__,
-			(temp & I2CR_IEN ? 1 : 0), (temp & I2CR_IIEN ? 1 : 0),
-			(temp & I2CR_MSTA ? 1 : 0), (temp & I2CR_MTX ? 1 : 0),
-			(temp & I2CR_TXAK ? 1 : 0), (temp & I2CR_RSTA ? 1 : 0));
-		temp = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2SR);
-		dev_dbg(&i2c_imx->adapter.dev,
-			"<%s> STATUS: ICF=%d, IAAS=%d, IBB=%d, IAL=%d, SRW=%d, IIF=%d, RXAK=%d\n",
-			__func__,
-			(temp & I2SR_ICF ? 1 : 0), (temp & I2SR_IAAS ? 1 : 0),
-			(temp & I2SR_IBB ? 1 : 0), (temp & I2SR_IAL ? 1 : 0),
-			(temp & I2SR_SRW ? 1 : 0), (temp & I2SR_IIF ? 1 : 0),
-			(temp & I2SR_RXAK ? 1 : 0));
-#endif
-		if (msgs[i].flags & I2C_M_RD)
-			result = i2c_imx_read(i2c_imx, &msgs[i], is_lastmsg);
 		else {
-			if (i2c_imx->dma && msgs[i].len >= DMA_THRESHOLD)
-				result = i2c_imx_dma_write(i2c_imx, &msgs[i]);
-			else
-				result = i2c_imx_write(i2c_imx, &msgs[i]);
+			if (enable_runtime_pm)
+				pm_runtime_disable(i2c_imx->adapter.dev.parent);
+			return result;
 		}
-		if (result)
-			goto fail0;
 	}
 
-fail0:
-	/* Stop I2C transfer */
-	i2c_imx_stop(i2c_imx);
+	result = i2c_imx_xfer_common(adapter, msgs, num, false);
 
 	pm_runtime_mark_last_busy(i2c_imx->adapter.dev.parent);
 	pm_runtime_put_autosuspend(i2c_imx->adapter.dev.parent);
 
-out:
 	if (enable_runtime_pm)
 		pm_runtime_disable(i2c_imx->adapter.dev.parent);
 
-	dev_dbg(&i2c_imx->adapter.dev, "<%s> exit with: %s: %d\n", __func__,
-		(result < 0) ? "error" : "success msg",
-			(result < 0) ? result : num);
-	return (result < 0) ? result : num;
+	return result;
+}
+
+static int i2c_imx_xfer_atomic(struct i2c_adapter *adapter,
+			       struct i2c_msg *msgs, int num)
+{
+	struct imx_i2c_struct *i2c_imx = i2c_get_adapdata(adapter);
+	int result;
+
+	result = clk_enable(i2c_imx->clk);
+	if (result)
+		return result;
+
+	result = i2c_imx_xfer_common(adapter, msgs, num, true);
+
+	clk_disable(i2c_imx->clk);
+
+	return result;
 }
 
 static void i2c_imx_prepare_recovery(struct i2c_adapter *adap)
@@ -1346,7 +1409,7 @@ static int i2c_imx_slave_init(struct imx_i2c_struct *i2c_imx)
 	int temp;
 
 	/* Resume */
-	temp = pm_runtime_get_sync(i2c_imx->adapter.dev.parent);
+	temp = pm_runtime_resume_and_get(i2c_imx->adapter.dev.parent);
 	if (temp < 0) {
 		dev_err(&i2c_imx->adapter.dev, "failed to resume i2c controller");
 		return temp;
@@ -1370,20 +1433,12 @@ static int i2c_imx_slave_init(struct imx_i2c_struct *i2c_imx)
 	return 0;
 }
 
-static irqreturn_t i2c_imx_slave_isr(struct imx_i2c_struct *i2c_imx)
+static irqreturn_t i2c_imx_slave_isr(struct imx_i2c_struct *i2c_imx, unsigned int status, unsigned int ctl)
 {
-	unsigned int status, ctl;
 	u8 value;
 
-	if (!i2c_imx->slave) {
-		dev_err(&i2c_imx->adapter.dev, "cannot deal with slave irq,i2c_imx->slave is null");
-		return IRQ_NONE;
-	}
-
-	status = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2SR);
-	ctl = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
 	if (status & I2SR_IAL) { /* Arbitration lost */
-		i2c_imx_clr_al_bit(status, i2c_imx);
+		i2c_imx_clr_al_bit(status | I2SR_IIF, i2c_imx);
 	} else if (status & I2SR_IAAS) { /* Addressed as a slave */
 		if (status & I2SR_SRW) { /* Master wants to read from us*/
 			dev_dbg(&i2c_imx->adapter.dev, "read requested");
@@ -1428,7 +1483,9 @@ static irqreturn_t i2c_imx_slave_isr(struct imx_i2c_struct *i2c_imx)
 		ctl &= ~I2CR_MTX;
 		imx_i2c_write_reg(ctl, i2c_imx, IMX_I2C_I2CR);
 		imx_i2c_read_reg(i2c_imx, IMX_I2C_I2DR);
+		i2c_slave_event(i2c_imx->slave, I2C_SLAVE_STOP, &value);
 	}
+
 	return IRQ_HANDLED;
 }
 
@@ -1473,8 +1530,9 @@ static int i2c_imx_unreg_slave(struct i2c_client *client)
 #endif
 
 static const struct i2c_algorithm i2c_imx_algo = {
-	.master_xfer	= i2c_imx_xfer,
-	.functionality	= i2c_imx_func,
+	.master_xfer = i2c_imx_xfer,
+	.master_xfer_atomic = i2c_imx_xfer_atomic,
+	.functionality = i2c_imx_func,
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
 	.reg_slave	= i2c_imx_reg_slave,
 	.unreg_slave	= i2c_imx_unreg_slave,
@@ -1484,17 +1542,19 @@ static const struct i2c_algorithm i2c_imx_algo = {
 static irqreturn_t i2c_imx_isr(int irq, void *dev_id)
 {
 	struct imx_i2c_struct *i2c_imx = dev_id;
-	unsigned int status;
+	unsigned int ctl, status;
 
 	status = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2SR);
+	ctl = imx_i2c_read_reg(i2c_imx, IMX_I2C_I2CR);
 
 	if (status & I2SR_IIF) {
 		i2c_imx_clr_if_bit(status, i2c_imx);
 #if IS_ENABLED(CONFIG_I2C_SLAVE)
-		if (i2c_imx->slave)
-			return i2c_imx_slave_isr(i2c_imx);
+		if (i2c_imx->slave && !(ctl & I2CR_MSTA)) {
+			return i2c_imx_slave_isr(i2c_imx, status, ctl);
+		}
 #endif
-		return i2c_imx_master_isr(i2c_imx);
+		return i2c_imx_master_isr(i2c_imx, status);
 	}
 
 	return IRQ_NONE;
@@ -1513,10 +1573,8 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	dev_dbg(&pdev->dev, "<%s>\n", __func__);
 
 	irq = platform_get_irq(pdev, 0);
-	if (irq < 0) {
-		dev_err(&pdev->dev, "can't get irq number\n");
+	if (irq < 0)
 		return irq;
-	}
 
 	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
 	base = devm_ioremap_resource(&pdev->dev, res);
@@ -1547,11 +1605,9 @@ static int i2c_imx_probe(struct platform_device *pdev)
 
 	/* Get I2C clock */
 	i2c_imx->clk = devm_clk_get(&pdev->dev, NULL);
-	if (IS_ERR(i2c_imx->clk)) {
-		if (PTR_ERR(i2c_imx->clk) != -EPROBE_DEFER)
-			dev_err(&pdev->dev, "can't get I2C clock\n");
-		return PTR_ERR(i2c_imx->clk);
-	}
+	if (IS_ERR(i2c_imx->clk))
+		return dev_err_probe(&pdev->dev, PTR_ERR(i2c_imx->clk),
+				     "can't get I2C clock\n");
 
 	ret = clk_prepare_enable(i2c_imx->clk);
 	if (ret) {
@@ -1573,7 +1629,7 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	pm_runtime_set_active(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 
-	ret = pm_runtime_get_sync(&pdev->dev);
+	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret < 0)
 		goto rpm_disable;
 
@@ -1587,7 +1643,7 @@ static int i2c_imx_probe(struct platform_device *pdev)
 	}
 
 	/* Set up clock divider */
-	i2c_imx->bitrate = IMX_I2C_BIT_RATE;
+	i2c_imx->bitrate = I2C_MAX_STANDARD_MODE_FREQ;
 	ret = of_property_read_u32(pdev->dev.of_node,
 				   "clock-frequency", &i2c_imx->bitrate);
 	if (ret < 0 && pdata && pdata->bitrate)
@@ -1660,7 +1716,7 @@ static int i2c_imx_remove(struct platform_device *pdev)
 	struct imx_i2c_struct *i2c_imx = platform_get_drvdata(pdev);
 	int irq, ret;
 
-	ret = pm_runtime_get_sync(&pdev->dev);
+	ret = pm_runtime_resume_and_get(&pdev->dev);
 	if (ret < 0)
 		return ret;
 

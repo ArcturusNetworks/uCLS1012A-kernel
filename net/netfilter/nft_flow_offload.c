@@ -102,7 +102,7 @@ static void nft_flow_offload_eval(const struct nft_expr *expr,
 	}
 
 	if (nf_ct_ext_exist(ct, NF_CT_EXT_HELPER) ||
-	    ct->status & IPS_SEQ_ADJUST)
+	    ct->status & (IPS_SEQ_ADJUST | IPS_NAT_CLASH))
 		goto out;
 
 	if (!nf_ct_is_confirmed(ct))
@@ -115,9 +115,12 @@ static void nft_flow_offload_eval(const struct nft_expr *expr,
 	if (nft_flow_route(pkt, ct, &route, dir) < 0)
 		goto err_flow_route;
 
-	flow = flow_offload_alloc(ct, &route);
+	flow = flow_offload_alloc(ct);
 	if (!flow)
 		goto err_flow_alloc;
+
+	if (flow_offload_route_init(flow, &route) < 0)
+		goto err_flow_add;
 
 	if (tcph) {
 		ct->proto.tcp.seen[0].flags |= IP_CT_TCP_FLAG_BE_LIBERAL;
@@ -127,9 +130,6 @@ static void nft_flow_offload_eval(const struct nft_expr *expr,
 	ret = flow_offload_add(flowtable, flow);
 	if (ret < 0)
 		goto err_flow_add;
-
-	if (flowtable->flags & NF_FLOWTABLE_F_HW)
-		nf_flow_offload_hw_add(nft_net(pkt), flow, ct);
 
 	dst_release(route.tuple[!dir].dst);
 	return;
@@ -237,14 +237,47 @@ static struct nft_expr_type nft_flow_offload_type __read_mostly = {
 	.owner		= THIS_MODULE,
 };
 
+static int flow_offload_netdev_event(struct notifier_block *this,
+				     unsigned long event, void *ptr)
+{
+	struct net_device *dev = netdev_notifier_info_to_dev(ptr);
+
+	if (event != NETDEV_DOWN)
+		return NOTIFY_DONE;
+
+	nf_flow_table_cleanup(dev);
+
+	return NOTIFY_DONE;
+}
+
+static struct notifier_block flow_offload_netdev_notifier = {
+	.notifier_call	= flow_offload_netdev_event,
+};
+
 static int __init nft_flow_offload_module_init(void)
 {
-	return nft_register_expr(&nft_flow_offload_type);
+	int err;
+
+	err = register_netdevice_notifier(&flow_offload_netdev_notifier);
+	if (err)
+		goto err;
+
+	err = nft_register_expr(&nft_flow_offload_type);
+	if (err < 0)
+		goto register_expr;
+
+	return 0;
+
+register_expr:
+	unregister_netdevice_notifier(&flow_offload_netdev_notifier);
+err:
+	return err;
 }
 
 static void __exit nft_flow_offload_module_exit(void)
 {
 	nft_unregister_expr(&nft_flow_offload_type);
+	unregister_netdevice_notifier(&flow_offload_netdev_notifier);
 }
 
 module_init(nft_flow_offload_module_init);
@@ -253,3 +286,4 @@ module_exit(nft_flow_offload_module_exit);
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("Pablo Neira Ayuso <pablo@netfilter.org>");
 MODULE_ALIAS_NFT_EXPR("flow_offload");
+MODULE_DESCRIPTION("nftables hardware flow offload module");

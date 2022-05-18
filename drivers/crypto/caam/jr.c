@@ -4,7 +4,7 @@
  * JobR backend functionality
  *
  * Copyright 2008-2012 Freescale Semiconductor, Inc.
- * Copyright 2019 NXP
+ * Copyright 2019-2020 NXP
  */
 
 #include <linux/of_irq.h>
@@ -27,6 +27,39 @@ static struct jr_driver_data driver_data;
 static DEFINE_MUTEX(algs_lock);
 static unsigned int active_devs;
 
+static void init_misc_func(struct caam_drv_private_jr *jrpriv,
+			   struct device *dev)
+{
+	mutex_lock(&algs_lock);
+
+	if (active_devs != 1)
+		goto algs_unlock;
+
+	jrpriv->hwrng = !caam_rng_init(dev);
+	caam_sm_startup(dev);
+	caam_keygen_init();
+
+algs_unlock:
+	mutex_unlock(&algs_lock);
+}
+
+static void exit_misc_func(struct caam_drv_private_jr *jrpriv,
+			   struct device *dev)
+{
+	mutex_lock(&algs_lock);
+
+	if (active_devs != 1)
+		goto algs_unlock;
+
+	caam_keygen_exit();
+	caam_sm_shutdown(dev);
+	if (jrpriv->hwrng)
+		caam_rng_exit(dev);
+
+algs_unlock:
+	mutex_unlock(&algs_lock);
+}
+
 static void register_algs(struct device *dev)
 {
 	mutex_lock(&algs_lock);
@@ -34,11 +67,9 @@ static void register_algs(struct device *dev)
 	if (++active_devs != 1)
 		goto algs_unlock;
 
-	caam_sm_startup(dev);
 	caam_algapi_init(dev);
 	caam_algapi_hash_init(dev);
 	caam_pkc_init(dev);
-	caam_rng_init(dev);
 	caam_qi_algapi_init(dev);
 
 algs_unlock:
@@ -54,11 +85,9 @@ static void unregister_algs(struct device *dev)
 
 	caam_qi_algapi_exit();
 
-	caam_rng_exit();
 	caam_pkc_exit();
 	caam_algapi_hash_exit();
 	caam_algapi_exit();
-	caam_sm_shutdown(dev);
 
 algs_unlock:
 	mutex_unlock(&algs_lock);
@@ -71,6 +100,15 @@ int caam_jr_driver_probed(void)
 	return jr_driver_probed;
 }
 EXPORT_SYMBOL(caam_jr_driver_probed);
+
+static void caam_jr_crypto_engine_exit(void *data)
+{
+	struct device *jrdev = data;
+	struct caam_drv_private_jr *jrpriv = dev_get_drvdata(jrdev);
+
+	/* Free the resources of crypto-engine */
+	crypto_engine_exit(jrpriv->engine);
+}
 
 /*
  * Put the CAAM in quiesce, ie stop
@@ -192,6 +230,8 @@ static int caam_jr_remove(struct platform_device *pdev)
 	jrdev = &pdev->dev;
 	jrpriv = dev_get_drvdata(jrdev);
 
+	exit_misc_func(jrpriv, jrdev->parent);
+
 	/*
 	 * Return EBUSY if job ring already allocated.
 	 */
@@ -230,7 +270,7 @@ static irqreturn_t caam_jr_interrupt(int irq, void *st_dev)
 	 * tasklet if jobs done.
 	 */
 	irqstate = rd_reg32(&jrp->rregs->jrintstatus);
-	if (!irqstate)
+	if (!(irqstate & JRINT_JR_INT))
 		return IRQ_NONE;
 
 	/*
@@ -412,7 +452,7 @@ EXPORT_SYMBOL(caam_jridx_alloc);
 
 /**
  * caam_jr_free() - Free the Job Ring
- * @rdev     - points to the dev that identifies the Job ring to
+ * @rdev:      points to the dev that identifies the Job ring to
  *             be released.
  **/
 void caam_jr_free(struct device *rdev)
@@ -424,8 +464,8 @@ void caam_jr_free(struct device *rdev)
 EXPORT_SYMBOL(caam_jr_free);
 
 /**
- * caam_jr_enqueue() - Enqueue a job descriptor head. Returns 0 if OK,
- * -EBUSY if the queue is full, -EIO if it cannot map the caller's
+ * caam_jr_enqueue() - Enqueue a job descriptor head. Returns -EINPROGRESS
+ * if OK, -ENOSPC if the queue is full, -EIO if it cannot map the caller's
  * descriptor.
  * @dev:  struct device of the job ring to be used
  * @desc: points to a job descriptor that execute our request. All
@@ -437,15 +477,15 @@ EXPORT_SYMBOL(caam_jr_free);
  *        of this request. This has the form:
  *        callback(struct device *dev, u32 *desc, u32 stat, void *arg)
  *        where:
- *        @dev:    contains the job ring device that processed this
+ *        dev:     contains the job ring device that processed this
  *                 response.
- *        @desc:   descriptor that initiated the request, same as
+ *        desc:    descriptor that initiated the request, same as
  *                 "desc" being argued to caam_jr_enqueue().
- *        @status: untranslated status received from CAAM. See the
+ *        status:  untranslated status received from CAAM. See the
  *                 reference manual for a detailed description of
  *                 error meaning, or see the JRSTA definitions in the
  *                 register header file
- *        @areq:   optional pointer to an argument passed with the
+ *        areq:    optional pointer to an argument passed with the
  *                 original request
  * @areq: optional pointer to a user argument for use at callback
  *        time.
@@ -476,7 +516,7 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 	    CIRC_SPACE(head, tail, JOBR_DEPTH) <= 0) {
 		spin_unlock_bh(&jrp->inplock);
 		dma_unmap_single(dev, desc_dma, desc_size, DMA_TO_DEVICE);
-		return -EBUSY;
+		return -ENOSPC;
 	}
 
 	head_entry = &jrp->entinfo[head];
@@ -521,9 +561,60 @@ int caam_jr_enqueue(struct device *dev, u32 *desc,
 
 	spin_unlock_bh(&jrp->inplock);
 
-	return 0;
+	return -EINPROGRESS;
 }
 EXPORT_SYMBOL(caam_jr_enqueue);
+
+/**
+ * caam_jr_run_and_wait_for_completion() - Enqueue a job and wait for its
+ * completion. Returns 0 if OK, -ENOSPC if the queue is full,
+ * -EIO if it cannot map the caller's descriptor.
+ * @dev:  struct device of the job ring to be used
+ * @desc: points to a job descriptor that execute our request. All
+ *        descriptors (and all referenced data) must be in a DMAable
+ *        region, and all data references must be physical addresses
+ *        accessible to CAAM (i.e. within a PAMU window granted
+ *        to it).
+ * @cbk:  pointer to a callback function to be invoked upon completion
+ *        of this request. This has the form:
+ *        callback(struct device *dev, u32 *desc, u32 stat, void *arg)
+ *        where:
+ *        @dev:    contains the job ring device that processed this
+ *                 response.
+ *        @desc:   descriptor that initiated the request, same as
+ *                 "desc" being argued to caam_jr_enqueue().
+ *        @status: untranslated status received from CAAM. See the
+ *                 reference manual for a detailed description of
+ *                 error meaning, or see the JRSTA definitions in the
+ *                 register header file
+ *        @areq:   optional pointer to an argument passed with the
+ *                 original request
+ **/
+int caam_jr_run_and_wait_for_completion(struct device *dev, u32 *desc,
+					void (*cbk)(struct device *dev,
+						    u32 *desc, u32 status,
+						    void *areq))
+{
+	int ret = 0;
+	struct jr_job_result jobres = {0};
+
+	/* Initialize the completion structure */
+	init_completion(&jobres.completion);
+
+	/* Enqueue job for execution */
+	ret = caam_jr_enqueue(dev, desc, cbk, &jobres);
+	if (ret != -EINPROGRESS)
+		return ret;
+
+	/* Wait for job completion */
+	wait_for_completion(&jobres.completion);
+
+	/* Get return code processed in cbk */
+	ret = jobres.error;
+
+	return ret;
+}
+EXPORT_SYMBOL(caam_jr_run_and_wait_for_completion);
 
 static void caam_jr_init_hw(struct device *dev, dma_addr_t inpbusaddr,
 			    dma_addr_t outbusaddr)
@@ -626,7 +717,7 @@ static int caam_jr_probe(struct platform_device *pdev)
 	int error;
 
 	jrdev = &pdev->dev;
-	jrpriv = devm_kmalloc(jrdev, sizeof(*jrpriv), GFP_KERNEL);
+	jrpriv = devm_kzalloc(jrdev, sizeof(*jrpriv), GFP_KERNEL);
 	if (!jrpriv)
 		return -ENOMEM;
 
@@ -659,6 +750,25 @@ static int caam_jr_probe(struct platform_device *pdev)
 		return error;
 	}
 
+	/* Initialize crypto engine */
+	jrpriv->engine = crypto_engine_alloc_init(jrdev, false);
+	if (!jrpriv->engine) {
+		dev_err(jrdev, "Could not init crypto-engine\n");
+		return -ENOMEM;
+	}
+
+	error = devm_add_action_or_reset(jrdev, caam_jr_crypto_engine_exit,
+					 jrdev);
+	if (error)
+		return error;
+
+	/* Start crypto engine */
+	error = crypto_engine_start(jrpriv->engine);
+	if (error) {
+		dev_err(jrdev, "Could not start crypto-engine\n");
+		return error;
+	}
+
 	/* Identify the interrupt */
 	jrpriv->irq = irq_of_parse_and_map(nprop, 0);
 	if (!jrpriv->irq) {
@@ -687,6 +797,7 @@ static int caam_jr_probe(struct platform_device *pdev)
 	device_set_wakeup_enable(&pdev->dev, false);
 
 	register_algs(jrdev->parent);
+	init_misc_func(jrpriv, jrdev->parent);
 	jr_driver_probed++;
 
 	return 0;
@@ -710,6 +821,14 @@ static int caam_jr_suspend(struct device *dev)
 		.dev = dev,
 		.enable_itr = 0,
 	};
+
+	/* Remove the node from Physical JobR list maintained by driver */
+	spin_lock(&driver_data.jr_alloc_lock);
+	list_del(&jrpriv->list_node);
+	spin_unlock(&driver_data.jr_alloc_lock);
+
+	if (jrpriv->hwrng)
+		caam_rng_exit(dev->parent);
 
 	if (ctrlpriv->caam_off_during_pm) {
 		int err;
@@ -769,7 +888,7 @@ static int caam_jr_resume(struct device *dev)
 				clrsetbits_32(&jrpriv->rregs->rconfig_lo,
 					      JRCFG_IMSK, 0);
 
-				return 0;
+				goto add_jr;
 			} else if (ctrlpriv->optee_en) {
 				/* JR has been used by OPTEE, reset it */
 				err = caam_reset_hw_jr(dev);
@@ -791,6 +910,14 @@ static int caam_jr_resume(struct device *dev)
 	} else if (device_may_wakeup(&pdev->dev)) {
 		disable_irq_wake(jrpriv->irq);
 	}
+
+add_jr:
+	spin_lock(&driver_data.jr_alloc_lock);
+	list_add_tail(&jrpriv->list_node, &driver_data.jr_list);
+	spin_unlock(&driver_data.jr_alloc_lock);
+
+	if (jrpriv->hwrng)
+		jrpriv->hwrng = !caam_rng_init(dev->parent);
 
 	return 0;
 }

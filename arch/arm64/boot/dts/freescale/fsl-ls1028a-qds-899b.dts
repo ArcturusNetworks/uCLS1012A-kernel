@@ -42,6 +42,8 @@
 		__overlay__ {
 			phy-handle = <&slot1_sgmii0>;
 			phy-mode = "sgmii";
+			managed = "in-band-status";
+			status = "okay";
 		};
 	};
 
@@ -61,6 +63,13 @@
 				phy-mode = "sgmii";
 				managed = "in-band-status";
 			};
+		};
+	};
+
+	fragment@3 {
+		target = <&mscc_felix>;
+		__overlay__ {
+			status = "okay";
 		};
 	};
 };

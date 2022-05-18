@@ -14,6 +14,10 @@
 
 #include <asm/mipsregs.h>
 
+#ifndef IO_SPACE_LIMIT
+#define IO_SPACE_LIMIT 0xffff
+#endif
+
 /*
  * This gives the physical RAM offset.
  */
@@ -50,7 +54,7 @@
  * Memory above this physical address will be considered highmem.
  */
 #ifndef HIGHMEM_START
-#define HIGHMEM_START		_AC(0x10000000, UL)
+#define HIGHMEM_START		_AC(0x20000000, UL)
 #endif
 
 #endif /* CONFIG_32BIT */
