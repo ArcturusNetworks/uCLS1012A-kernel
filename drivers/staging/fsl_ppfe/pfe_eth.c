@@ -2499,6 +2499,7 @@ int pfe_eth_init(struct pfe *pfe)
 	int ii = 0;
 	int err;
 	struct ls1012a_pfe_platform_data *pfe_info;
+	struct ls1012a_eth_platform_data *einfo;
 
 	pr_info("%s\n", __func__);
 
@@ -2516,8 +2517,28 @@ int pfe_eth_init(struct pfe *pfe)
 		goto err_pdata;
 	}
 
+	einfo = (struct ls1012a_eth_platform_data *)
+				pfe_info->ls1012a_eth_pdata;
+
+	/* einfo never be NULL, but no harm in having this check */
+	if (!einfo) {
+		pr_err(
+			"%s: pfe missing additional gemacs platform data\n"
+			, __func__);
+		goto err_einfo;
+	}
+
+
 	for (ii = 0; ii < NUM_GEMAC_SUPPORT; ii++) {
-		err = pfe_eth_mdio_init(pfe, pfe_info, ii);
+		if (einfo->eth_swap) {
+			if (ii == 0) 
+				err = pfe_eth_mdio_init(pfe, pfe_info, 1);
+			else
+				err = pfe_eth_mdio_init(pfe, pfe_info, 0);
+		} else {
+			err = pfe_eth_mdio_init(pfe, pfe_info, ii);
+		}
+
 		if (err) {
 			pr_err("%s: pfe_eth_mdio_init() failed\n", __func__);
 			goto err_mdio_init;
@@ -2530,7 +2551,14 @@ int pfe_eth_init(struct pfe *pfe)
 		pfe_errata_a010897 = false;
 
 	for (ii = 0; ii < NUM_GEMAC_SUPPORT; ii++) {
-		err = pfe_eth_init_one(pfe, pfe_info, ii);
+		if (einfo->eth_swap) {
+			if (ii == 0) 
+				err = pfe_eth_init_one(pfe, pfe_info, 1);
+			else
+				err = pfe_eth_init_one(pfe, pfe_info, 0);
+		} else {
+			err = pfe_eth_init_one(pfe, pfe_info, ii);
+		}
 		if (err)
 			goto err_eth_init;
 	}
@@ -2543,6 +2571,7 @@ err_eth_init:
 		pfe_eth_mdio_exit(pfe, ii);
 	}
 
+err_einfo:
 err_mdio_init:
 err_pdata:
 	return err;

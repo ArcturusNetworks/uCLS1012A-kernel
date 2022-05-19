@@ -41,6 +41,12 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 
 	pdata->ls1012a_eth_pdata[port].gem_id = port;
 
+	addr = of_get_property(gem, "eth-swap", &size);
+	if (addr)
+		pdata->ls1012a_eth_pdata[port].eth_swap = be32_to_cpup(addr);
+	else
+		pdata->ls1012a_eth_pdata[port].eth_swap = 0;
+
 	mac_addr = of_get_mac_address(gem);
 	if (!IS_ERR_OR_NULL(mac_addr)) {
 		memcpy(pdata->ls1012a_eth_pdata[port].mac_addr, mac_addr,

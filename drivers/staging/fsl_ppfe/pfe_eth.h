@@ -45,6 +45,7 @@ struct ls1012a_eth_platform_data {
 	u32 mdio_muxval;
 	u8 mac_addr[ETH_ALEN];
 	struct device_node	*phy_node;
+	u32 eth_swap;
 };
 
 struct ls1012a_mdio_platform_data {
