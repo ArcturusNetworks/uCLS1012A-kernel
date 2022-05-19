@@ -215,19 +215,15 @@
 			#size-cells = <1>;
 			partition0 {
 				label = "0";
-				reg = <0x00A00000 0x00800000>;
+				reg = <0x00A00000 0x03000000>;
 			};
 			partition1 {
 				label = "1";
-				reg = <0x01200000 0x05580000>;
+				reg = <0x03A00000 0x03000000>;
 			};
 			partition2 {
 				label = "2";
-				reg = <0x07780000 0x00080000>;
-			};
-			partition3 {
-				label = "3";
-				reg = <0x07800000 0x00800000>;
+				reg = <0x06A00000 0x01600000>;
 			};
 			partitionB {
 				label = "B";
@@ -237,11 +233,6 @@
 				label = "E";
 				reg = <0x00200000 0x00040000>;
 			};
-			/* Partition used for /CCA */
-			partition6 {
-				label = "6";
-				reg = <0x06780000 0x01000000>;
-			};
 		};
 	};
 };
@@ -250,12 +241,13 @@
 	bus-num = <1>;
 	status = "okay";
 
+#if 0
 	dflash: s25fl008k@0 {
 		compatible = "spansion,s25fl008k", "jedec,spi-nor";
 		reg = <0>;
 		spi-max-frequency = <1000000>;
 		m25p,fast-read;
-#if 0
+
 		partitions {
 			compatible = "fixed-partitions";
 			#address-cells = <1>;
@@ -276,8 +268,8 @@
 				reg = <0x00008000 0x000F8000>;
 			};
 		};
-#endif
 	};
+#endif
 #if 0
 	spi@1 {
 		compatible = "spidev";
