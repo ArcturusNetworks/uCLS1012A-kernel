@@ -31,7 +31,7 @@ static int pfe_hif_alloc_descr(struct pfe_hif *hif)
 	dma_addr_t dma_addr;
 	int err = 0;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 	addr = dma_alloc_coherent(pfe->dev,
 				  HIF_RX_DESC_NT * sizeof(struct hif_desc) +
 				  HIF_TX_DESC_NT * sizeof(struct hif_desc),
@@ -123,7 +123,7 @@ static void send_dummy_pkt_to_hif(void)
 	if (!lmem_ptr)
 		return;
 
-	pr_info("Sending a dummy pkt to HIF %p %p\n", ddr_ptr, lmem_ptr);
+	pr_debug("Sending a dummy pkt to HIF %p %p\n", ddr_ptr, lmem_ptr);
 	physaddr = (u32)DDR_VIRT_TO_PFE(ddr_ptr);
 
 	lmem_virt_addr = (void *)CBUS_PFE_TO_VIRT((unsigned long int)lmem_ptr);
@@ -155,7 +155,7 @@ void pfe_hif_rx_idle(struct pfe_hif *hif)
 	u32 rx_status;
 
 	pfe_hif_disable_rx_desc(hif);
-	pr_info("Bringing hif to idle state...");
+	pr_debug("Bringing hif to idle state...");
 	writel(0, HIF_INT_ENABLE);
 	/*If HIF Rx BDP is busy send a dummy packet */
 	do {
@@ -167,15 +167,15 @@ void pfe_hif_rx_idle(struct pfe_hif *hif)
 	} while (--hif_stop_loop);
 
 	if (readl(HIF_RX_STATUS) & BDP_CSR_RX_DMA_ACTV)
-		pr_info("Failed\n");
+		pr_debug("Failed\n");
 	else
-		pr_info("Done\n");
+		pr_debug("Done\n");
 }
 #endif
 
 static void pfe_hif_free_descr(struct pfe_hif *hif)
 {
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	dma_free_coherent(pfe->dev,
 			  hif->rx_ring_size * sizeof(struct hif_desc) +
@@ -189,15 +189,15 @@ void pfe_hif_desc_dump(struct pfe_hif *hif)
 	unsigned long desc_p;
 	int ii = 0;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	desc = hif->rx_base;
 	desc_p = (u32)((u64)desc - (u64)hif->descr_baseaddr_v +
 			hif->descr_baseaddr_p);
 
-	pr_info("HIF Rx desc base %p physical %x\n", desc, (u32)desc_p);
+	pr_debug("HIF Rx desc base %p physical %x\n", desc, (u32)desc_p);
 	for (ii = 0; ii < hif->rx_ring_size; ii++) {
-		pr_info("status: %08x, ctrl: %08x, data: %08x, next: %x\n",
+		pr_debug("status: %08x, ctrl: %08x, data: %08x, next: %x\n",
 			readl(&desc->status), readl(&desc->ctrl),
 			readl(&desc->data), readl(&desc->next));
 			desc++;
@@ -207,9 +207,9 @@ void pfe_hif_desc_dump(struct pfe_hif *hif)
 	desc_p = ((u64)desc - (u64)hif->descr_baseaddr_v +
 			hif->descr_baseaddr_p);
 
-	pr_info("HIF Tx desc base %p physical %x\n", desc, (u32)desc_p);
+	pr_debug("HIF Tx desc base %p physical %x\n", desc, (u32)desc_p);
 	for (ii = 0; ii < hif->tx_ring_size; ii++) {
-		pr_info("status: %08x, ctrl: %08x, data: %08x, next: %x\n",
+		pr_debug("status: %08x, ctrl: %08x, data: %08x, next: %x\n",
 			readl(&desc->status), readl(&desc->ctrl),
 			readl(&desc->data), readl(&desc->next));
 		desc++;
@@ -224,7 +224,7 @@ static void pfe_hif_release_buffers(struct pfe_hif *hif)
 
 	hif->rx_base = hif->descr_baseaddr_v;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	/*Free Rx buffers */
 	desc = hif->rx_base;
@@ -266,7 +266,7 @@ static int pfe_hif_init_buffers(struct pfe_hif *hif)
 	u32 data;
 	int i = 0;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	/* Check enough Rx buffers available in the shared memory */
 	if (hif->shm->rx_buf_pool_cnt < hif->rx_ring_size)
@@ -374,7 +374,7 @@ static int pfe_hif_client_register(struct pfe_hif *hif, u32 client_id,
 	struct hif_tx_queue *tx_queue;
 	int err = 0;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	spin_lock_bh(&hif->tx_lock);
 
@@ -435,7 +435,7 @@ unlock:
  */
 static void pfe_hif_client_unregister(struct pfe_hif *hif, u32 client_id)
 {
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	/*
 	 * Mark client as no longer available (which prevents further packet
@@ -607,7 +607,7 @@ static int pfe_hif_rx_process(struct pfe_hif *hif, int budget)
 
 		/* Check to valid queue number */
 		if (hif->client[hif->client_id].rx_qn <= hif->qno) {
-			pr_info("%s: packet with invalid queue: %d\n"
+			pr_debug("%s: packet with invalid queue: %d\n"
 				, __func__, hif->qno);
 			hif->qno = 0;
 		}
@@ -838,7 +838,7 @@ skip_tx:
 
 static irqreturn_t wol_isr(int irq, void *dev_id)
 {
-	pr_info("WoL\n");
+	pr_debug("WoL\n");
 	gemac_set_wol(EMAC1_BASE_ADDR, 0);
 	gemac_set_wol(EMAC2_BASE_ADDR, 0);
 	return IRQ_HANDLED;
@@ -888,7 +888,7 @@ static irqreturn_t hif_isr(int irq, void *dev_id)
 	writel_relaxed(int_enable_mask, HIF_INT_ENABLE);
 
 	if (int_status) {
-		pr_info("%s : Invalid interrupt : %d\n", __func__,
+		pr_debug("%s : Invalid interrupt : %d\n", __func__,
 			int_status);
 		writel(int_status, HIF_INT_SRC);
 	}
@@ -909,14 +909,14 @@ void hif_process_client_req(struct pfe_hif *hif, int req, int data1, int data2)
 	switch (req) {
 	case REQUEST_CL_REGISTER:
 			/* Request for register a client */
-			pr_info("%s: register client_id %d\n",
+			pr_debug("%s: register client_id %d\n",
 				__func__, client_id);
 			pfe_hif_client_register(hif, client_id, (struct
 				hif_client_shm *)&hif->shm->client[client_id]);
 			break;
 
 	case REQUEST_CL_UNREGISTER:
-			pr_info("%s: unregister client_id %d\n",
+			pr_debug("%s: unregister client_id %d\n",
 				__func__, client_id);
 
 			/* Request for unregister a client */
@@ -973,7 +973,7 @@ int pfe_hif_init(struct pfe *pfe)
 	struct pfe_hif *hif = &pfe->hif;
 	int err;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	hif->dev = pfe->dev;
 	hif->irq = pfe->hif_irq;
@@ -1037,7 +1037,7 @@ void pfe_hif_exit(struct pfe *pfe)
 {
 	struct pfe_hif *hif = &pfe->hif;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	tasklet_kill(&hif->tx_cleanup_tasklet);
 

@@ -25,6 +25,11 @@
 #include <linux/smp.h>
 #include <linux/delay.h>
 
+#ifdef CONFIG_FSL_GUTS
+#include <linux/sys_soc.h>
+#include <linux/fsl/guts.h>
+extern struct soc_device_attribute *fsl_guts_get_soc_dev_attr(void);
+#endif
 /*
  * In case the boot CPU is hotpluggable, we record its initial state and
  * current state separately. Certain system registers may contain different
@@ -137,6 +142,15 @@ static int c_show(struct seq_file *m, void *v)
 {
 	int i, j;
 	bool compat = personality(current->personality) == PER_LINUX32;
+#ifdef CONFIG_FSL_GUTS
+	struct soc_device_attribute *soc_dev_attr;
+
+	soc_dev_attr = fsl_guts_get_soc_dev_attr();
+	seq_printf(m, "Machine   \t: %s\n", soc_dev_attr->machine);
+	seq_printf(m, "SoC family\t: %s\n", soc_dev_attr->family);
+	seq_printf(m, "SoC ID    \t: %s\n", soc_dev_attr->soc_id);
+	seq_printf(m, "SoC revision\t: %s\n", soc_dev_attr->revision);
+#endif
 
 	for_each_online_cpu(i) {
 		struct cpuinfo_arm64 *cpuinfo = &per_cpu(cpu_data, i);

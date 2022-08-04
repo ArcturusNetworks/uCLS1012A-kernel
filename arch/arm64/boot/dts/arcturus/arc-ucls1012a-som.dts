@@ -235,9 +235,11 @@
 		clocks = <&sys_mclk>;
 	};
 
-	dtt@4c {
-		compatible = "national,lm90";
-		reg = <0x4C>;
+	nct72: temperature-sensor@4c {
+			compatible = "onnn,nct1008";
+			reg = <0x4c>;
+			vcc-supply = <&reg_3p3v>;
+			#thermal-sensor-cells = <1>;
 	};
 
 	/* U23 */
@@ -374,11 +376,15 @@
 		sgmii_phy1: ethernet-phy@4 {
 			reg = <0x4>;
 			max-speed = <100>;
+			rtl821x,aldps-disable;
+			rtl821x,clkout-disable;
 		};
 
 		sgmii_phy2: ethernet-phy@5 {
 			reg = <0x5>;
 			max-speed = <100>;
+			rtl821x,aldps-disable;
+			rtl821x,clkout-disable;
 		};
 	};
 };

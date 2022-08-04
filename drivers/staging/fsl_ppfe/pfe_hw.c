@@ -70,7 +70,7 @@ int pfe_hw_init(struct pfe *pfe, int resume)
 		.mtip_pause_reg = 0,
 	};
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 #if !defined(LS1012A_PFE_RESET_WA)
 	/* LS1012A needs this to make PE work correctly */
@@ -80,26 +80,26 @@ int pfe_hw_init(struct pfe *pfe, int resume)
 	usleep_range(10, 20);
 #endif
 
-	pr_info("CLASS version: %x\n", readl(CLASS_VERSION));
-	pr_info("TMU version: %x\n", readl(TMU_VERSION));
+	pr_debug("CLASS version: %x\n", readl(CLASS_VERSION));
+	pr_debug("TMU version: %x\n", readl(TMU_VERSION));
 
-	pr_info("BMU1 version: %x\n", readl(BMU1_BASE_ADDR +
+	pr_debug("BMU1 version: %x\n", readl(BMU1_BASE_ADDR +
 		BMU_VERSION));
-	pr_info("BMU2 version: %x\n", readl(BMU2_BASE_ADDR +
+	pr_debug("BMU2 version: %x\n", readl(BMU2_BASE_ADDR +
 		BMU_VERSION));
 
-	pr_info("EGPI1 version: %x\n", readl(EGPI1_BASE_ADDR +
+	pr_debug("EGPI1 version: %x\n", readl(EGPI1_BASE_ADDR +
 		GPI_VERSION));
-	pr_info("EGPI2 version: %x\n", readl(EGPI2_BASE_ADDR +
+	pr_debug("EGPI2 version: %x\n", readl(EGPI2_BASE_ADDR +
 		GPI_VERSION));
-	pr_info("HGPI version: %x\n", readl(HGPI_BASE_ADDR +
+	pr_debug("HGPI version: %x\n", readl(HGPI_BASE_ADDR +
 		GPI_VERSION));
 
-	pr_info("HIF version: %x\n", readl(HIF_VERSION));
-	pr_info("HIF NOPCY version: %x\n", readl(HIF_NOCPY_VERSION));
+	pr_debug("HIF version: %x\n", readl(HIF_VERSION));
+	pr_debug("HIF NOPCY version: %x\n", readl(HIF_NOCPY_VERSION));
 
 #if !defined(CONFIG_FSL_PPFE_UTIL_DISABLED)
-	pr_info("UTIL version: %x\n", readl(UTIL_VERSION));
+	pr_debug("UTIL version: %x\n", readl(UTIL_VERSION));
 #endif
 	while (!(readl(TMU_CTRL) & ECC_MEM_INIT_DONE))
 		;
@@ -109,52 +109,52 @@ int pfe_hw_init(struct pfe *pfe, int resume)
 
 	bmu_init(BMU1_BASE_ADDR, &bmu1_cfg);
 
-	pr_info("bmu_init(1) done\n");
+	pr_debug("bmu_init(1) done\n");
 
 	bmu_init(BMU2_BASE_ADDR, &bmu2_cfg);
 
-	pr_info("bmu_init(2) done\n");
+	pr_debug("bmu_init(2) done\n");
 
 	class_cfg.resume = resume ? 1 : 0;
 
 	class_init(&class_cfg);
 
-	pr_info("class_init() done\n");
+	pr_debug("class_init() done\n");
 
 	tmu_init(&tmu_cfg);
 
-	pr_info("tmu_init() done\n");
+	pr_debug("tmu_init() done\n");
 #if !defined(CONFIG_FSL_PPFE_UTIL_DISABLED)
 	util_init(&util_cfg);
 
-	pr_info("util_init() done\n");
+	pr_debug("util_init() done\n");
 #endif
 	gpi_init(EGPI1_BASE_ADDR, &egpi1_cfg);
 
-	pr_info("gpi_init(1) done\n");
+	pr_debug("gpi_init(1) done\n");
 
 	gpi_init(EGPI2_BASE_ADDR, &egpi2_cfg);
 
-	pr_info("gpi_init(2) done\n");
+	pr_debug("gpi_init(2) done\n");
 
 	gpi_init(HGPI_BASE_ADDR, &hgpi_cfg);
 
-	pr_info("gpi_init(hif) done\n");
+	pr_debug("gpi_init(hif) done\n");
 
 	bmu_enable(BMU1_BASE_ADDR);
 
-	pr_info("bmu_enable(1) done\n");
+	pr_debug("bmu_enable(1) done\n");
 
 	bmu_enable(BMU2_BASE_ADDR);
 
-	pr_info("bmu_enable(2) done\n");
+	pr_debug("bmu_enable(2) done\n");
 
 	return 0;
 }
 
 void pfe_hw_exit(struct pfe *pfe)
 {
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	bmu_disable(BMU1_BASE_ADDR);
 	bmu_reset(BMU1_BASE_ADDR);

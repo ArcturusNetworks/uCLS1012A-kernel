@@ -524,7 +524,7 @@ static int pfe_eth_stats_count(struct net_device *ndev, int sset)
  */
 static int pfe_eth_gemac_reglen(struct net_device *ndev)
 {
-	pr_info("%s()\n", __func__);
+	pr_debug("%s()\n", __func__);
 	return (sizeof(gemac_regs) / sizeof(u32));
 }
 
@@ -540,7 +540,7 @@ static void  pfe_eth_gemac_get_regs(struct net_device *ndev, struct ethtool_regs
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 	u32 *buf = (u32 *)regbuf;
 
-	pr_info("%s()\n", __func__);
+	pr_debug("%s()\n", __func__);
 	for (i = 0; i < sizeof(gemac_regs) / sizeof(u32); i++)
 		buf[i] = readl(priv->EMAC_baseaddr + gemac_regs[i]);
 }
@@ -1006,7 +1006,7 @@ static int pfe_eth_mdio_init(struct pfe *pfe,
 	if (!priv->mdc_div)
 		priv->mdc_div = 64;
 
-	dev_info(bus->parent, "%s: mdc_div: %d, phy_mask: %x\n",
+	dev_dbg(bus->parent, "%s: mdc_div: %d, phy_mask: %x\n",
 		 __func__, priv->mdc_div, bus->phy_mask);
 	mdio_node = of_get_child_by_name(pfe->dev->of_node, "mdio");
 	if ((mdio_info->id == 0) && mdio_node) {
@@ -1307,7 +1307,7 @@ static int pfe_phy_init(struct net_device *ndev)
 	priv->oldlink = 0;
 	priv->oldspeed = 0;
 	priv->oldduplex = -1;
-	pr_info("%s interface %x\n", __func__, interface);
+	pr_debug("%s interface %x\n", __func__, interface);
 
 	if (priv->phy_node) {
 		phydev = of_phy_connect(ndev, priv->phy_node,
@@ -1526,7 +1526,7 @@ int pfe_eth_shutdown(struct net_device *ndev, int wake)
 				break;
 			}
 
-			pr_info("%s : (%s) Waiting for tx packets to free. Pending tx pkts = %d.\n"
+			pr_debug("%s : (%s) Waiting for tx packets to free. Pending tx pkts = %d.\n"
 				, __func__, ndev->name, tx_pkts);
 			if (need_resched())
 				schedule();
@@ -2448,7 +2448,7 @@ static int pfe_eth_init_one(struct pfe *pfe,
 	if ((!(pfe_use_old_dts_phy) && !(priv->phy_node)) ||
 	    ((pfe_use_old_dts_phy) &&
 	      (priv->einfo->phy_flags & GEMAC_NO_PHY))) {
-		pr_info("%s: No PHY or fixed-link\n", __func__);
+		pr_warn("%s: No PHY or fixed-link\n", __func__);
 		goto skip_phy_init;
 	}
 
@@ -2501,7 +2501,7 @@ int pfe_eth_init(struct pfe *pfe)
 	struct ls1012a_pfe_platform_data *pfe_info;
 	struct ls1012a_eth_platform_data *einfo;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	cbus_emac_base[0] = EMAC1_BASE_ADDR;
 	cbus_emac_base[1] = EMAC2_BASE_ADDR;
@@ -2589,7 +2589,7 @@ static void pfe_eth_exit_one(struct pfe_eth_priv_s *priv)
 	if ((!(pfe_use_old_dts_phy) && !(priv->phy_node)) ||
 	    ((pfe_use_old_dts_phy) &&
 	      (priv->einfo->phy_flags & GEMAC_NO_PHY))) {
-		pr_info("%s: No PHY or fixed-link\n", __func__);
+		pr_warn("%s: No PHY or fixed-link\n", __func__);
 		goto skip_phy_exit;
 	}
 
@@ -2608,7 +2608,7 @@ void pfe_eth_exit(struct pfe *pfe)
 {
 	int ii;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	for (ii = NUM_GEMAC_SUPPORT - 1; ii >= 0; ii--)
 		pfe_eth_exit_one(pfe->eth.eth_priv[ii]);

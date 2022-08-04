@@ -374,11 +374,15 @@
 		sgmii_phy1: ethernet-phy@4 {
 			reg = <0x4>;
 			max-speed = <100>;
+			rtl821x,aldps-disable;
+			rtl821x,clkout-disable;
 		};
 
 		sgmii_phy2: ethernet-phy@5 {
 			reg = <0x5>;
 			max-speed = <100>;
+			rtl821x,aldps-disable;
+			rtl821x,clkout-disable;
 		};
 	};
 };

@@ -1378,7 +1378,9 @@ static struct platform_driver nxp_fspi_driver = {
 		.name	= "nxp-fspi",
 		.of_match_table = nxp_fspi_dt_ids,
 		.acpi_match_table = ACPI_PTR(nxp_fspi_acpi_ids),
+#ifdef CONFIG_PM
 		.pm =   &nxp_fspi_pm_ops,
+#endif
 	},
 	.probe          = nxp_fspi_probe,
 	.remove		= nxp_fspi_remove,

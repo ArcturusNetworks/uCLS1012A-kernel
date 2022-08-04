@@ -87,7 +87,7 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 			goto done;
 
 	} else {
-		pr_info("%s: No PHY or fixed-link\n", __func__);
+		pr_warn("%s: No PHY or fixed-link\n", __func__);
 		return 0;
 	}
 
@@ -228,7 +228,7 @@ static int pfe_platform_probe(struct platform_device *pdev)
 	}
 
 	if (interface_count != ii)
-		pr_info("missing some of gemac interface properties.\n");
+		pr_warn("missing some of gemac interface properties.\n");
 
 	pfe->dev = &pdev->dev;
 
@@ -277,7 +277,7 @@ static int pfe_platform_remove(struct platform_device *pdev)
 	struct pfe *pfe = platform_get_drvdata(pdev);
 	int rc;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	rc = pfe_remove(pfe);
 
