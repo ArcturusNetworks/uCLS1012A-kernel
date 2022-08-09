@@ -914,9 +914,15 @@ static int dspi_transfer_one_message(struct spi_controller *ctlr,
 		dspi->cur_transfer = transfer;
 		dspi->cur_msg = message;
 		dspi->cur_chip = spi_get_ctldata(spi);
+
+		if (spi->cs_gpiod)
+			gpiod_set_value(spi->cs_gpiod, 1);
+
 		/* Prepare command word for CMD FIFO */
 		dspi->tx_cmd = SPI_PUSHR_CMD_CTAS(0) |
-			       SPI_PUSHR_CMD_PCS(spi->chip_select);
+				SPI_PUSHR_CMD_PCS(spi->cs_gpiod ?
+				ctlr->unused_native_cs : spi->chip_select);
+
 		if (list_is_last(&dspi->cur_transfer->transfer_list,
 				 &dspi->cur_msg->transfers)) {
 			/* Leave PCS activated after last transfer when
@@ -1241,6 +1247,7 @@ static int dspi_probe(struct platform_device *pdev)
 	dspi->pdev = pdev;
 	dspi->ctlr = ctlr;
 
+	ctlr->use_gpio_descriptors = true;
 	ctlr->setup = dspi_setup;
 	ctlr->transfer_one_message = dspi_transfer_one_message;
 	ctlr->dev.of_node = pdev->dev.of_node;
