@@ -164,7 +164,6 @@
 
 &qspi {
 	num-cs = <1>;
-	bus-num = <0>;
 	status = "okay";
 
 	qflash0: n25q00a@0 {
@@ -212,8 +211,8 @@
 };
 
 &dspi {
-	bus-num = <1>;
 	status = "okay";
+	cs-gpios = <0>, <0>, <0>, <&gpio1 3 1>;
 
 #if 0
 	dflash: s25fl008k@0 {
