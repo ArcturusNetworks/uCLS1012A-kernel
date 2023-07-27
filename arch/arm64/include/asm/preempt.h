@@ -2,6 +2,7 @@
 #ifndef __ASM_PREEMPT_H
 #define __ASM_PREEMPT_H
 
+#include <linux/jump_label.h>
 #include <linux/thread_info.h>
 
 #define PREEMPT_NEED_RESCHED	BIT(32)
@@ -70,46 +71,34 @@ static inline bool __preempt_count_dec_and_test(void)
 	 * interrupt occurring between the non-atomic READ_ONCE/WRITE_ONCE
 	 * pair.
 	 */
-	if (!pc || !READ_ONCE(ti->preempt_count))
-		return true;
-#ifdef CONFIG_PREEMPT_LAZY
-	if ((pc & ~PREEMPT_NEED_RESCHED))
-		return false;
-	if (current_thread_info()->preempt_lazy_count)
-		return false;
-	return test_thread_flag(TIF_NEED_RESCHED_LAZY);
-#else
-	return false;
-#endif
+	return !pc || !READ_ONCE(ti->preempt_count);
 }
 
 static inline bool should_resched(int preempt_offset)
 {
-#ifdef CONFIG_PREEMPT_LAZY
-	u64 pc = READ_ONCE(current_thread_info()->preempt_count);
-	if (pc == preempt_offset)
-		return true;
-
-	if ((pc & ~PREEMPT_NEED_RESCHED) != preempt_offset)
-		return false;
-
-	if (current_thread_info()->preempt_lazy_count)
-		return false;
-	return test_thread_flag(TIF_NEED_RESCHED_LAZY);
-#else
 	u64 pc = READ_ONCE(current_thread_info()->preempt_count);
 	return pc == preempt_offset;
-#endif
 }
 
 #ifdef CONFIG_PREEMPTION
+
 void preempt_schedule(void);
-#ifdef CONFIG_PREEMPT_RT
-void preempt_schedule_lock(void);
-#endif
-#define __preempt_schedule() preempt_schedule()
 void preempt_schedule_notrace(void);
-#define __preempt_schedule_notrace() preempt_schedule_notrace()
+
+#ifdef CONFIG_PREEMPT_DYNAMIC
+
+DECLARE_STATIC_KEY_TRUE(sk_dynamic_irqentry_exit_cond_resched);
+void dynamic_preempt_schedule(void);
+#define __preempt_schedule()		dynamic_preempt_schedule()
+void dynamic_preempt_schedule_notrace(void);
+#define __preempt_schedule_notrace()	dynamic_preempt_schedule_notrace()
+
+#else /* CONFIG_PREEMPT_DYNAMIC */
+
+#define __preempt_schedule()		preempt_schedule()
+#define __preempt_schedule_notrace()	preempt_schedule_notrace()
+
+#endif /* CONFIG_PREEMPT_DYNAMIC */
 #endif /* CONFIG_PREEMPTION */
 
 #endif /* __ASM_PREEMPT_H */

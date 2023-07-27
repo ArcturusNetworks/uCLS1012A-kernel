@@ -37,7 +37,6 @@ void irq_poll_sched(struct irq_poll *iop)
 	list_add_tail(&iop->list, this_cpu_ptr(&blk_cpu_iopoll));
 	raise_softirq_irqoff(IRQ_POLL_SOFTIRQ);
 	local_irq_restore(flags);
-	preempt_check_resched_rt();
 }
 EXPORT_SYMBOL(irq_poll_sched);
 
@@ -73,7 +72,6 @@ void irq_poll_complete(struct irq_poll *iop)
 	local_irq_save(flags);
 	__irq_poll_complete(iop);
 	local_irq_restore(flags);
-	preempt_check_resched_rt();
 }
 EXPORT_SYMBOL(irq_poll_complete);
 
@@ -98,7 +96,6 @@ static void __latent_entropy irq_poll_softirq(struct softirq_action *h)
 		}
 
 		local_irq_enable();
-		preempt_check_resched_rt();
 
 		/* Even though interrupts have been re-enabled, this
 		 * access is safe because interrupts can only add new
@@ -136,7 +133,6 @@ static void __latent_entropy irq_poll_softirq(struct softirq_action *h)
 		__raise_softirq_irqoff(IRQ_POLL_SOFTIRQ);
 
 	local_irq_enable();
-	preempt_check_resched_rt();
 }
 
 /**
@@ -192,15 +188,18 @@ EXPORT_SYMBOL(irq_poll_init);
 static int irq_poll_cpu_dead(unsigned int cpu)
 {
 	/*
-	 * If a CPU goes away, splice its entries to the current CPU
-	 * and trigger a run of the softirq
+	 * If a CPU goes away, splice its entries to the current CPU and
+	 * set the POLL softirq bit. The local_bh_disable()/enable() pair
+	 * ensures that it is handled. Otherwise the current CPU could
+	 * reach idle with the POLL softirq pending.
 	 */
+	local_bh_disable();
 	local_irq_disable();
 	list_splice_init(&per_cpu(blk_cpu_iopoll, cpu),
 			 this_cpu_ptr(&blk_cpu_iopoll));
 	__raise_softirq_irqoff(IRQ_POLL_SOFTIRQ);
 	local_irq_enable();
-	preempt_check_resched_rt();
+	local_bh_enable();
 
 	return 0;
 }

@@ -10,6 +10,7 @@
  */
 
 #include <crypto/internal/aead.h>
+#include <crypto/internal/cipher.h>
 #include <crypto/internal/skcipher.h>
 #include <crypto/scatterwalk.h>
 #include <linux/bug.h>
@@ -430,7 +431,7 @@ static int skcipher_copy_iv(struct skcipher_walk *walk)
 
 static int skcipher_walk_first(struct skcipher_walk *walk)
 {
-	if (WARN_ON_ONCE(in_irq()))
+	if (WARN_ON_ONCE(in_hardirq()))
 		return -EDEADLK;
 
 	walk->buffer = NULL;
@@ -489,12 +490,6 @@ int skcipher_walk_virt(struct skcipher_walk *walk,
 	return err;
 }
 EXPORT_SYMBOL_GPL(skcipher_walk_virt);
-
-void skcipher_walk_atomise(struct skcipher_walk *walk)
-{
-	walk->flags &= ~SKCIPHER_WALK_SLEEP;
-}
-EXPORT_SYMBOL_GPL(skcipher_walk_atomise);
 
 int skcipher_walk_async(struct skcipher_walk *walk,
 			struct skcipher_request *req)
@@ -603,7 +598,8 @@ int crypto_skcipher_setkey(struct crypto_skcipher *tfm, const u8 *key,
 	unsigned long alignmask = crypto_skcipher_alignmask(tfm);
 	int err;
 
-	if (keylen < cipher->min_keysize || keylen > cipher->max_keysize)
+	if ((!tfm->base.is_hbk)
+	    && (keylen < cipher->min_keysize || keylen > cipher->max_keysize))
 		return -EINVAL;
 
 	if ((unsigned long)key & alignmask)
@@ -986,3 +982,4 @@ EXPORT_SYMBOL_GPL(skcipher_alloc_instance_simple);
 
 MODULE_LICENSE("GPL");
 MODULE_DESCRIPTION("Symmetric key cipher type");
+MODULE_IMPORT_NS(CRYPTO_INTERNAL);

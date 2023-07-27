@@ -3,7 +3,6 @@
 #define _LINUX_PID_H
 
 #include <linux/rculist.h>
-#include <linux/atomic.h>
 #include <linux/wait.h>
 #include <linux/refcount.h>
 
@@ -79,6 +78,8 @@ struct file;
 
 extern struct pid *pidfd_pid(const struct file *file);
 struct pid *pidfd_get_pid(unsigned int fd, unsigned int *flags);
+struct task_struct *pidfd_get_task(int pidfd, unsigned int *flags);
+int pidfd_create(struct pid *pid, unsigned int flags);
 
 static inline struct pid *get_pid(struct pid *pid)
 {

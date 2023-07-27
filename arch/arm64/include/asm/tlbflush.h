@@ -250,13 +250,13 @@ static inline void flush_tlb_mm(struct mm_struct *mm)
 	unsigned long asid;
 
 	dsb(ishst);
+	asid = __TLBI_VADDR(0, ASID(mm));
 	if (TKT340553_SW_WORKAROUND) {
 		/* Flush the entire TLB */
 		__tlbi(vmalle1is);
 		dsb(ish);
 		isb();
 	} else {
-		asid = __TLBI_VADDR(0, ASID(mm));
 		__tlbi(aside1is, asid);
 		__tlbi_user(aside1is, asid);
 		dsb(ish);
@@ -269,13 +269,13 @@ static inline void flush_tlb_page_nosync(struct vm_area_struct *vma,
 	unsigned long addr;
 
 	dsb(ishst);
+	addr = __TLBI_VADDR(uaddr, ASID(vma->vm_mm));
 	if (TKT340553_SW_WORKAROUND) {
 		/* Flush the entire TLB */
 		__tlbi(vmalle1is);
 		dsb(ish);
 		isb();
 	} else {
-		addr = __TLBI_VADDR(uaddr, ASID(vma->vm_mm));
 		__tlbi(vale1is, addr);
 		__tlbi_user(vale1is, addr);
 	}
@@ -333,7 +333,7 @@ static inline void __flush_tlb_range(struct vm_area_struct *vma,
 
 	/*
 	 * When the CPU does not support TLB range operations, flush the TLB
-	 * entries one by one at the granularity of 'stride'. If the the TLB
+	 * entries one by one at the granularity of 'stride'. If the TLB
 	 * range ops are supported, then:
 	 *
 	 * 1. If 'pages' is odd, flush the first page through non-range

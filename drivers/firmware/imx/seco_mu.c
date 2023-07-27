@@ -91,8 +91,6 @@
 
 #define MAX_DATA_SIZE_PER_USER  (65 * 1024)
 
-#define SC_IRQ_V2X_RESET (1<<7)
-
 /* Header of the messages exchange with the SECO */
 struct she_mu_hdr {
 	u8 ver;
@@ -170,6 +168,9 @@ struct seco_mu_priv {
 
 	struct imx_sc_ipc *ipc_scu;
 	u8 seco_part_owner;
+
+	int max_ctx;
+	struct seco_mu_device_ctx **ctxs;
 };
 
 /* macro to log operation of a misc device */
@@ -623,6 +624,9 @@ static int seco_mu_ioctl_setup_iobuf_handler(struct seco_mu_device_ctx *dev_ctx,
 	struct seco_shared_mem *shared_mem;
 	int err = -EINVAL;
 	u32 pos;
+	u8 *addr;
+
+	struct seco_mu_priv *priv = dev_get_drvdata(dev_ctx->dev);
 
 	err = (int)copy_from_user(&io,
 		(u8 *)arg,
@@ -632,6 +636,10 @@ static int seco_mu_ioctl_setup_iobuf_handler(struct seco_mu_device_ctx *dev_ctx,
 		err = -EFAULT;
 		goto exit;
 	}
+
+	/* Function call to retrieve MU Buffer address */
+	if (io.flags & SECO_MU_IO_FLAGS_SHE_V2X)
+		addr = get_mu_buf(priv->tx_chan);
 
 	devctx_dbg(dev_ctx, "io [buf: %p(%d) flag: %x]\n",
 		   io.user_buf, io.length, io.flags);
@@ -648,25 +656,32 @@ static int seco_mu_ioctl_setup_iobuf_handler(struct seco_mu_device_ctx *dev_ctx,
 	}
 
 	/* Select the shared memory to be used for this buffer. */
-	if (io.flags & SECO_MU_IO_FLAGS_USE_SEC_MEM) {
-		/* App requires to use secure memory for this buffer.*/
-		shared_mem = &dev_ctx->secure_mem;
-	} else {
-		/* No specific requirement for this buffer. */
-		shared_mem = &dev_ctx->non_secure_mem;
+	if (!(io.flags & SECO_MU_IO_FLAGS_SHE_V2X)) {
+		if (io.flags & SECO_MU_IO_FLAGS_USE_SEC_MEM) {
+			/* App requires to use secure memory for this buffer.*/
+			shared_mem = &dev_ctx->secure_mem;
+		} else {
+			/* No specific requirement for this buffer. */
+			shared_mem = &dev_ctx->non_secure_mem;
+		}
 	}
 
 	/* Check there is enough space in the shared memory. */
-	if (io.length >= shared_mem->size - shared_mem->pos) {
+	if (!(io.flags & SECO_MU_IO_FLAGS_SHE_V2X) &&
+	     (io.length >= shared_mem->size - shared_mem->pos)) {
 		devctx_err(dev_ctx, "Not enough space in shared memory\n");
 		err = -ENOMEM;
 		goto exit;
 	}
 
-	/* Allocate space in shared memory. 8 bytes aligned. */
-	pos = shared_mem->pos;
-	shared_mem->pos += round_up(io.length, 8u);
-	io.seco_addr = (u64)shared_mem->dma_addr + pos;
+	if (!(io.flags & SECO_MU_IO_FLAGS_SHE_V2X)) {
+		/* Allocate space in shared memory. 8 bytes aligned. */
+		pos = shared_mem->pos;
+		shared_mem->pos += round_up(io.length, 8u);
+		io.seco_addr = (u64)shared_mem->dma_addr + pos;
+	} else {
+		io.seco_addr = (u64)addr;
+	}
 
 	if ((io.flags & SECO_MU_IO_FLAGS_USE_SEC_MEM) &&
 	    !(io.flags & SECO_MU_IO_FLAGS_USE_SHORT_ADDR))
@@ -678,8 +693,13 @@ static int seco_mu_ioctl_setup_iobuf_handler(struct seco_mu_device_ctx *dev_ctx,
 		 * buffer is input:
 		 * copy data from user space to this allocated buffer.
 		 */
-		err = (int)copy_from_user(shared_mem->ptr + pos, io.user_buf,
-					  io.length);
+		if (io.flags & SECO_MU_IO_FLAGS_SHE_V2X) {
+			err = (int)copy_from_user(addr, io.user_buf, io.length);
+		} else {
+			err = (int)copy_from_user(shared_mem->ptr + pos,
+						  io.user_buf,
+						  io.length);
+		}
 		if (err) {
 			devctx_err(dev_ctx,
 				   "Failed copy data to shared memory\n");
@@ -703,7 +723,10 @@ static int seco_mu_ioctl_setup_iobuf_handler(struct seco_mu_device_ctx *dev_ctx,
 			goto exit;
 		}
 
-		out_buf_desc->out_ptr = shared_mem->ptr + pos;
+		if (io.flags & SECO_MU_IO_FLAGS_SHE_V2X)
+			out_buf_desc->out_ptr = addr;
+		else
+			out_buf_desc->out_ptr = shared_mem->ptr + pos;
 		out_buf_desc->out_usr_ptr = io.user_buf;
 		out_buf_desc->out_size = io.length;
 		list_add_tail(&out_buf_desc->link, &dev_ctx->pending_out);
@@ -1017,7 +1040,7 @@ static int imx_sc_v2x_reset_notify(struct notifier_block *nb,
 	struct seco_mu_device_ctx *dev_ctx = container_of(nb,
 					struct seco_mu_device_ctx, scu_notify);
 
-	if (!(event & SC_IRQ_V2X_RESET))
+	if (!(event & IMX_SC_IRQ_V2X_RESET))
 		return 0;
 
 	dev_ctx->v2x_reset = true;
@@ -1123,6 +1146,9 @@ static int seco_mu_probe(struct platform_device *pdev)
 		goto exit;
 	}
 
+	priv->max_ctx = max_nb_users;
+	priv->ctxs = devm_kzalloc(dev, sizeof(dev_ctx) * max_nb_users, GFP_KERNEL);
+
 	/* Create users */
 	for (i = 0; i < max_nb_users; i++) {
 		dev_ctx = devm_kzalloc(dev, sizeof(*dev_ctx), GFP_KERNEL);
@@ -1136,6 +1162,9 @@ static int seco_mu_probe(struct platform_device *pdev)
 		dev_ctx->dev = dev;
 		dev_ctx->status = MU_FREE;
 		dev_ctx->mu_priv = priv;
+
+		priv->ctxs[i] = dev_ctx;
+
 		/* Default value invalid for an header. */
 		init_waitqueue_head(&dev_ctx->wq);
 
@@ -1179,7 +1208,7 @@ static int seco_mu_probe(struct platform_device *pdev)
 	}
 
 	ret = imx_scu_irq_group_enable(IMX_SC_IRQ_GROUP_WAKE,
-					SC_IRQ_V2X_RESET, true);
+					IMX_SC_IRQ_V2X_RESET, true);
 	if (ret) {
 		dev_warn(&pdev->dev, "v2x Enable irq failed.\n");
 		return ret;
@@ -1189,6 +1218,20 @@ exit:
 	return ret;
 }
 
+#ifdef CONFIG_PM_SLEEP
+static int secu_mu_resume(struct device *dev)
+{
+	struct seco_mu_priv *priv = dev_get_drvdata(dev);
+	int i=0;
+
+	for (i = 0; i < priv->max_ctx; i++) {
+		priv->ctxs[i]->v2x_reset = true;
+		wake_up_interruptible(&priv->ctxs[i]->wq);
+	}
+	return 0;
+}
+#endif
+
 static const struct of_device_id seco_mu_match[] = {
 	{
 		.compatible = "fsl,imx-seco-mu",
@@ -1197,10 +1240,15 @@ static const struct of_device_id seco_mu_match[] = {
 };
 MODULE_DEVICE_TABLE(of, seco_mu_match);
 
+static const struct dev_pm_ops secu_mu_pm = {
+        SET_SYSTEM_SLEEP_PM_OPS(NULL, secu_mu_resume)
+};
+
 static struct platform_driver seco_mu_driver = {
 	.driver = {
 		.name = "seco_mu",
 		.of_match_table = seco_mu_match,
+		.pm = &secu_mu_pm,
 	},
 	.probe       = seco_mu_probe,
 };

@@ -18,7 +18,6 @@
 
 #include "pcie-designware.h"
 
-#define PCIE_DBI2_OFFSET		0x1000	/* DBI2 base address*/
 #define PCIE_LINK_CAP			0x7C	/* PCIe Link Capabilities*/
 #define MAX_LINK_SP_MASK		0x0F
 #define MAX_LINK_W_MASK			0x3F
@@ -51,15 +50,6 @@ struct ls_pcie_ep {
 	u8				max_width;
 	bool				big_endian;
 	int				irq;
-};
-
-static int ls_pcie_establish_link(struct dw_pcie *pci)
-{
-	return 0;
-}
-
-static const struct dw_pcie_ops dw_ls_pcie_ep_ops = {
-	.start_link = ls_pcie_establish_link,
 };
 
 static u32 ls_lut_readl(struct ls_pcie_ep *pcie, u32 offset)
@@ -205,19 +195,16 @@ static const struct dw_pcie_ep_ops ls_pcie_ep_ops = {
 
 static const struct ls_pcie_ep_drvdata ls1_ep_drvdata = {
 	.ops = &ls_pcie_ep_ops,
-	.dw_pcie_ops = &dw_ls_pcie_ep_ops,
 };
 
 static const struct ls_pcie_ep_drvdata ls2_ep_drvdata = {
 	.func_offset = 0x20000,
 	.ops = &ls_pcie_ep_ops,
-	.dw_pcie_ops = &dw_ls_pcie_ep_ops,
 };
 
 static const struct ls_pcie_ep_drvdata lx2_ep_drvdata = {
 	.func_offset = 0x8000,
 	.ops = &ls_pcie_ep_ops,
-	.dw_pcie_ops = &dw_ls_pcie_ep_ops,
 };
 
 static const struct of_device_id ls_pcie_ep_of_match[] = {
@@ -228,38 +215,6 @@ static const struct of_device_id ls_pcie_ep_of_match[] = {
 	{ .compatible = "fsl,lx2160ar2-pcie-ep", .data = &lx2_ep_drvdata },
 	{ },
 };
-
-static int __init ls_add_pcie_ep(struct ls_pcie_ep *pcie,
-				 struct platform_device *pdev)
-{
-	struct dw_pcie *pci = pcie->pci;
-	struct device *dev = pci->dev;
-	struct dw_pcie_ep *ep;
-	struct resource *res;
-	int ret;
-
-	ep = &pci->ep;
-	ep->ops = pcie->drvdata->ops;
-
-	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "addr_space");
-	if (!res)
-		return -EINVAL;
-
-	ep->phys_base = res->start;
-	ep->addr_size = resource_size(res);
-
-	ret = ls_pcie_ep_interrupt_init(pcie, pdev);
-	if (ret)
-		return  ret;
-
-	ret = dw_pcie_ep_init(ep);
-	if (ret) {
-		dev_err(dev, "failed to initialize endpoint\n");
-		return ret;
-	}
-
-	return 0;
-}
 
 static int __init ls_pcie_ep_probe(struct platform_device *pdev)
 {
@@ -287,7 +242,7 @@ static int __init ls_pcie_ep_probe(struct platform_device *pdev)
 	pci->dev = dev;
 	pci->ops = pcie->drvdata->dw_pcie_ops;
 
-	ls_epc->bar_fixed_64bit = (1 << BAR_2) | (1 << BAR_4),
+	ls_epc->bar_fixed_64bit = (1 << BAR_2) | (1 << BAR_4);
 
 	pcie->pci = pci;
 	pcie->ls_epc = ls_epc;
@@ -297,6 +252,8 @@ static int __init ls_pcie_ep_probe(struct platform_device *pdev)
 	if (IS_ERR(pci->dbi_base))
 		return PTR_ERR(pci->dbi_base);
 
+	pci->ep.ops = &ls_pcie_ep_ops;
+
 	pcie->big_endian = of_property_read_bool(dev->of_node, "big-endian");
 
 	pcie->max_speed = dw_pcie_readw_dbi(pci, PCIE_LINK_CAP) &
@@ -304,17 +261,17 @@ static int __init ls_pcie_ep_probe(struct platform_device *pdev)
 	pcie->max_width = (dw_pcie_readw_dbi(pci, PCIE_LINK_CAP) >>
 			  MAX_LINK_W_SHIFT) & MAX_LINK_W_MASK;
 
-	pci->dbi_base2 = pci->dbi_base + PCIE_DBI2_OFFSET;
-
 	/* set 64-bit DMA mask and coherent DMA mask */
 	if (dma_set_mask_and_coherent(dev, DMA_BIT_MASK(64)))
 		dev_warn(dev, "Failed to set 64-bit DMA mask.\n");
 
 	platform_set_drvdata(pdev, pcie);
 
-	ret = ls_add_pcie_ep(pcie, pdev);
+	ret = dw_pcie_ep_init(&pci->ep);
+	if (ret)
+		return  ret;
 
-	return ret;
+	return  ls_pcie_ep_interrupt_init(pcie, pdev);
 }
 
 static struct platform_driver ls_pcie_ep_driver = {

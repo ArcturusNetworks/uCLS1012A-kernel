@@ -6,6 +6,7 @@
  *          Laurent Pinchart (laurent.pinchart@ideasonboard.com)
  */
 
+#include <asm/barrier.h>
 #include <linux/kernel.h>
 #include <linux/input.h>
 #include <linux/slab.h>
@@ -93,22 +94,21 @@ static void uvc_event_streaming(struct uvc_device *dev,
 				struct uvc_streaming_status *status, int len)
 {
 	if (len < 3) {
-		uvc_trace(UVC_TRACE_STATUS, "Invalid streaming status event "
-				"received.\n");
+		uvc_dbg(dev, STATUS,
+			"Invalid streaming status event received\n");
 		return;
 	}
 
 	if (status->bEvent == 0) {
 		if (len < 4)
 			return;
-		uvc_trace(UVC_TRACE_STATUS, "Button (intf %u) %s len %d\n",
-			  status->bOriginator,
-			  status->bValue[0] ? "pressed" : "released", len);
+		uvc_dbg(dev, STATUS, "Button (intf %u) %s len %d\n",
+			status->bOriginator,
+			status->bValue[0] ? "pressed" : "released", len);
 		uvc_input_report_key(dev, KEY_CAMERA, status->bValue[0]);
 	} else {
-		uvc_trace(UVC_TRACE_STATUS,
-			  "Stream %u error event %02x len %d.\n",
-			  status->bOriginator, status->bEvent, len);
+		uvc_dbg(dev, STATUS, "Stream %u error event %02x len %d\n",
+			status->bOriginator, status->bEvent, len);
 	}
 }
 
@@ -163,14 +163,13 @@ static bool uvc_event_control(struct urb *urb,
 
 	if (len < 6 || status->bEvent != 0 ||
 	    status->bAttribute >= ARRAY_SIZE(attrs)) {
-		uvc_trace(UVC_TRACE_STATUS, "Invalid control status event "
-				"received.\n");
+		uvc_dbg(dev, STATUS, "Invalid control status event received\n");
 		return false;
 	}
 
-	uvc_trace(UVC_TRACE_STATUS, "Control %u/%u %s change len %d.\n",
-		  status->bOriginator, status->bSelector,
-		  attrs[status->bAttribute], len);
+	uvc_dbg(dev, STATUS, "Control %u/%u %s change len %d\n",
+		status->bOriginator, status->bSelector,
+		attrs[status->bAttribute], len);
 
 	/* Find the control. */
 	ctrl = uvc_event_find_ctrl(dev, status, &chain);
@@ -179,7 +178,8 @@ static bool uvc_event_control(struct urb *urb,
 
 	switch (status->bAttribute) {
 	case UVC_CTRL_VALUE_CHANGE:
-		return uvc_ctrl_status_event(urb, chain, ctrl, status->bValue);
+		return uvc_ctrl_status_event_async(urb, chain, ctrl,
+						   status->bValue);
 
 	case UVC_CTRL_INFO_CHANGE:
 	case UVC_CTRL_FAILURE_CHANGE:
@@ -203,13 +203,13 @@ static void uvc_status_complete(struct urb *urb)
 	case -ENOENT:		/* usb_kill_urb() called. */
 	case -ECONNRESET:	/* usb_unlink_urb() called. */
 	case -ESHUTDOWN:	/* The endpoint is being disabled. */
-	case -EPROTO:		/* Device is disconnected (reported by some
-				 * host controller). */
+	case -EPROTO:		/* Device is disconnected (reported by some host controllers). */
 		return;
 
 	default:
-		uvc_printk(KERN_WARNING, "Non-zero status (%d) in status "
-			"completion handler.\n", urb->status);
+		dev_warn(&dev->udev->dev,
+			 "Non-zero status (%d) in status completion handler.\n",
+			 urb->status);
 		return;
 	}
 
@@ -235,18 +235,18 @@ static void uvc_status_complete(struct urb *urb)
 		}
 
 		default:
-			uvc_trace(UVC_TRACE_STATUS, "Unknown status event "
-				"type %u.\n", dev->status[0]);
+			uvc_dbg(dev, STATUS, "Unknown status event type %u\n",
+				dev->status[0]);
 			break;
 		}
 	}
 
 	/* Resubmit the URB. */
 	urb->interval = dev->int_ep->desc.bInterval;
-	if ((ret = usb_submit_urb(urb, GFP_ATOMIC)) < 0) {
-		uvc_printk(KERN_ERR, "Failed to resubmit status URB (%d).\n",
-			ret);
-	}
+	ret = usb_submit_urb(urb, GFP_ATOMIC);
+	if (ret < 0)
+		dev_err(&dev->udev->dev,
+			"Failed to resubmit status URB (%d).\n", ret);
 }
 
 int uvc_status_init(struct uvc_device *dev)
@@ -272,7 +272,8 @@ int uvc_status_init(struct uvc_device *dev)
 
 	pipe = usb_rcvintpipe(dev->udev, ep->desc.bEndpointAddress);
 
-	/* For high-speed interrupt endpoints, the bInterval value is used as
+	/*
+	 * For high-speed interrupt endpoints, the bInterval value is used as
 	 * an exponent of two. Some developers forgot about it.
 	 */
 	interval = ep->desc.bInterval;
@@ -309,5 +310,41 @@ int uvc_status_start(struct uvc_device *dev, gfp_t flags)
 
 void uvc_status_stop(struct uvc_device *dev)
 {
+	struct uvc_ctrl_work *w = &dev->async_ctrl;
+
+	/*
+	 * Prevent the asynchronous control handler from requeing the URB. The
+	 * barrier is needed so the flush_status change is visible to other
+	 * CPUs running the asynchronous handler before usb_kill_urb() is
+	 * called below.
+	 */
+	smp_store_release(&dev->flush_status, true);
+
+	/*
+	 * Cancel any pending asynchronous work. If any status event was queued,
+	 * process it synchronously.
+	 */
+	if (cancel_work_sync(&w->work))
+		uvc_ctrl_status_event(w->chain, w->ctrl, w->data);
+
+	/* Kill the urb. */
 	usb_kill_urb(dev->int_urb);
+
+	/*
+	 * The URB completion handler may have queued asynchronous work. This
+	 * won't resubmit the URB as flush_status is set, but it needs to be
+	 * cancelled before returning or it could then race with a future
+	 * uvc_status_start() call.
+	 */
+	if (cancel_work_sync(&w->work))
+		uvc_ctrl_status_event(w->chain, w->ctrl, w->data);
+
+	/*
+	 * From this point, there are no events on the queue and the status URB
+	 * is dead. No events will be queued until uvc_status_start() is called.
+	 * The barrier is needed to make sure that flush_status is visible to
+	 * uvc_ctrl_status_event_work() when uvc_status_start() will be called
+	 * again.
+	 */
+	smp_store_release(&dev->flush_status, false);
 }

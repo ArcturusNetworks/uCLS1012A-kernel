@@ -132,6 +132,7 @@ struct mxc_isi_fmt {
 	u8	depth[MXC_MAX_PLANES];
 	u16	mdataplanes;
 	u16	flags;
+	u16	align;
 };
 
 struct mxc_isi_ctrls {
@@ -142,18 +143,6 @@ struct mxc_isi_ctrls {
 	struct v4l2_ctrl *num_cap_buf;
 	struct v4l2_ctrl *num_out_buf;
 	bool ready;
-};
-
-/**
- * struct addr -  physical address set for DMA
- * @y:	 luminance plane physical address
- * @cb:	 Cb plane physical address
- * @cr:	 Cr plane physical address
- */
-struct frame_addr {
-	u32	y;
-	u32	cb;
-	u32	cr;
 };
 
 /**
@@ -192,7 +181,7 @@ struct mxc_isi_roi_alpha {
 struct mxc_isi_buffer {
 	struct vb2_v4l2_buffer  v4l2_buf;
 	struct list_head	list;
-	struct frame_addr	paddr;
+	dma_addr_t		dma_addrs[3];
 	enum mxc_isi_buf_id	id;
 	bool discard;
 };
@@ -398,6 +387,7 @@ struct mxc_isi_dev {
 
 	int interface[MAX_PORTS];
 	int id;
+	int irq;
 
 	unsigned int hflip:1;
 	unsigned int vflip:1;

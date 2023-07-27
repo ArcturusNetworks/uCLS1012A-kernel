@@ -42,6 +42,7 @@ struct netns_xfrm {
 	struct hlist_head	__rcu *state_bydst;
 	struct hlist_head	__rcu *state_bysrc;
 	struct hlist_head	__rcu *state_byspi;
+	struct hlist_head	__rcu *state_byseq;
 	unsigned int		state_hmask;
 	unsigned int		state_num;
 	struct work_struct	state_hash_work;
@@ -64,6 +65,9 @@ struct netns_xfrm {
 	u32			sysctl_aevent_rseqth;
 	int			sysctl_larval_drop;
 	u32			sysctl_acq_expires;
+
+	u8			policy_default[XFRM_POLICY_MAX];
+
 #ifdef CONFIG_SYSCTL
 	struct ctl_table_header	*sysctl_hdr;
 #endif

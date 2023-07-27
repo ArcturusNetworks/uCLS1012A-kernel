@@ -20,7 +20,7 @@
 			linux,cma-default;
 		};
 
-		m_core_reserved: m_core@0x77000000 {
+		m_core_reserved: m_core@77000000 {
 			no-map;
 			reg = <0 0x77000000 0 0x1000000>;
 		};
@@ -35,7 +35,7 @@
 			no-map;
 		};
 
-		rsc_table: rsc_table@0x780ff000 {
+		rsc_table: rsc-table@780ff000 {
 			reg = <0 0x780ff000 0 0x1000>;
 			no-map;
 		};
@@ -45,6 +45,14 @@
 			reg = <0 0x78400000 0 0x100000>;
 			no-map;
 		};
+	};
+
+	bt_sco_codec: bt_sco_codec {
+		status = "disabled";
+	};
+
+	sound-bt-sco {
+		status = "disabled";
 	};
 
 	sound-wm8524 {
@@ -75,12 +83,14 @@
 	imx8mn-cm7 {
 		compatible = "fsl,imx8mn-cm7";
 		rsc-da = <0xb8000000>;
+		clocks = <&clk IMX8MN_CLK_DUMMY>;
 		mbox-names = "tx", "rx", "rxdb";
 		mboxes = <&mu 0 1
 			  &mu 1 1
 			  &mu 3 1>;
 		memory-region = <&vdev0vring0>, <&vdev0vring1>, <&vdevbuffer>, <&rsc_table>;
 		status = "okay";
+		fsl,startup-delay-ms = <500>;
 	};
 };
 
@@ -108,6 +118,10 @@
 };
 
 &pwm3 {
+	status = "disabled";
+};
+
+&sai2 {
 	status = "disabled";
 };
 

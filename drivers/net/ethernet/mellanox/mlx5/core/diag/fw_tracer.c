@@ -64,6 +64,7 @@ static int mlx5_query_mtrc_caps(struct mlx5_fw_tracer *tracer)
 			MLX5_GET(mtrc_cap, out, num_string_trace);
 	tracer->str_db.num_string_db = MLX5_GET(mtrc_cap, out, num_string_db);
 	tracer->owner = !!MLX5_GET(mtrc_cap, out, trace_owner);
+	tracer->str_db.loaded = false;
 
 	for (i = 0; i < tracer->str_db.num_string_db; i++) {
 		mtrc_cap_sp = MLX5_ADDR_OF(mtrc_cap, out, string_db_param[i]);
@@ -602,7 +603,7 @@ static int mlx5_tracer_handle_string_trace(struct mlx5_fw_tracer *tracer,
 	} else {
 		cur_string = mlx5_tracer_message_get(tracer, tracer_event);
 		if (!cur_string) {
-			pr_debug("%s Got string event for unknown string tdsm: %d\n",
+			pr_debug("%s Got string event for unknown string tmsn: %d\n",
 				 __func__, tracer_event->string_event.tmsn);
 			return -1;
 		}
@@ -638,7 +639,7 @@ static void mlx5_tracer_handle_timestamp_trace(struct mlx5_fw_tracer *tracer,
 			trace_timestamp = (timestamp_event.timestamp & MASK_52_7) |
 					  (str_frmt->timestamp & MASK_6_0);
 		else
-			trace_timestamp = ((timestamp_event.timestamp & MASK_52_7) - 1) |
+			trace_timestamp = ((timestamp_event.timestamp - 1) & MASK_52_7) |
 					  (str_frmt->timestamp & MASK_6_0);
 
 		mlx5_tracer_print_trace(str_frmt, dev, trace_timestamp);
@@ -674,6 +675,9 @@ static void mlx5_fw_tracer_handle_traces(struct work_struct *work)
 	mlx5_core_dbg(dev, "FWTracer: Handle Trace event, owner=(%d)\n", tracer->owner);
 	if (!tracer->owner)
 		return;
+
+	if (unlikely(!tracer->str_db.loaded))
+		goto arm;
 
 	block_count = tracer->buff.size / TRACER_BLOCK_SIZE_BYTE;
 	start_offset = tracer->buff.consumer_index * TRACER_BLOCK_SIZE_BYTE;
@@ -732,6 +736,7 @@ static void mlx5_fw_tracer_handle_traces(struct work_struct *work)
 						      &tmp_trace_block[TRACES_PER_BLOCK - 1]);
 	}
 
+arm:
 	mlx5_fw_tracer_arm(dev);
 }
 
@@ -745,13 +750,14 @@ static int mlx5_fw_tracer_set_mtrc_conf(struct mlx5_fw_tracer *tracer)
 	MLX5_SET(mtrc_conf, in, trace_mode, TRACE_TO_MEMORY);
 	MLX5_SET(mtrc_conf, in, log_trace_buffer_size,
 		 ilog2(TRACER_BUFFER_PAGE_NUM));
-	MLX5_SET(mtrc_conf, in, trace_mkey, tracer->buff.mkey.key);
+	MLX5_SET(mtrc_conf, in, trace_mkey, tracer->buff.mkey);
 
 	err = mlx5_core_access_reg(dev, in, sizeof(in), out, sizeof(out),
 				   MLX5_REG_MTRC_CONF, 0, 1);
 	if (err)
 		mlx5_core_warn(dev, "FWTracer: Failed to set tracer configurations %d\n", err);
 
+	tracer->buff.consumer_index = 0;
 	return err;
 }
 
@@ -816,7 +822,6 @@ static void mlx5_fw_tracer_ownership_change(struct work_struct *work)
 	mlx5_core_dbg(tracer->dev, "FWTracer: ownership changed, current=(%d)\n", tracer->owner);
 	if (tracer->owner) {
 		tracer->owner = false;
-		tracer->buff.consumer_index = 0;
 		return;
 	}
 
@@ -1028,7 +1033,7 @@ int mlx5_fw_tracer_init(struct mlx5_fw_tracer *tracer)
 
 err_notifier_unregister:
 	mlx5_eq_notifier_unregister(dev, &tracer->nb);
-	mlx5_core_destroy_mkey(dev, &tracer->buff.mkey);
+	mlx5_core_destroy_mkey(dev, tracer->buff.mkey);
 err_dealloc_pd:
 	mlx5_core_dealloc_pd(dev, tracer->buff.pdn);
 err_cancel_work:
@@ -1051,7 +1056,7 @@ void mlx5_fw_tracer_cleanup(struct mlx5_fw_tracer *tracer)
 	if (tracer->owner)
 		mlx5_fw_tracer_ownership_release(tracer);
 
-	mlx5_core_destroy_mkey(tracer->dev, &tracer->buff.mkey);
+	mlx5_core_destroy_mkey(tracer->dev, tracer->buff.mkey);
 	mlx5_core_dealloc_pd(tracer->dev, tracer->buff.pdn);
 }
 
@@ -1069,7 +1074,6 @@ void mlx5_fw_tracer_destroy(struct mlx5_fw_tracer *tracer)
 	mlx5_fw_tracer_clean_saved_traces_array(tracer);
 	mlx5_fw_tracer_free_strings_db(tracer);
 	mlx5_fw_tracer_destroy_log_buf(tracer);
-	flush_workqueue(tracer->work_queue);
 	destroy_workqueue(tracer->work_queue);
 	kvfree(tracer);
 }
@@ -1108,7 +1112,7 @@ int mlx5_fw_tracer_reload(struct mlx5_fw_tracer *tracer)
 	int err;
 
 	if (IS_ERR_OR_NULL(tracer))
-		return -EINVAL;
+		return 0;
 
 	dev = tracer->dev;
 	mlx5_fw_tracer_cleanup(tracer);
@@ -1134,12 +1138,10 @@ static int fw_tracer_event(struct notifier_block *nb, unsigned long action, void
 
 	switch (eqe->sub_type) {
 	case MLX5_TRACER_SUBTYPE_OWNERSHIP_CHANGE:
-		if (test_bit(MLX5_INTERFACE_STATE_UP, &dev->intf_state))
-			queue_work(tracer->work_queue, &tracer->ownership_change_work);
+		queue_work(tracer->work_queue, &tracer->ownership_change_work);
 		break;
 	case MLX5_TRACER_SUBTYPE_TRACES_AVAILABLE:
-		if (likely(tracer->str_db.loaded))
-			queue_work(tracer->work_queue, &tracer->handle_traces_work);
+		queue_work(tracer->work_queue, &tracer->handle_traces_work);
 		break;
 	default:
 		mlx5_core_dbg(dev, "FWTracer: Event with unrecognized subtype: sub_type %d\n",

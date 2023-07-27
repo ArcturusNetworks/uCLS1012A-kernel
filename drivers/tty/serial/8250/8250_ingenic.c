@@ -52,9 +52,9 @@ static void early_out(struct uart_port *port, int offset, uint8_t value)
 	writel(value, port->membase + (offset << 2));
 }
 
-static void ingenic_early_console_putc(struct uart_port *port, int c)
+static void ingenic_early_console_putc(struct uart_port *port, unsigned char c)
 {
-	uint8_t lsr;
+	u16 lsr;
 
 	do {
 		lsr = early_in(port, UART_LSR);
@@ -146,8 +146,6 @@ OF_EARLYCON_DECLARE(x1000_uart, "ingenic,x1000-uart",
 
 static void ingenic_uart_serial_out(struct uart_port *p, int offset, int value)
 {
-	unsigned int flags;
-	bool is_console;
 	int ier;
 
 	switch (offset) {
@@ -169,12 +167,7 @@ static void ingenic_uart_serial_out(struct uart_port *p, int offset, int value)
 		 * If we have enabled modem status IRQs we should enable
 		 * modem mode.
 		 */
-		is_console = uart_console(p);
-		if (is_console)
-			console_atomic_lock(&flags);
 		ier = p->serial_in(p, UART_IER);
-		if (is_console)
-			console_atomic_unlock(flags);
 
 		if (ier & UART_IER_MSI)
 			value |= UART_MCR_MDCE | UART_MCR_FCM;
@@ -216,16 +209,14 @@ static int ingenic_uart_probe(struct platform_device *pdev)
 	struct uart_8250_port uart = {};
 	struct ingenic_uart_data *data;
 	const struct ingenic_uart_config *cdata;
-	const struct of_device_id *match;
 	struct resource *regs;
 	int irq, err, line;
 
-	match = of_match_device(of_match, &pdev->dev);
-	if (!match) {
+	cdata = of_device_get_match_data(&pdev->dev);
+	if (!cdata) {
 		dev_err(&pdev->dev, "Error: No device match found\n");
 		return -ENODEV;
 	}
-	cdata = match->data;
 
 	irq = platform_get_irq(pdev, 0);
 	if (irq < 0)

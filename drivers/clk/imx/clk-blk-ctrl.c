@@ -71,7 +71,7 @@ static int imx_blk_ctrl_reset_set(struct reset_controller_dev *rcdev,
 	spin_unlock_irqrestore(drvdata->lock, flags);
 
 	if (!assert && test_and_clear_bit(1, &drvdata->rst_hws[id].asserted))
-		pm_runtime_put(rcdev->dev);
+		pm_runtime_put_sync(rcdev->dev);
 
 	return 0;
 }
@@ -315,15 +315,15 @@ static const struct dev_pm_ops imx_blk_ctrl_pm_ops = {
 
 static const struct of_device_id imx_blk_ctrl_of_match[] = {
 	{
-		.compatible = "fsl,imx8mp-audio-blk-ctrl",
+		.compatible = "fsl,imx8mp-audio-blk-ctrl-legacy",
 		.data = &imx8mp_audio_blk_ctrl_dev_data
 	},
 	{
-		.compatible = "fsl,imx8mp-media-blk-ctrl",
+		.compatible = "fsl,imx8mp-media-blk-ctrl-legacy",
 		.data = &imx8mp_media_blk_ctrl_dev_data
 	},
 	{
-		.compatible = "fsl,imx8mp-hdmi-blk-ctrl",
+		.compatible = "fsl,imx8mp-hdmi-blk-ctrl-legacy",
 		.data = &imx8mp_hdmi_blk_ctrl_dev_data
 	},
 	{ /* Sentinel */ }
@@ -339,3 +339,4 @@ static struct platform_driver imx_blk_ctrl_driver = {
 	},
 };
 module_platform_driver(imx_blk_ctrl_driver);
+MODULE_LICENSE("GPL v2");

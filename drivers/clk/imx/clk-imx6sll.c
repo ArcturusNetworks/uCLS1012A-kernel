@@ -340,11 +340,6 @@ static void __init imx6sll_clocks_init(struct device_node *ccm_node)
 
 	of_clk_add_hw_provider(np, of_clk_hw_onecell_get, clk_hw_data);
 
-	/* Set the UART parent if needed */
-	if (uart_from_osc)
-		clk_set_parent(hws[IMX6SLL_CLK_UART_SEL]->clk, hws[IMX6SLL_CLK_OSC]->clk);
-	else
-		clk_set_parent(hws[IMX6SLL_CLK_UART_SEL]->clk, hws[IMX6SLL_CLK_PLL3_80M]->clk);
 	imx_register_uart_clocks(5);
 
 	/* Lower the AHB clock rate before changing the clock source. */

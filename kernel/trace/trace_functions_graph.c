@@ -120,7 +120,7 @@ static inline int ftrace_graph_ignore_irqs(void)
 	if (!ftrace_graph_skip_irqs || trace_recursion_test(TRACE_IRQ_BIT))
 		return 0;
 
-	return in_irq();
+	return in_hardirq();
 }
 
 int trace_graph_entry(struct ftrace_graph_ent *trace)
@@ -764,7 +764,7 @@ print_graph_prologue(struct trace_iterator *iter, struct trace_seq *s,
  *  - we are inside irq code
  *  - we just entered irq code
  *
- * retunns 0 if
+ * returns 0 if
  *  - funcgraph-interrupts option is set
  *  - we are not inside irq code
  */
@@ -955,7 +955,7 @@ print_graph_return(struct ftrace_graph_ret *trace, struct trace_seq *s,
 
 	/* Overrun */
 	if (flags & TRACE_GRAPH_PRINT_OVERRUN)
-		trace_seq_printf(s, " (Overruns: %lu)\n",
+		trace_seq_printf(s, " (Overruns: %u)\n",
 				 trace->overrun);
 
 	print_graph_irq(iter, trace->func, TRACE_GRAPH_RET,
@@ -1340,7 +1340,7 @@ static __init int init_graph_tracefs(void)
 	if (ret)
 		return 0;
 
-	trace_create_file("max_graph_depth", 0644, NULL,
+	trace_create_file("max_graph_depth", TRACE_MODE_WRITE, NULL,
 			  NULL, &graph_depth_fops);
 
 	return 0;

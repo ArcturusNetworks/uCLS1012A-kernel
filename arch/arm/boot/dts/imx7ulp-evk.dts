@@ -33,7 +33,7 @@
 		#size-cells = <1>;
 		ranges;
 
-		rsc_table: rsc_table@1fff8000{
+		rsc_table: rsc-table@1fff8000{
 			reg = <0x1fff8000 0x1000>;
 			no-map;
 		};
@@ -222,7 +222,7 @@
 	};
 
 	rpmsg_sensor: rpmsg-sensor {
-		compatible = "fsl,rpmsg-input";
+		compatible = "nxp,rpmsg-iio-pedometer", "fsl,rpmsg-input";
 	};
 
 	rpmsg_audio: rpmsg_audio {

@@ -232,4 +232,4 @@ void do_raw_write_unlock(rwlock_t *lock)
 	arch_write_unlock(&lock->raw_lock);
 }
 
-#endif
+#endif /* !CONFIG_PREEMPT_RT */

@@ -38,7 +38,7 @@
 		 * Shouldn't be used at A core and Linux side.
 		 *
 		 */
-		m4_reserved: m4@0x88000000 {
+		m4_reserved: m4@88000000 {
 			no-map;
 			reg = <0 0x88000000 0 0x8000000>;
 		};
@@ -106,16 +106,17 @@
 			enable-active-high;
 		};
 
-		epdev_on: fixedregulator@100 {
+		reg_pcieb: fixedregulator@100 {
 			compatible = "regulator-fixed";
 			pinctrl-names = "default", "sleep";
 			pinctrl-0 = <&pinctrl_wlreg_on>;
 			pinctrl-1 = <&pinctrl_wlreg_on_sleep>;
 			regulator-min-microvolt = <3300000>;
 			regulator-max-microvolt = <3300000>;
-			regulator-name = "epdev_on";
+			regulator-name = "reg_pcieb";
 			gpio = <&lsio_gpio3 3 GPIO_ACTIVE_HIGH>;
 			enable-active-high;
+			regulator-always-on;
 		};
 
 		reg_usb_otg1_vbus: regulator@0 {
@@ -465,7 +466,7 @@
 	fsl,magic-packet;
 	nvmem-cells = <&fec_mac1>;
 	nvmem-cell-names = "mac-address";
-	fsl,rgmii_rxc_dly;
+	rx-internal-delay-ps = <2000>;
 	status = "okay";
 
 	mdio {
@@ -475,8 +476,13 @@
 		ethphy0: ethernet-phy@0 {
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0>;
-			at803x,eee-disabled;
-			at803x,vddio-1p8v;
+			qca,disable-smarteee;
+			vddio-supply = <&vddio>;
+
+			vddio: vddio-regulator {
+				regulator-min-microvolt = <1800000>;
+				regulator-max-microvolt = <1800000>;
+			};
 		};
 	};
 };
@@ -606,7 +612,7 @@
 };
 
 &thermal_zones {
-	cpu-thermal0 {
+	cpu0-thermal {
 		cooling-maps {
 			map0 {
 				cooling-device =
@@ -659,7 +665,7 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_pcieb>;
 	reset-gpio = <&lsio_gpio4 0 GPIO_ACTIVE_LOW>;
-	epdev_on-supply = <&epdev_on>;
+	vpcie-supply = <&reg_pcieb>;
 	ext_osc = <1>;
 	status = "okay";
 };

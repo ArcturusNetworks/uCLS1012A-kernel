@@ -8,7 +8,7 @@
  */
 
 #include <linux/extcon.h>
-#include <linux/of_graph.h>
+#include <linux/of_platform.h>
 #include <linux/platform_device.h>
 #include <linux/property.h>
 
@@ -438,44 +438,6 @@ static int dwc3_drd_notifier(struct notifier_block *nb,
 	return NOTIFY_DONE;
 }
 
-static struct extcon_dev *dwc3_get_extcon(struct dwc3 *dwc)
-{
-	struct device *dev = dwc->dev;
-	struct device_node *np_phy, *np_conn;
-	struct extcon_dev *edev;
-	const char *name;
-
-	if (device_property_read_bool(dev, "extcon"))
-		return extcon_get_edev_by_phandle(dev, 0);
-
-	/*
-	 * Device tree platforms should get extcon via phandle.
-	 * On ACPI platforms, we get the name from a device property.
-	 * This device property is for kernel internal use only and
-	 * is expected to be set by the glue code.
-	 */
-	if (device_property_read_string(dev, "linux,extcon-name", &name) == 0) {
-		edev = extcon_get_extcon_dev(name);
-		if (!edev)
-			return ERR_PTR(-EPROBE_DEFER);
-
-		return edev;
-	}
-
-	np_phy = of_parse_phandle(dev->of_node, "phys", 0);
-	np_conn = of_graph_get_remote_node(np_phy, -1, -1);
-
-	if (np_conn)
-		edev = extcon_find_edev_by_node(np_conn);
-	else
-		edev = NULL;
-
-	of_node_put(np_conn);
-	of_node_put(np_phy);
-
-	return edev;
-}
-
 #if IS_ENABLED(CONFIG_USB_ROLE_SWITCH)
 #define ROLE_SWITCH 1
 static int dwc3_usb_role_switch_set(struct usb_role_switch *sw,
@@ -538,23 +500,19 @@ static enum usb_role dwc3_usb_role_switch_get(struct usb_role_switch *sw)
 static int dwc3_setup_role_switch(struct dwc3 *dwc)
 {
 	struct usb_role_switch_desc dwc3_role_switch = {NULL};
-	const char *str;
 	u32 mode;
-	int ret;
 
-	ret = device_property_read_string(dwc->dev, "role-switch-default-mode",
-					  &str);
-	if (ret >= 0) {
-		if (!strncmp(str, "host", strlen("host"))) {
-			dwc->role_switch_default_mode = USB_DR_MODE_HOST;
-			mode = DWC3_GCTL_PRTCAP_HOST;
-		} else if (!strncmp(str, "none", strlen("none"))) {
-			dwc->role_switch_default_mode = USB_DR_MODE_UNKNOWN;
-			mode = DWC3_GCTL_PRTCAP_NONE;
-		}
-	} else {
-		dwc->role_switch_default_mode = USB_DR_MODE_PERIPHERAL;
+	dwc->role_switch_default_mode = usb_get_role_switch_default_mode(dwc->dev);
+	switch (dwc->role_switch_default_mode) {
+	case USB_DR_MODE_HOST:
+		mode = DWC3_GCTL_PRTCAP_HOST;
+		break;
+	case USB_DR_MODE_UNKNOWN:
+		mode = DWC3_GCTL_PRTCAP_NONE;
+		break;
+	default:
 		mode = DWC3_GCTL_PRTCAP_DEVICE;
+		break;
 	}
 
 	dwc3_role_switch.fwnode = dev_fwnode(dwc->dev);
@@ -564,6 +522,18 @@ static int dwc3_setup_role_switch(struct dwc3 *dwc)
 	dwc->role_sw = usb_role_switch_register(dwc->dev, &dwc3_role_switch);
 	if (IS_ERR(dwc->role_sw))
 		return PTR_ERR(dwc->role_sw);
+
+	if (dwc->dev->of_node) {
+		/* populate connector entry */
+		int ret = devm_of_platform_populate(dwc->dev);
+
+		if (ret) {
+			usb_role_switch_unregister(dwc->role_sw);
+			dwc->role_sw = NULL;
+			dev_err(dwc->dev, "DWC3 platform devices creation failed: %i\n", ret);
+			return ret;
+		}
+	}
 
 	dwc3_set_mode(dwc, mode);
 	return 0;
@@ -577,16 +547,11 @@ int dwc3_drd_init(struct dwc3 *dwc)
 {
 	int ret, irq;
 
-	dwc->edev = dwc3_get_extcon(dwc);
-	if (IS_ERR(dwc->edev))
-		return PTR_ERR(dwc->edev);
-
 	if (ROLE_SWITCH &&
-	    device_property_read_bool(dwc->dev, "usb-role-switch")) {
-		ret = dwc3_setup_role_switch(dwc);
-		if (ret < 0)
-			return ret;
-	} else if (dwc->edev) {
+	    device_property_read_bool(dwc->dev, "usb-role-switch"))
+		return dwc3_setup_role_switch(dwc);
+
+	if (dwc->edev) {
 		dwc->edev_nb.notifier_call = dwc3_drd_notifier;
 		ret = extcon_register_notifier(dwc->edev, EXTCON_USB_HOST,
 					       &dwc->edev_nb);
@@ -598,7 +563,6 @@ int dwc3_drd_init(struct dwc3 *dwc)
 		dwc3_drd_update(dwc);
 	} else {
 		dwc3_set_prtcap(dwc, DWC3_GCTL_PRTCAP_OTG);
-		dwc->current_dr_role = DWC3_GCTL_PRTCAP_OTG;
 
 		/* use OTG block to get ID event */
 		irq = dwc3_otg_get_irq(dwc);

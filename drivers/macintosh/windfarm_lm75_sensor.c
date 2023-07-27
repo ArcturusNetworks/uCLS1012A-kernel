@@ -15,7 +15,6 @@
 #include <linux/wait.h>
 #include <linux/i2c.h>
 #include <linux/of_device.h>
-#include <asm/prom.h>
 #include <asm/machdep.h>
 #include <asm/io.h>
 #include <asm/sections.h>
@@ -34,8 +33,8 @@
 #endif
 
 struct wf_lm75_sensor {
-	int			ds1775 : 1;
-	int			inited : 1;
+	unsigned int		ds1775 : 1;
+	unsigned int		inited : 1;
 	struct i2c_client	*i2c;
 	struct wf_sensor	sens;
 };
@@ -148,7 +147,7 @@ static int wf_lm75_probe(struct i2c_client *client,
 	return rc;
 }
 
-static int wf_lm75_remove(struct i2c_client *client)
+static void wf_lm75_remove(struct i2c_client *client)
 {
 	struct wf_lm75_sensor *lm = i2c_get_clientdata(client);
 
@@ -157,8 +156,6 @@ static int wf_lm75_remove(struct i2c_client *client)
 
 	/* release sensor */
 	wf_unregister_sensor(&lm->sens);
-
-	return 0;
 }
 
 static const struct i2c_device_id wf_lm75_id[] = {

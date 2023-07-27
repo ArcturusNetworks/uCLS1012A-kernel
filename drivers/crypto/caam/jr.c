@@ -70,6 +70,7 @@ static void register_algs(struct device *dev)
 	caam_algapi_init(dev);
 	caam_algapi_hash_init(dev);
 	caam_pkc_init(dev);
+	caam_prng_register(dev);
 	caam_qi_algapi_init(dev);
 
 algs_unlock:
@@ -84,7 +85,7 @@ static void unregister_algs(struct device *dev)
 		goto algs_unlock;
 
 	caam_qi_algapi_exit();
-
+	caam_prng_unregister(NULL);
 	caam_pkc_exit();
 	caam_algapi_hash_exit();
 	caam_algapi_exit();
@@ -751,7 +752,9 @@ static int caam_jr_probe(struct platform_device *pdev)
 	}
 
 	/* Initialize crypto engine */
-	jrpriv->engine = crypto_engine_alloc_init(jrdev, false);
+	jrpriv->engine = crypto_engine_alloc_init_and_set(jrdev, true, NULL,
+							  false,
+							  CRYPTO_ENGINE_MAX_QLEN);
 	if (!jrpriv->engine) {
 		dev_err(jrdev, "Could not init crypto-engine\n");
 		return -ENOMEM;

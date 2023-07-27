@@ -2,7 +2,6 @@
 /*
  * <linux/swait.h> (simple wait queues ) implementation:
  */
-#include "sched.h"
 
 void __init_swait_queue_head(struct swait_queue_head *q, const char *name,
 			     struct lock_class_key *key)
@@ -64,7 +63,6 @@ void swake_up_all(struct swait_queue_head *q)
 	struct swait_queue *curr;
 	LIST_HEAD(tmp);
 
-	WARN_ON(irqs_disabled());
 	raw_spin_lock_irq(&q->lock);
 	list_splice_init(&q->task_list, &tmp);
 	while (!list_empty(&tmp)) {

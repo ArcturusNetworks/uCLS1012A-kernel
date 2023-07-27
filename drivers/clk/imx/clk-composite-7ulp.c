@@ -7,10 +7,12 @@
 
 #include <linux/bits.h>
 #include <linux/clk-provider.h>
+#include <linux/delay.h>
 #include <linux/err.h>
 #include <linux/io.h>
 #include <linux/slab.h>
 
+#include "../clk-fractional-divider.h"
 #include "clk.h"
 
 #define PCG_PCS_SHIFT	24
@@ -36,6 +38,9 @@ static int pcc_gate_enable(struct clk_hw *hw)
 	if (ret)
 		return ret;
 
+	/* wait before release reset */
+	udelay(1);
+
 	spin_lock_irqsave(gate->lock, flags);
 	/*
 	 * release the sw reset for peripherals associated with
@@ -46,6 +51,9 @@ static int pcc_gate_enable(struct clk_hw *hw)
 	writel(val, gate->reg);
 
 	spin_unlock_irqrestore(gate->lock, flags);
+
+	/* wait sync reset done */
+	udelay(1);
 
 	return 0;
 }
@@ -165,3 +173,4 @@ struct clk_hw *imx8ulp_clk_hw_composite(const char *name, const char * const *pa
 	return imx_ulp_clk_hw_composite(name, parent_names, num_parents, mux_present, rate_present,
 					gate_present, reg, has_swrst);
 }
+EXPORT_SYMBOL_GPL(imx8ulp_clk_hw_composite);

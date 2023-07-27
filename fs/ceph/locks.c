@@ -32,18 +32,14 @@ void __init ceph_flock_init(void)
 
 static void ceph_fl_copy_lock(struct file_lock *dst, struct file_lock *src)
 {
-	struct ceph_file_info *fi = dst->fl_file->private_data;
 	struct inode *inode = file_inode(dst->fl_file);
 	atomic_inc(&ceph_inode(inode)->i_filelock_ref);
-	atomic_inc(&fi->num_locks);
 }
 
 static void ceph_fl_release_lock(struct file_lock *fl)
 {
-	struct ceph_file_info *fi = fl->fl_file->private_data;
 	struct inode *inode = file_inode(fl->fl_file);
 	struct ceph_inode_info *ci = ceph_inode(inode);
-	atomic_dec(&fi->num_locks);
 	if (atomic_dec_and_test(&ci->i_filelock_ref)) {
 		/* clear error when all locks are released */
 		spin_lock(&ci->i_ceph_lock);
@@ -57,7 +53,7 @@ static const struct file_lock_operations ceph_fl_lock_ops = {
 	.fl_release_private = ceph_fl_release_lock,
 };
 
-/**
+/*
  * Implement fcntl and flock locking functions.
  */
 static int ceph_lock_message(u8 lock_type, u16 operation, struct inode *inode,
@@ -111,10 +107,10 @@ static int ceph_lock_message(u8 lock_type, u16 operation, struct inode *inode,
 	req->r_args.filelock_change.length = cpu_to_le64(length);
 	req->r_args.filelock_change.wait = wait;
 
-	if (wait)
-		req->r_wait_for_completion = ceph_lock_wait_for_completion;
-
-	err = ceph_mdsc_do_request(mdsc, inode, req);
+	err = ceph_mdsc_submit_request(mdsc, inode, req);
+	if (!err)
+		err = ceph_mdsc_wait_request(mdsc, req, wait ?
+					ceph_lock_wait_for_completion : NULL);
 	if (!err && operation == CEPH_MDS_OP_GETFILELOCK) {
 		fl->fl_pid = -le64_to_cpu(req->r_reply_info.filelock_reply->pid);
 		if (CEPH_LOCK_SHARED == req->r_reply_info.filelock_reply->type)
@@ -225,7 +221,7 @@ static int try_unlock_file(struct file *file, struct file_lock *fl)
 	return 1;
 }
 
-/**
+/*
  * Attempt to set an fcntl lock.
  * For now, this just goes away to the server. Later it may be more awesome.
  */
@@ -240,9 +236,9 @@ int ceph_lock(struct file *file, int cmd, struct file_lock *fl)
 
 	if (!(fl->fl_flags & FL_POSIX))
 		return -ENOLCK;
-	/* No mandatory locks */
-	if (__mandatory_lock(file->f_mapping->host) && fl->fl_type != F_UNLCK)
-		return -ENOLCK;
+
+	if (ceph_inode_is_shutdown(inode))
+		return -ESTALE;
 
 	dout("ceph_lock, fl_owner: %p\n", fl->fl_owner);
 
@@ -305,9 +301,9 @@ int ceph_flock(struct file *file, int cmd, struct file_lock *fl)
 
 	if (!(fl->fl_flags & FL_FLOCK))
 		return -ENOLCK;
-	/* No mandatory locks */
-	if (fl->fl_type & LOCK_MAND)
-		return -EOPNOTSUPP;
+
+	if (ceph_inode_is_shutdown(inode))
+		return -ESTALE;
 
 	dout("ceph_flock, fl_file: %p\n", fl->fl_file);
 
@@ -408,7 +404,7 @@ static int lock_to_ceph_filelock(struct file_lock *lock,
 	return err;
 }
 
-/**
+/*
  * Encode the flock and fcntl locks for the given inode into the ceph_filelock
  * array. Must be called with inode->i_lock already held.
  * If we encounter more of a specific lock type than expected, return -ENOSPC.
@@ -458,7 +454,7 @@ fail:
 	return err;
 }
 
-/**
+/*
  * Copy the encoded flock and fcntl locks into the pagelist.
  * Format is: #fcntl locks, sequential fcntl locks, #flock locks,
  * sequential flock locks.

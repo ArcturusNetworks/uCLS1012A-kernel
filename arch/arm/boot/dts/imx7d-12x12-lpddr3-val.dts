@@ -434,9 +434,9 @@
 	codec: wm8958@1a {
 		compatible = "wlf,wm8958";
 		reg = <0x1a>;
-		clocks = <&clks IMX7D_AUDIO_MCLK_ROOT_CLK>,
+		clocks = <&clks IMX7D_AUDIO_MCLK_ROOT_DIV>,
 			<&clks IMX7D_CLK_DUMMY>;
-		clock-names = "mclk1", "mclk2";
+		clock-names = "MCLK1", "MCLK2";
 
 		DBVDD1-supply = <&reg_aud_1v8>;
 		DBVDD2-supply = <&reg_aud_1v8>;
@@ -447,6 +447,8 @@
 		SPKVDD2-supply = <&reg_coedc_5v>;
 		wlf,ldo1ena;
 		wlf,ldo2ena;
+		wlf,gpio-cfg = <0x8102 0xa101 0xa101 0xa101 0xa101 0xa101
+				0xa101 0xa101 0xa101 0xa101 0xa101>;
 	};
 };
 

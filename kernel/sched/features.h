@@ -27,7 +27,7 @@ SCHED_FEAT(NEXT_BUDDY, false)
 SCHED_FEAT(LAST_BUDDY, true)
 
 /*
- * Consider buddies to be cache hot, decreases the likelyness of a
+ * Consider buddies to be cache hot, decreases the likeliness of a
  * cache buddy being migrated away, increases cache locality.
  */
 SCHED_FEAT(CACHE_HOT_BUDDY, true)
@@ -38,6 +38,7 @@ SCHED_FEAT(CACHE_HOT_BUDDY, true)
 SCHED_FEAT(WAKEUP_PREEMPTION, true)
 
 SCHED_FEAT(HRTICK, false)
+SCHED_FEAT(HRTICK_DL, false)
 SCHED_FEAT(DOUBLE_TICK, false)
 
 /*
@@ -47,9 +48,6 @@ SCHED_FEAT(NONTASK_CAPACITY, true)
 
 #ifdef CONFIG_PREEMPT_RT
 SCHED_FEAT(TTWU_QUEUE, false)
-# ifdef CONFIG_PREEMPT_LAZY
-SCHED_FEAT(PREEMPT_LAZY, true)
-# endif
 #else
 
 /*
@@ -62,8 +60,8 @@ SCHED_FEAT(TTWU_QUEUE, true)
 /*
  * When doing wakeups, attempt to limit superfluous scans of the LLC domain.
  */
-SCHED_FEAT(SIS_AVG_CPU, false)
-SCHED_FEAT(SIS_PROP, true)
+SCHED_FEAT(SIS_PROP, false)
+SCHED_FEAT(SIS_UTIL, true)
 
 /*
  * Issue a WARN when we do multiple update_rq_clock() calls
@@ -98,6 +96,8 @@ SCHED_FEAT(WA_BIAS, true)
  */
 SCHED_FEAT(UTIL_EST, true)
 SCHED_FEAT(UTIL_EST_FASTUP, true)
+
+SCHED_FEAT(LATENCY_WARN, false)
 
 SCHED_FEAT(ALT_PERIOD, true)
 SCHED_FEAT(BASE_SLICE, true)

@@ -1,5 +1,5 @@
 /*
- * Copyright 2017 NXP
+ * Copyright 2017,2021-2022 NXP
  *
  * This program is free software; you can redistribute it and/or modify it
  * under the terms of the GNU General Public License as published by the
@@ -55,6 +55,8 @@ int dpu_bliteng_init(struct dpu_bliteng *dpu_bliteng);
 void dpu_bliteng_fini(struct dpu_bliteng *dpu_bliteng);
 int dpu_be_blit(struct dpu_bliteng *dpu_be,
     u32 *cmdlist, u32 cmdnum);
+int dpu_be_get_fence(struct dpu_bliteng *dpu_be);
+int dpu_be_set_fence(struct dpu_bliteng *dpu_be, int fd);
 
 static struct imx_drm_dpu_bliteng *imx_drm_dpu_bliteng_find_by_id(s32 id)
 {
@@ -177,11 +179,32 @@ static int imx_drm_dpu_get_param_ioctl(struct drm_device *drm_dev, void *data,
 				       struct drm_file *file)
 {
 	enum drm_imx_dpu_param *param = data;
-	int ret;
+	struct imx_drm_dpu_bliteng *bliteng;
+	struct dpu_bliteng *dpu_be;
+	int ret, id, fd = -1;
 
 	switch (*param) {
 	case (DRM_IMX_MAX_DPUS):
 		ret = imx_dpu_num;
+		break;
+	case DRM_IMX_GET_FENCE:
+		for (id = 0; id < imx_dpu_num; id++) {
+			bliteng = imx_drm_dpu_bliteng_find_by_id(id);
+			if (!bliteng) {
+				DRM_ERROR("Failed to get dpu_bliteng\n");
+				return -ENODEV;
+			}
+
+			dpu_be = bliteng->dpu_be;
+			ret = dpu_be_get(dpu_be);
+
+			if (fd == -1)
+				fd = dpu_be_get_fence(dpu_be);
+
+			dpu_be_set_fence(dpu_be, fd);
+			dpu_be_put(dpu_be);
+		}
+		ret = fd;
 		break;
 	default:
 		ret = -EINVAL;
@@ -192,7 +215,7 @@ static int imx_drm_dpu_get_param_ioctl(struct drm_device *drm_dev, void *data,
 	return ret;
 }
 
-static struct drm_ioctl_desc imx_drm_dpu_ioctls[] = {
+const struct drm_ioctl_desc imx_drm_dpu_ioctls[3] = {
 	DRM_IOCTL_DEF_DRV(IMX_DPU_SET_CMDLIST, imx_drm_dpu_set_cmdlist_ioctl,
 			DRM_RENDER_ALLOW),
 	DRM_IOCTL_DEF_DRV(IMX_DPU_WAIT, imx_drm_dpu_wait_ioctl,
@@ -204,7 +227,6 @@ static struct drm_ioctl_desc imx_drm_dpu_ioctls[] = {
 static int dpu_bliteng_bind(struct device *dev, struct device *master,
 			    void *data)
 {
-	struct drm_device *drm = (struct drm_device *)data;
 	struct imx_drm_dpu_bliteng *bliteng;
 	struct dpu_bliteng *dpu_bliteng = NULL;
 	int ret;
@@ -235,18 +257,12 @@ static int dpu_bliteng_bind(struct device *dev, struct device *master,
 
 	imx_dpu_num++;
 
-	if (drm->driver->num_ioctls == 0) {
-		drm->driver->ioctls = imx_drm_dpu_ioctls;
-		drm->driver->num_ioctls = ARRAY_SIZE(imx_drm_dpu_ioctls);
-	}
-
 	return 0;
 }
 
 static void dpu_bliteng_unbind(struct device *dev, struct device *master,
 			       void *data)
 {
-	struct drm_device *drm = (struct drm_device *)data;
 	struct imx_drm_dpu_bliteng *bliteng;
 	struct dpu_bliteng *dpu_bliteng = dev_get_drvdata(dev);
 	s32 id = dpu_bliteng_get_id(dpu_bliteng);
@@ -258,11 +274,6 @@ static void dpu_bliteng_unbind(struct device *dev, struct device *master,
 	dev_set_drvdata(dev, NULL);
 
 	imx_dpu_num--;
-
-	if (drm->driver->num_ioctls != 0) {
-		drm->driver->ioctls = NULL;
-		drm->driver->num_ioctls = 0;
-	}
 }
 
 static const struct component_ops dpu_bliteng_ops = {

@@ -375,12 +375,12 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 		copy_size = min_t(u32, copy_size, PAGE_SIZE - src_page_offset);
 
 		if (unmap_src) {
-			kunmap_local(d->src_addr);
+			kunmap_atomic(d->src_addr);
 			d->src_addr = NULL;
 		}
 
 		if (unmap_dst) {
-			kunmap_local(d->dst_addr);
+			kunmap_atomic(d->dst_addr);
 			d->dst_addr = NULL;
 		}
 
@@ -388,8 +388,12 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 			if (WARN_ON_ONCE(dst_page >= d->dst_num_pages))
 				return -EINVAL;
 
-			d->dst_addr = kmap_local_page_prot(d->dst_pages[dst_page],
-							   d->dst_prot);
+			d->dst_addr =
+				kmap_atomic_prot(d->dst_pages[dst_page],
+						 d->dst_prot);
+			if (!d->dst_addr)
+				return -ENOMEM;
+
 			d->mapped_dst = dst_page;
 		}
 
@@ -397,8 +401,12 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 			if (WARN_ON_ONCE(src_page >= d->src_num_pages))
 				return -EINVAL;
 
-			d->src_addr = kmap_local_page_prot(d->src_pages[src_page],
-							   d->src_prot);
+			d->src_addr =
+				kmap_atomic_prot(d->src_pages[src_page],
+						 d->src_prot);
+			if (!d->src_addr)
+				return -ENOMEM;
+
 			d->mapped_src = src_page;
 		}
 		diff->do_cpy(diff, d->dst_addr + dst_page_offset,
@@ -413,7 +421,7 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
 }
 
 /**
- * ttm_bo_cpu_blit - in-kernel cpu blit.
+ * vmw_bo_cpu_blit - in-kernel cpu blit.
  *
  * @dst: Destination buffer object.
  * @dst_offset: Destination offset of blit start in bytes.
@@ -423,15 +431,14 @@ static int vmw_bo_cpu_blit_line(struct vmw_bo_blit_line_data *d,
  * @src_stride: Source stride in bytes.
  * @w: Width of blit.
  * @h: Height of blit.
+ * @diff: The struct vmw_diff_cpy used to track the modified bounding box.
  * return: Zero on success. Negative error value on failure. Will print out
  * kernel warnings on caller bugs.
  *
  * Performs a CPU blit from one buffer object to another avoiding a full
  * bo vmap which may exhaust- or fragment vmalloc space.
- *
- * On supported architectures (x86), we're using kmap_local_prot() which
- * avoids cross-processor TLB- and cache flushes. kmap_local_prot() will
- * either map a highmem page with the proper pgprot on HIGHMEM=y systems or
+ * On supported architectures (x86), we're using kmap_atomic which avoids
+ * cross-processor TLB- and cache flushes and may, on non-HIGHMEM systems
  * reference already set-up mappings.
  *
  * Neither of the buffer objects may be placed in PCI memory
@@ -453,19 +460,19 @@ int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
 	int ret = 0;
 
 	/* Buffer objects need to be either pinned or reserved: */
-	if (!(dst->mem.placement & TTM_PL_FLAG_NO_EVICT))
+	if (!(dst->pin_count))
 		dma_resv_assert_held(dst->base.resv);
-	if (!(src->mem.placement & TTM_PL_FLAG_NO_EVICT))
+	if (!(src->pin_count))
 		dma_resv_assert_held(src->base.resv);
 
 	if (!ttm_tt_is_populated(dst->ttm)) {
-		ret = dst->bdev->driver->ttm_tt_populate(dst->bdev, dst->ttm, &ctx);
+		ret = dst->bdev->funcs->ttm_tt_populate(dst->bdev, dst->ttm, &ctx);
 		if (ret)
 			return ret;
 	}
 
 	if (!ttm_tt_is_populated(src->ttm)) {
-		ret = src->bdev->driver->ttm_tt_populate(src->bdev, src->ttm, &ctx);
+		ret = src->bdev->funcs->ttm_tt_populate(src->bdev, src->ttm, &ctx);
 		if (ret)
 			return ret;
 	}
@@ -476,10 +483,10 @@ int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
 	d.src_addr = NULL;
 	d.dst_pages = dst->ttm->pages;
 	d.src_pages = src->ttm->pages;
-	d.dst_num_pages = dst->num_pages;
-	d.src_num_pages = src->num_pages;
-	d.dst_prot = ttm_io_prot(dst->mem.placement, PAGE_KERNEL);
-	d.src_prot = ttm_io_prot(src->mem.placement, PAGE_KERNEL);
+	d.dst_num_pages = dst->resource->num_pages;
+	d.src_num_pages = src->resource->num_pages;
+	d.dst_prot = ttm_io_prot(dst, dst->resource, PAGE_KERNEL);
+	d.src_prot = ttm_io_prot(src, src->resource, PAGE_KERNEL);
 	d.diff = diff;
 
 	for (j = 0; j < h; ++j) {
@@ -494,9 +501,9 @@ int vmw_bo_cpu_blit(struct ttm_buffer_object *dst,
 	}
 out:
 	if (d.src_addr)
-		kunmap_local(d.src_addr);
+		kunmap_atomic(d.src_addr);
 	if (d.dst_addr)
-		kunmap_local(d.dst_addr);
+		kunmap_atomic(d.dst_addr);
 
 	return ret;
 }

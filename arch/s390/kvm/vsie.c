@@ -18,6 +18,7 @@
 #include <asm/sclp.h>
 #include <asm/nmi.h>
 #include <asm/dis.h>
+#include <asm/fpu/api.h>
 #include "kvm-s390.h"
 #include "gaccess.h"
 
@@ -502,6 +503,14 @@ static int shadow_scb(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	/* Host-protection-interruption introduced with ESOP */
 	if (test_kvm_cpu_feat(vcpu->kvm, KVM_S390_VM_CPU_FEAT_ESOP))
 		scb_s->ecb |= scb_o->ecb & ECB_HOSTPROTINT;
+	/*
+	 * CPU Topology
+	 * This facility only uses the utility field of the SCA and none of
+	 * the cpu entries that are problematic with the other interpretation
+	 * facilities so we can pass it through
+	 */
+	if (test_kvm_facility(vcpu->kvm, 11))
+		scb_s->ecb |= scb_o->ecb & ECB_PTF;
 	/* transactional execution */
 	if (test_kvm_facility(vcpu->kvm, 73) && wants_tx) {
 		/* remap the prefix is tx is toggled on */
@@ -509,6 +518,8 @@ static int shadow_scb(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 			prefix_unmapped(vsie_page);
 		scb_s->ecb |= ECB_TE;
 	}
+	/* specification exception interpretation */
+	scb_s->ecb |= scb_o->ecb & ECB_SPECI;
 	/* branch prediction */
 	if (test_kvm_facility(vcpu->kvm, 82))
 		scb_s->fpf |= scb_o->fpf & FPF_BPBC;
@@ -535,8 +546,10 @@ static int shadow_scb(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	if (test_kvm_cpu_feat(vcpu->kvm, KVM_S390_VM_CPU_FEAT_CEI))
 		scb_s->eca |= scb_o->eca & ECA_CEI;
 	/* Epoch Extension */
-	if (test_kvm_facility(vcpu->kvm, 139))
+	if (test_kvm_facility(vcpu->kvm, 139)) {
 		scb_s->ecd |= scb_o->ecd & ECD_MEF;
+		scb_s->epdx = scb_o->epdx;
+	}
 
 	/* etoken */
 	if (test_kvm_facility(vcpu->kvm, 156))
@@ -1088,7 +1101,7 @@ static int do_vsie_run(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 
 	handle_last_fault(vcpu, vsie_page);
 
-	srcu_read_unlock(&vcpu->kvm->srcu, vcpu->srcu_idx);
+	kvm_vcpu_srcu_read_unlock(vcpu);
 
 	/* save current guest state of bp isolation override */
 	guest_bp_isolation = test_thread_flag(TIF_ISOLATE_BP_GUEST);
@@ -1115,6 +1128,8 @@ static int do_vsie_run(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	 */
 	vcpu->arch.sie_block->prog0c |= PROG_IN_SIE;
 	barrier();
+	if (test_cpu_flag(CIF_FPU))
+		load_fpu_regs();
 	if (!kvm_s390_vcpu_sie_inhibited(vcpu))
 		rc = sie64a(scb_s, vcpu->run->s.regs.gprs);
 	barrier();
@@ -1128,7 +1143,7 @@ static int do_vsie_run(struct kvm_vcpu *vcpu, struct vsie_page *vsie_page)
 	if (!guest_bp_isolation)
 		clear_thread_flag(TIF_ISOLATE_BP_GUEST);
 
-	vcpu->srcu_idx = srcu_read_lock(&vcpu->kvm->srcu);
+	kvm_vcpu_srcu_read_lock(vcpu);
 
 	if (rc == -EINTR) {
 		VCPU_EVENT(vcpu, 3, "%s", "machine check");
@@ -1325,7 +1340,7 @@ static struct vsie_page *get_vsie_page(struct kvm *kvm, unsigned long addr)
 
 	mutex_lock(&kvm->arch.vsie.mutex);
 	if (kvm->arch.vsie.page_count < nr_vcpus) {
-		page = alloc_page(GFP_KERNEL | __GFP_ZERO | GFP_DMA);
+		page = alloc_page(GFP_KERNEL_ACCOUNT | __GFP_ZERO | GFP_DMA);
 		if (!page) {
 			mutex_unlock(&kvm->arch.vsie.mutex);
 			return ERR_PTR(-ENOMEM);
@@ -1427,7 +1442,7 @@ out_put:
 void kvm_s390_vsie_init(struct kvm *kvm)
 {
 	mutex_init(&kvm->arch.vsie.mutex);
-	INIT_RADIX_TREE(&kvm->arch.vsie.addr_to_page, GFP_KERNEL);
+	INIT_RADIX_TREE(&kvm->arch.vsie.addr_to_page, GFP_KERNEL_ACCOUNT);
 }
 
 /* Destroy the vsie data structures. To be called when a vm is destroyed. */

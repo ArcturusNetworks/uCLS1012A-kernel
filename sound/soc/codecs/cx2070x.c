@@ -771,11 +771,11 @@ static int cx2070x_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 	cx2070x->master[dai->id] = 0;
 
 	/* set master/slave audio interface */
-	switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
-	case SND_SOC_DAIFMT_CBS_CFS:
+	switch (fmt & SND_SOC_DAIFMT_CLOCK_PROVIDER_MASK) {
+	case SND_SOC_DAIFMT_CBC_CFC:
 		cx2070x->master[dai->id] = 0;
 		break;
-	case SND_SOC_DAIFMT_CBM_CFM:
+	case SND_SOC_DAIFMT_CBP_CFP:
 		cx2070x->master[dai->id] = 1;
 		break;
 	default:
@@ -966,7 +966,7 @@ static struct snd_soc_dai_driver cx2070x_dai[] = {
 		     .formats = CX2070X_FORMATS,
 		     },
 	 .ops = &cx2070x_dai_ops,
-	 .symmetric_rates = 1,
+	 .symmetric_rate = 1,
 	 },
 	{
 	 .name = DAI_DP2_NAME,
@@ -986,7 +986,7 @@ static struct snd_soc_dai_driver cx2070x_dai[] = {
 		     .formats = CX2070X_FORMATS,
 		     },
 	 .ops = &cx2070x_dai_ops,
-	 .symmetric_rates = 1,
+	 .symmetric_rate = 1,
 	 }
 };
 
@@ -1008,7 +1008,6 @@ static struct snd_soc_component_driver cx2070x_driver = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static const struct regmap_config cx2070x_regmap = {
@@ -1052,8 +1051,7 @@ static void cx2070x_fill_defaults(struct i2c_client *client)
 }
 #endif
 
-static int cx2070x_i2c_probe(struct i2c_client *client,
-			     const struct i2c_device_id *id)
+static int cx2070x_i2c_probe(struct i2c_client *client)
 {
 	struct cx2070x_priv *cx2070x;
 	int reg, ret = 0;
@@ -1133,12 +1131,11 @@ disable_regs:
 	return ret;
 }
 
-static int cx2070x_i2c_remove(struct i2c_client *client)
+static void cx2070x_i2c_remove(struct i2c_client *client)
 {
 	struct cx2070x_priv *cx2070x = i2c_get_clientdata(client);
 
 	clk_disable_unprepare(cx2070x->mclk);
-	return 0;
 }
 
 static const struct i2c_device_id cx2070x_id[] = {
@@ -1160,7 +1157,7 @@ static struct i2c_driver cx2070x_i2c_driver = {
 		   .name = "cx2070x",
 		   .of_match_table = cx2070x_dt_ids,
 		   },
-	.probe = cx2070x_i2c_probe,
+	.probe_new = cx2070x_i2c_probe,
 	.remove = cx2070x_i2c_remove,
 	.id_table = cx2070x_id,
 };

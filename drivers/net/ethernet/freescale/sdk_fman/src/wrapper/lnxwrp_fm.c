@@ -39,12 +39,6 @@
 
 #include <linux/version.h>
 #include <linux/slab.h>
-#if defined(CONFIG_MODVERSIONS) && !defined(MODVERSIONS)
-#define MODVERSIONS
-#endif
-#ifdef MODVERSIONS
-#include <config/modversions.h>
-#endif /* MODVERSIONS */
 #include <linux/kernel.h>
 #include <linux/module.h>
 #include <linux/fs.h>
@@ -1931,7 +1925,7 @@ int fm_mac_add_hash_mac_addr(struct fm_mac_dev *fm_mac_dev,
 EXPORT_SYMBOL(fm_mac_add_hash_mac_addr);
 
 int fm_mac_modify_mac_addr(struct fm_mac_dev *fm_mac_dev,
-					 uint8_t *addr)
+					const uint8_t *addr)
 {
 	int	_errno;
 	t_Error err;

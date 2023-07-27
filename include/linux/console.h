@@ -16,7 +16,6 @@
 
 #include <linux/atomic.h>
 #include <linux/types.h>
-#include <linux/printk.h>
 
 struct vc_data;
 struct console_font_op;
@@ -63,7 +62,6 @@ struct consw {
 	int	(*con_font_get)(struct vc_data *vc, struct console_font *font);
 	int	(*con_font_default)(struct vc_data *vc,
 			struct console_font *font, char *name);
-	int	(*con_font_copy)(struct vc_data *vc, int con);
 	int     (*con_resize)(struct vc_data *vc, unsigned int width,
 			unsigned int height, unsigned int user);
 	void	(*con_set_palette)(struct vc_data *vc,
@@ -138,12 +136,10 @@ static inline int con_debug_leave(void)
 #define CON_ANYTIME	(16) /* Safe to call when cpu is offline */
 #define CON_BRL		(32) /* Used for a braille device */
 #define CON_EXTENDED	(64) /* Use the extended output format a la /dev/kmsg */
-#define CON_HANDOVER	(128) /* Device was previously a boot console. */
 
 struct console {
 	char	name[16];
 	void	(*write)(struct console *, const char *, unsigned);
-	void	(*write_atomic)(struct console *co, const char *s, unsigned int count);
 	int	(*read)(struct console *, char *, unsigned);
 	struct tty_driver *(*device)(struct console *, int *);
 	void	(*unblank)(void);
@@ -153,11 +149,10 @@ struct console {
 	short	flags;
 	short	index;
 	int	cflag;
-#ifdef CONFIG_PRINTK
-	char	sync_buf[CONSOLE_LOG_MAX];
-#endif
-	atomic64_t printk_seq;
-	struct task_struct *thread;
+	uint	ispeed;
+	uint	ospeed;
+	u64	seq;
+	unsigned long dropped;
 	void	*data;
 	struct	 console *next;
 };
@@ -226,19 +221,10 @@ extern atomic_t ignore_console_lock_warning;
 #define VESA_HSYNC_SUSPEND      2
 #define VESA_POWERDOWN          3
 
-#ifdef CONFIG_VGA_CONSOLE
-extern bool vgacon_text_force(void);
-#else
-static inline bool vgacon_text_force(void) { return false; }
-#endif
-
 extern void console_init(void);
 
 /* For deferred console takeover */
 void dummycon_register_output_notifier(struct notifier_block *nb);
 void dummycon_unregister_output_notifier(struct notifier_block *nb);
-
-extern void console_atomic_lock(unsigned int *flags);
-extern void console_atomic_unlock(unsigned int flags);
 
 #endif /* _LINUX_CONSOLE_H */

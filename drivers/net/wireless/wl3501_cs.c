@@ -134,7 +134,7 @@ static const struct {
 
 /**
  * iw_valid_channel - validate channel in regulatory domain
- * @reg_comain: regulatory domain
+ * @reg_domain: regulatory domain
  * @channel: channel to validate
  *
  * Returns 0 if invalid in the specified regulatory domain, non-zero if valid.
@@ -458,11 +458,9 @@ out:
 /**
  * wl3501_send_pkt - Send a packet.
  * @this: Card
- *
- * Send a packet.
- *
- * data = Ethernet raw frame.  (e.g. data[0] - data[5] is Dest MAC Addr,
+ * @data: Ethernet raw frame.  (e.g. data[0] - data[5] is Dest MAC Addr,
  *                                   data[6] - data[11] is Src MAC Addr)
+ * @len: Packet length
  * Ref: IEEE 802.11
  */
 static int wl3501_send_pkt(struct wl3501_card *this, u8 *data, u16 len)
@@ -1330,7 +1328,7 @@ static netdev_tx_t wl3501_hard_start_xmit(struct sk_buff *skb,
 	} else {
 		++dev->stats.tx_packets;
 		dev->stats.tx_bytes += skb->len;
-		kfree_skb(skb);
+		dev_kfree_skb_irq(skb);
 
 		if (this->tx_buffer_cnt < 2)
 			netif_stop_queue(dev);
@@ -1443,7 +1441,7 @@ static void wl3501_detach(struct pcmcia_device *link)
 static int wl3501_get_name(struct net_device *dev, struct iw_request_info *info,
 			   union iwreq_data *wrqu, char *extra)
 {
-	strlcpy(wrqu->name, "IEEE 802.11-DS", sizeof(wrqu->name));
+	strscpy(wrqu->name, "IEEE 802.11-DS", sizeof(wrqu->name));
 	return 0;
 }
 
@@ -1654,7 +1652,7 @@ static int wl3501_set_nick(struct net_device *dev, struct iw_request_info *info,
 
 	if (wrqu->data.length > sizeof(this->nick))
 		return -E2BIG;
-	strlcpy(this->nick, extra, wrqu->data.length);
+	strscpy(this->nick, extra, wrqu->data.length);
 	return 0;
 }
 
@@ -1663,7 +1661,7 @@ static int wl3501_get_nick(struct net_device *dev, struct iw_request_info *info,
 {
 	struct wl3501_card *this = netdev_priv(dev);
 
-	strlcpy(extra, this->nick, 32);
+	strscpy(extra, this->nick, 32);
 	wrqu->data.length = strlen(extra);
 	return 0;
 }
@@ -1947,8 +1945,7 @@ static int wl3501_config(struct pcmcia_device *link)
 		goto failed;
 	}
 
-	for (i = 0; i < 6; i++)
-		dev->dev_addr[i] = ((char *)&this->mac_addr)[i];
+	eth_hw_addr_set(dev, this->mac_addr);
 
 	/* print probe information */
 	printk(KERN_INFO "%s: wl3501 @ 0x%3.3x, IRQ %d, "
@@ -1968,7 +1965,7 @@ static int wl3501_config(struct pcmcia_device *link)
 	this->firmware_date[0]	= '\0';
 	this->rssi		= 255;
 	this->chan		= iw_default_channel(this->reg_domain);
-	strlcpy(this->nick, "Planet WL3501", sizeof(this->nick));
+	strscpy(this->nick, "Planet WL3501", sizeof(this->nick));
 	spin_lock_init(&this->lock);
 	init_waitqueue_head(&this->wait);
 	netif_start_queue(dev);

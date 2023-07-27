@@ -1,0 +1,457 @@
+// SPDX-License-Identifier: (GPL-2.0+ OR MIT)
+/*
+ * Device Tree Include file for Arcturus uCLS1012A-SOM314
+ *
+ * Copyright 2017-2023, Arcturus Networks Inc.
+ *
+ */
+/dts-v1/;
+
+#define RESET_BY_GPIO 0
+#define ENABLE_EXTERNAL_WATCHDOG_PING 0
+
+#include "arc-ls1012a.dtsi"
+
+/ {
+	model = "uCLS1012A-SOM314s";
+	compatible = "arc,ucls1012a-som", "fsl,ls1012a";
+
+	aliases {
+		ethernet0 = &pfe_mac0;
+		ethernet1 = &pfe_mac1;
+	};
+
+	sys_mclk: clock-mclk {
+		compatible = "fixed-clock";
+		#clock-cells = <0>;
+		clock-frequency = <25000000>;
+	};
+#if RESET_BY_GPIO
+	gpio-restart {
+		compatible = "gpio-restart";
+		gpios = <&gpio0 31 GPIO_ACTIVE_HIGH>;
+		open-source;
+		priority = <200>;
+	};
+#endif
+
+	reg_1p8v: regulator-1p8v {
+		compatible = "regulator-fixed";
+		regulator-name = "1P8V";
+		regulator-min-microvolt = <1800000>;
+		regulator-max-microvolt = <1800000>;
+		regulator-always-on;
+	};
+
+	reg_2p5v: regulator-2p5v {
+		compatible = "regulator-fixed";
+		regulator-name = "2P5V";
+		regulator-min-microvolt = <2500000>;
+		regulator-max-microvolt = <2500000>;
+		regulator-always-on;
+	};
+
+	reg_3p3v: regulator-3p3v {
+		compatible = "regulator-fixed";
+		regulator-name = "3P3V";
+		regulator-min-microvolt = <3300000>;
+		regulator-max-microvolt = <3300000>;
+		regulator-always-on;
+	};
+
+	reg_5p0v: regulator-5p0v {
+		compatible = "regulator-fixed";
+		regulator-name = "5P0V";
+		regulator-min-microvolt = <5000000>;
+		regulator-max-microvolt = <5000000>;
+		regulator-always-on;
+	};
+
+#if ENABLE_EXTERNAL_WATCHDOG_PING
+	xwatchdog: xwatchdog {
+		compatible = "linux,wdt-gpio";
+		gpios = <&gpio2 1 GPIO_ACTIVE_HIGH>;
+		hw_algo = "toggle";
+		hw_margin_ms = <5000>;
+		always-running;
+		status = "okay";
+	};
+#endif
+	gpio-leds {
+		compatible = "gpio-leds";
+ 		status = "disabled";
+		gpio5 {
+			label = "LED15";		/* LED15 */
+			gpios = <&gpio2 4 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		gpio12 {
+			label = "LED16";		/* LED16 */
+			gpios = <&gpio2 2 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		gpio13 {
+			label = "LED17";		/* LED17 */
+			gpios = <&gpio2 3 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		gpio7 {
+			label = "LED18";		/* LED18 */
+			gpios = <&gpio2 6 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+		gpio6 {
+			label = "LED19";		/* LED19 */
+			gpios = <&gpio2 5 GPIO_ACTIVE_HIGH>;
+			default-state = "on";
+		};
+	};
+
+	gpio-keys {
+		compatible = "gpio-keys";
+		status = "disabled";
+
+		button1 {
+			label = "SW1";
+			linux,code = <432>;
+			gpios = <&gpio1 6 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button2 {
+			label = "SW2";
+			linux,code = <433>;
+			gpios = <&gpio1 4 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button3 {
+			label = "SW3";
+			linux,code = <434>;
+			gpios = <&gpio1 5 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button4 {
+			label = "SW4";
+			linux,code = <435>;
+			gpios = <&gpio1 10 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+		button5 {
+			label = "SW5";
+			linux,code = <436>;
+			gpios = <&gpio1 9 GPIO_OPEN_DRAIN>;
+			debounce-interval = <20>;
+		};
+	};
+};
+
+&pcie1 {
+	status = "disabled";
+};
+
+&duart0 {
+	status = "okay";
+};
+
+&duart1 {
+	status = "okay";
+};
+
+&i2c0 {
+	status = "okay";
+
+	nct72: temperature-sensor@4c {
+			compatible = "onnn,nct1008";
+			reg = <0x4c>;
+			vcc-supply = <&reg_3p3v>;
+			ti,extended-range-enable;
+			#thermal-sensor-cells = <1>;
+	};
+
+	/* U23 */
+	gpio2: pca9575@20 {
+		compatible = "nxp,pca9575";
+		reg =<0x20>;
+		vcc-supply = <&reg_3p3v>;
+
+		/* GPIO pin base & pin0# = 432 */
+		gpio-controller;
+		#gpio-cells = <2>;
+
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <12 IRQ_TYPE_EDGE_BOTH>;
+
+		reset-gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
+	};
+};
+
+&qspi {
+	num-cs = <1>;
+	bus-num = <0>;
+	status = "okay";
+
+	qflash0: n25q00a@0 {
+		compatible = "micron,n25q00a", "jedec,spi-nor";
+		#address-cells = <1>;
+		#size-cells = <1>;
+		m25p,fast-read;
+		spi-max-frequency = <20000000>;
+		reg = <0>;
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+			partition0 {
+				label = "0";
+				reg = <0x00A00000 0x00800000>;
+			};
+			partition1 {
+				label = "1";
+				reg = <0x01200000 0x05580000>;
+			};
+			partition2 {
+				label = "2";
+				reg = <0x07780000 0x00080000>;
+			};
+			partition3 {
+				label = "3";
+				reg = <0x07800000 0x00800000>;
+			};
+			partitionB {
+				label = "B";
+				reg = <0x00100000 0x00100000>;
+			};
+			partitionE {
+				label = "E";
+				reg = <0x00200000 0x00040000>;
+			};
+			/* Partition used for /CCA */
+			partition6 {
+				label = "6";
+				reg = <0x06780000 0x01000000>;
+			};
+		};
+	};
+};
+
+&dspi {
+	bus-num = <1>;
+	status = "okay";
+
+#if 0
+	dflash: s25fl008k@0 {
+		compatible = "spansion,s25fl008k", "jedec,spi-nor";
+		reg = <0>;
+		spi-max-frequency = <1000000>;
+		m25p,fast-read;
+
+		partitions {
+			compatible = "fixed-partitions";
+			#address-cells = <1>;
+			#size-cells = <1>;
+
+			partition@0 {
+				label = "SPI MBR";
+				reg = <0x00000000 0x00002000>;
+				read-only;
+			};
+			partition@2000 {
+				label = "SPI ENV";
+				reg = <0x00002000 0x00006000>;
+				read-only;
+			};
+			partition@8000 {
+				label = "SPI FS";
+				reg = <0x00008000 0x000F8000>;
+			};
+		};
+	};
+#endif
+#if 0
+	spi@1 {
+		compatible = "spidev";
+		reg = <1>;
+		spi-max-frequency = <10000000>;
+	};
+
+	spi@2 {
+		compatible = "spidev";
+		reg = <2>;
+		spi-max-frequency = <10000000>;
+		fsl,spi-cs-sck-delay = <100>;
+		fsl,spi-sck-cs-delay = <100>;
+	};
+#endif
+/*** Disabled until RCW will be changed
+	mmc-spi@1 {
+		#address-cells = <1>;
+		#size-cells = <1>;
+		compatible = "mmc-spi-slot";
+		reg = <1>;
+		spi-max-frequency = <5000000>;
+		voltage-ranges = <3200 3400>;
+		spi-rx-bus-width = <1>;
+		spi-tx-bus-width = <1>;
+		disable-wp;
+		disable-cd;
+	};
+***/
+};
+
+&pfe {
+	status = "okay";
+	#address-cells = <1>;
+	#size-cells = <0>;
+
+	pfe_mac0: ethernet@0 {
+		compatible = "fsl,pfe-gemac-port";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0x0>;	/* GEM_ID */
+		fsl,gemac-bus-id = <0x0>;	/* BUS_ID */
+		fsl,mdio-mux-val = <0x0>;
+		phy-mode = "sgmii";
+		phy-handle = <&sgmii_phy1>;
+		eth-swap = <1>;
+	};
+
+	pfe_mac1: ethernet@1 {
+		compatible = "fsl,pfe-gemac-port";
+		#address-cells = <1>;
+		#size-cells = <0>;
+		reg = <0x1>;	/* GEM_ID */
+		fsl,mdio-mux-val = <0x0>;
+		phy-mode = "sgmii";
+		phy-handle = <&sgmii_phy2>;
+		eth-swap = <1>;
+	};
+
+	mdio@0 {
+		#address-cells = <1>;
+		#size-cells = <0>;
+
+		sgmii_phy1: ethernet-phy@4 {
+			reg = <0x4>;
+			at803x,eee-disabled;
+			rtl821x,aldps-disable;
+			rtl821x,clkout-disable;
+		};
+		sgmii_phy2: ethernet-phy@6 {
+			reg = <0x6>;
+			at803x,eee-disabled;
+			rtl821x,aldps-disable;
+			rtl821x,clkout-disable;
+		};
+	};
+};
+
+&esdhc0 {
+	non-removable;
+	status = "okay";
+};
+
+&usb0 {
+	status = "okay";
+};
+
+&wdog0 {
+	status = "okay";
+};
+
+&usb1 {
+	status = "disabled";
+};
+
+&gpio0 {
+	ngpios = <32>;
+	gpio-line-names =	"UART1_SOUT",	/* P134 */
+				"UART1_SIN",	/* P135 */
+				"IIC1_SCL",	/* S48 */
+				"IIC1_SDA",	/* S49 */
+				"QSPI_A_SCK",	/* P56 */
+				"QSPI_A_CS0",	/* P54 */
+				"UART2_SIN",	/* P130 */
+				"GPIO1_07",	/* P131 */
+				"UART2_SOUT",	/* P129 */
+				"GPIO1_09",	/* P132 */
+				"IRQ4",		/* P116 */	/* _TOD_INT_ GPIO1_10 */
+				"QSPI_A_DATA0",	/* P58 */
+				"QSPI_A_DATA1",	/* P57 */
+				"QSPI_A_DATA2",	/* S56 */
+				"QSPI_A_DATA3",	/* S57 */
+				"SHDC1_CMD",	/* P34 */
+				"SHDC1_DAT0",	/* P39 */
+				"SHDC1_DAT1",	/* P40 */
+				"SHDC1_DAT2",	/* P41 */
+				"SHDC1_DAT3",	/* P42 */
+				"SHDC1_CLK",	/* P36 */
+				"GPIO1_21",	/* P35 */	/* SDHC1_CD_B */
+				"GPIO1_22",	/* P33 */	/* SDHC1_WP */
+				"SDHC1_VSEL",	/*     */	/* Lo - 3V3, Hi - 1V8 */
+				"SPI_MOSI",	/* P46 */
+				"SPI_CS0",	/* P43 */
+				"SPI_CS1",	/* P31 */
+				"SPI_CS2",	/* P55 */
+				"SPI_MISO",	/* P45 */
+				"SPI_CLK",	/* P44 */
+				"GPIO_EXP_RST",	/*     */	/* GPIO1_30 */
+				"CLK_OUT";	/* S53 */	/* GPIO1_31 */
+};
+
+&gpio1 {
+	ngpios = <32>;
+	gpio-line-names =	"USB1_DRVVBUS",		/*   */
+				"USB1_PWR_FAULT",	/* P74 */
+				"PHY_A_IRQ",		/*   */
+				"IRQ0",			/* P115 */	/* _READY_INT_N_ EC1_TXD2 GPIO2_03 */
+				"IRQ1",			/* P119 */	/* _SPI_BP_INT_N_ EC1_TXD1 GPIO2_04 */
+				"SPI_eCS2",		/* P112 */	/*  EC1_TXD0 GPIO2_05 */
+				"IRQ2",			/* P118 */	/* _SPARE_INT_ EC1_TX_EN GPIO2_06 */
+				"SPI_eCS3",		/* P113 */	/* EC1_GTX_CLK GPIO2_07 */
+				"reserved",
+				"SPI_eCS4",		/* P114 */	/* EC1_RXD3 GPIO2_09 */
+				"SPI_eCS1",		/* P111 */	/* EC1_RXD2 GPIO2_10 */
+				"IRQ3",			/* P117 */	/*_PPS_INT_ EC1_RXD1 GPIO2_11  Dongle A13 */
+				"GPIO_EXP_IRQ0",	/*   */
+				"PHY_B_IRQ",		/*   */
+				"GPIO2_14",		/* S51 */	/* EC1_RX_DV GPIO2_14 Dongle B13 */
+				"EMI1_MDC",		/* S45 */
+				"EMI1_MDIO",		/* S46 */
+				"TMP_DETECT_N",		/* S52 */
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved",
+				"reserved";
+};
+
+/* U23 */
+&gpio2 {
+	ngpios = <16>;
+	gpio-line-names =	"BP85",			/* GPIO10 */
+				"BP83",			/* GPIO11 */
+				"BP81",			/* GPIO12 */
+				"BP79",			/* GPIO13 */
+				"BP53",			/* GPIO5 */
+				"BP55",			/* GPIO6 */
+				"BP57",			/* GPIO7 */
+				"BP49",			/* GPIO2 */
+				"BP47",			/* GPIO0 */
+				"BP41",			/* GPIO4 */
+				"BP59", 		/* IRQ_OUT */
+				"WDI",			/* GPIO14 */
+				"BP45",			/* GPIO1 */
+				"BP43",			/* GPIO3 */
+				"BP110",		/* GPIO9 */
+				"BP108";		/* GPIO8 */
+};

@@ -29,22 +29,52 @@ properties:
           - fsl,imx53-esdhc
           - fsl,imx6q-usdhc
           - fsl,imx6sl-usdhc
+          - fsl,imx6sll-usdhc
           - fsl,imx6sx-usdhc
           - fsl,imx6ull-usdhc
           - fsl,imx7d-usdhc
           - fsl,imx7ulp-usdhc
+          - fsl,imx8mm-usdhc
+          - fsl,imxrt1050-usdhc
+          - nxp,s32g2-usdhc
       - items:
           - enum:
-              - fsl,imx8mm-usdhc
-              - fsl,imx8mn-usdhc
-              - fsl,imx8mp-usdhc
               - fsl,imx8mq-usdhc
-              - fsl,imx8qxp-usdhc
           - const: fsl,imx7d-usdhc
       - items:
           - enum:
+              - fsl,imx8mn-usdhc
+              - fsl,imx8mp-usdhc
+              - fsl,imx93-usdhc
               - fsl,imx8ulp-usdhc
           - const: fsl,imx8mm-usdhc
+      - items:
+          - enum:
+              - fsl,imx8qm-usdhc
+          - const: fsl,imx8qxp-usdhc
+      - items:
+          - enum:
+              - fsl,imx8dxl-usdhc
+              - fsl,imx8mm-usdhc
+              - fsl,imx8mn-usdhc
+              - fsl,imx8mp-usdhc
+              - fsl,imx8qm-usdhc
+              - fsl,imx8qxp-usdhc
+          - const: fsl,imx7d-usdhc
+        deprecated: true
+      - items:
+          - enum:
+              - fsl,imx8mn-usdhc
+              - fsl,imx8mp-usdhc
+          - const: fsl,imx8mm-usdhc
+          - const: fsl,imx7d-usdhc
+        deprecated: true
+      - items:
+          - enum:
+              - fsl,imx8qm-usdhc
+          - const: fsl,imx8qxp-usdhc
+          - const: fsl,imx7d-usdhc
+        deprecated: true
 
   reg:
     maxItems: 1
@@ -106,16 +136,42 @@ properties:
       Only eMMC HS400 mode need to take care of this property.
     default: 0
 
-  fsl,sdio-interrupt-enabled:
-  $ref: /schemas/types.yaml#/definitions/uint32
-  description: |
-      Recommend for SDIO cards that enables SDIO interrupt for SDR104 and SDR50 operating
-      modes. SDIO interrupt uses DAT[1] to signal the card's interrupt to the i.MX
-      device. uSDHC tuning mechanism must use DAT[0] and CMD signals to avoid a possible
+  clocks:
+    maxItems: 3
+    description:
+      Handle clocks for the sdhc controller.
+
+  clock-names:
+    items:
+      - const: ipg
+      - const: ahb
+      - const: per
+
+  power-domains:
+    maxItems: 1
+
+  pinctrl-names:
+    oneOf:
+      - minItems: 3
+        items:
+          - const: default
+          - const: state_100mhz
+          - const: state_200mhz
+          - const: sleep
+      - minItems: 1
+        items:
+          - const: default
+          - const: sleep
+
+  fsl,sdio-async-interrupt-enabled:
+    description: |
+      Recommend for SDIO cards that enables SDIO async interrupt for SDR104 and SDR50
+      operating modes. SDIO async interrupt uses DAT[1] to signal the card's interrupt.
+      uSDHC tuning mechanism must use DAT[0] and CMD signals to avoid a possible
       conflict and incorrect delay line calculated by the uSDHC auto tuning mechanism.
       Enabling this device tree property is only recommended for layouts that are
       matching the SD interface length.
-  default: 0
+    type: boolean
 
 required:
   - compatible

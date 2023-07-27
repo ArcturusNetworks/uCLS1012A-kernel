@@ -58,6 +58,10 @@
 	>;
 };
 
+&reg_pcie1{
+	status = "disabled";
+};
+
 &pcie0{
 	status = "disabled";
 };
@@ -73,8 +77,8 @@
 	keep-power-in-suspend;
 	non-removable;
 	wakeup-source;
+	fsl,sdio-async-interrupt-enabled;
 	mmc-pwrseq = <&usdhc2_pwrseq>;
-	fsl,sdio-interrupt-enabled;
 
 	wifi_wake_host {
 		compatible = "nxp,wifi-wake-host";

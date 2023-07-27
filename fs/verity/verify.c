@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0
 /*
- * fs/verity/verify.c: data verification functions, i.e. hooks for ->readpages()
+ * Data verification functions, i.e. hooks for ->readahead()
  *
  * Copyright 2019 Google LLC
  */
@@ -37,16 +37,6 @@ static void hash_at_level(const struct merkle_tree_params *params,
 	/* Offset of the wanted hash (in bytes) within the hash block */
 	*hoffset = (position & ((1 << params->log_arity) - 1)) <<
 		   (params->log_blocksize - params->log_arity);
-}
-
-/* Extract a hash from a hash page */
-static void extract_hash(struct page *hpage, unsigned int hoffset,
-			 unsigned int hsize, u8 *out)
-{
-	void *virt = kmap_atomic(hpage);
-
-	memcpy(out, virt + hoffset, hsize);
-	kunmap_atomic(virt);
 }
 
 static inline int cmp_hashes(const struct fsverity_info *vi,
@@ -129,7 +119,7 @@ static bool verify_page(struct inode *inode, const struct fsverity_info *vi,
 		}
 
 		if (PageChecked(hpage)) {
-			extract_hash(hpage, hoffset, hsize, _want_hash);
+			memcpy_from_page(_want_hash, hpage, hoffset, hsize);
 			want_hash = _want_hash;
 			put_page(hpage);
 			pr_debug_ratelimited("Hash page already checked, want %s:%*phN\n",
@@ -158,7 +148,7 @@ descend:
 		if (err)
 			goto out;
 		SetPageChecked(hpage);
-		extract_hash(hpage, hoffset, hsize, _want_hash);
+		memcpy_from_page(_want_hash, hpage, hoffset, hsize);
 		want_hash = _want_hash;
 		put_page(hpage);
 		pr_debug("Verified hash page at level %d, now want %s:%*phN\n",
@@ -214,7 +204,7 @@ EXPORT_SYMBOL_GPL(fsverity_verify_page);
  * that fail verification are set to the Error state.  Verification is skipped
  * for pages already in the Error state, e.g. due to fscrypt decryption failure.
  *
- * This is a helper function for use by the ->readpages() method of filesystems
+ * This is a helper function for use by the ->readahead() method of filesystems
  * that issue bios to read data directly into the page cache.  Filesystems that
  * populate the page cache without issuing bios (e.g. non block-based
  * filesystems) must instead call fsverity_verify_page() directly on each page.
@@ -279,15 +269,15 @@ EXPORT_SYMBOL_GPL(fsverity_enqueue_verify_work);
 int __init fsverity_init_workqueue(void)
 {
 	/*
-	 * Use an unbound workqueue to allow bios to be verified in parallel
-	 * even when they happen to complete on the same CPU.  This sacrifices
-	 * locality, but it's worthwhile since hashing is CPU-intensive.
+	 * Use a high-priority workqueue to prioritize verification work, which
+	 * blocks reads from completing, over regular application tasks.
 	 *
-	 * Also use a high-priority workqueue to prioritize verification work,
-	 * which blocks reads from completing, over regular application tasks.
+	 * For performance reasons, don't use an unbound workqueue.  Using an
+	 * unbound workqueue for crypto operations causes excessive scheduler
+	 * latency on ARM64.
 	 */
 	fsverity_read_workqueue = alloc_workqueue("fsverity_read_queue",
-						  WQ_UNBOUND | WQ_HIGHPRI,
+						  WQ_HIGHPRI,
 						  num_online_cpus());
 	if (!fsverity_read_workqueue)
 		return -ENOMEM;

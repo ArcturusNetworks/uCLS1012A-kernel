@@ -22,6 +22,7 @@
 
 #include <asm/apic.h>
 #include <asm/nospec-branch.h>
+#include <asm/softirq_stack.h>
 
 #ifdef CONFIG_DEBUG_STACKOVERFLOW
 
@@ -131,7 +132,7 @@ int irq_init_percpu_irqstack(unsigned int cpu)
 	return 0;
 }
 
-#ifndef CONFIG_PREEMPT_RT
+#ifdef CONFIG_SOFTIRQ_ON_OWN_STACK
 void do_softirq_own_stack(void)
 {
 	struct irq_stack *irqstk;

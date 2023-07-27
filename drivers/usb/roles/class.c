@@ -106,10 +106,13 @@ usb_role_switch_is_parent(struct fwnode_handle *fwnode)
 	struct fwnode_handle *parent = fwnode_get_parent(fwnode);
 	struct device *dev;
 
-	if (!parent || !fwnode_property_present(parent, "usb-role-switch"))
+	if (!fwnode_property_present(parent, "usb-role-switch")) {
+		fwnode_handle_put(parent);
 		return NULL;
+	}
 
 	dev = class_find_device_by_fwnode(role_class, parent);
+	fwnode_handle_put(parent);
 	return dev ? to_role_switch(dev) : ERR_PTR(-EPROBE_DEFER);
 }
 
@@ -213,6 +216,15 @@ static const char * const usb_roles[] = {
 	[USB_ROLE_HOST]		= "host",
 	[USB_ROLE_DEVICE]	= "device",
 };
+
+const char *usb_role_string(enum usb_role role)
+{
+	if (role < 0 || role >= ARRAY_SIZE(usb_roles))
+		return "unknown";
+
+	return usb_roles[role];
+}
+EXPORT_SYMBOL_GPL(usb_role_string);
 
 static ssize_t
 role_show(struct device *dev, struct device_attribute *attr, char *buf)

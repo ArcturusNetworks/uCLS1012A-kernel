@@ -47,11 +47,7 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 	else
 		pdata->ls1012a_eth_pdata[port].eth_swap = 0;
 
-	mac_addr = of_get_mac_address(gem);
-	if (!IS_ERR_OR_NULL(mac_addr)) {
-		memcpy(pdata->ls1012a_eth_pdata[port].mac_addr, mac_addr,
-		       ETH_ALEN);
-	}
+	err = of_get_mac_address(gem, pdata->ls1012a_eth_pdata[port].mac_addr);
 
 	phy_node = of_parse_phandle(gem, "phy-handle", 0);
 	pdata->ls1012a_eth_pdata[port].phy_node = phy_node;

@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0
-/**
+/*
  * cdns3-imx.c - NXP i.MX specific Glue layer for Cadence USB Controller
  *
  * Copyright (C) 2019 NXP
@@ -221,8 +221,13 @@ err:
 static int cdns_imx_remove(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
+	struct cdns_imx *data = dev_get_drvdata(dev);
 
+	pm_runtime_get_sync(dev);
 	of_platform_depopulate(dev);
+	clk_bulk_disable_unprepare(data->num_clks, data->clks);
+	pm_runtime_disable(dev);
+	pm_runtime_put_noidle(dev);
 	platform_set_drvdata(pdev, NULL);
 
 	return 0;
@@ -245,7 +250,7 @@ static void cdns3_set_wakeup(struct cdns_imx *data, bool enable)
 static int cdns_imx_platform_suspend(struct device *dev,
 		bool suspend, bool wakeup)
 {
-	struct cdns3 *cdns = dev_get_drvdata(dev);
+	struct cdns *cdns = dev_get_drvdata(dev);
 	struct device *parent = dev->parent;
 	struct cdns_imx *data = dev_get_drvdata(parent);
 	void __iomem *otg_regs = (void __iomem *)(cdns->otg_regs);
@@ -357,6 +362,7 @@ static int cdns_imx_suspend(struct device *dev)
 	return 0;
 }
 
+
 /* Indicate if the controller was power lost before */
 static inline bool cdns_imx_is_power_lost(struct cdns_imx *data)
 {
@@ -369,7 +375,7 @@ static inline bool cdns_imx_is_power_lost(struct cdns_imx *data)
 		return false;
 }
 
-static int cdns_imx_system_resume(struct device *dev)
+static int __maybe_unused cdns_imx_system_resume(struct device *dev)
 {
 	struct cdns_imx *data = dev_get_drvdata(dev);
 	int ret;
@@ -387,6 +393,7 @@ static int cdns_imx_system_resume(struct device *dev)
 
 	return ret;
 }
+
 #else
 static int cdns_imx_platform_suspend(struct device *dev,
 	bool suspend, bool wakeup)

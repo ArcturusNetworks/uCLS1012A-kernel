@@ -495,7 +495,7 @@ static int mxc_streamoff(cam_data *cam)
 	 * 3. disable idmac
 	 * 4. disable smfc (CSI--MEM channel)
 	 */
-	if (mxc_capture_inputs[cam->current_input].name != NULL) {
+	if (mxc_capture_inputs[cam->current_input].name[0] != '\0') {
 		if (cam->enc_disable_csi) {
 			err = cam->enc_disable_csi(cam);
 			if (err != 0)
@@ -3144,4 +3144,3 @@ module_param(video_nr, int, 0444);
 MODULE_AUTHOR("Freescale Semiconductor, Inc.");
 MODULE_DESCRIPTION("V4L2 capture driver for Mxc based cameras");
 MODULE_LICENSE("GPL");
-MODULE_SUPPORTED_DEVICE("video");

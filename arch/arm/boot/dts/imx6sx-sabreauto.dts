@@ -234,13 +234,13 @@
 		ethphy0: ethernet-phy@0 {
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <0>;
-			at803x,eee-disabled;
+			qca,disable-smarteee;
 		};
 
 		ethphy1: ethernet-phy@1 {
 			compatible = "ethernet-phy-ieee802.3-c22";
 			reg = <1>;
-			at803x,eee-disabled;
+			qca,disable-smarteee;
 		};
 	};
 };
@@ -787,7 +787,7 @@
 	};
 
 	isl29023@44 {
-		compatible = "fsl,isl29023";
+		compatible = "isil,isl29023";
 		reg = <0x44>;
 		rext = <499>;
 		interrupt-parent = <&gpio3>;

@@ -30,18 +30,13 @@
 
 #include "imx8-isi-hw.h"
 #include "imx8-common.h"
+#include "imx8-isi-fmt.h"
 
 #define to_isi_buffer(x)	\
 	container_of((x), struct mxc_isi_buffer, v4l2_buf)
 
 #define file_to_ctx(file)		\
 	container_of(file->private_data, struct mxc_isi_ctx, fh);
-
-#if defined(CONFIG_IMX8_ISI_CAPTURE)
-extern struct mxc_isi_fmt mxc_isi_out_formats[9];
-#else
-static struct mxc_isi_fmt mxc_isi_out_formats[9] = {};
-#endif
 
 struct mxc_isi_fmt mxc_isi_input_formats[] = {
 	/* Pixel link input format */
@@ -60,9 +55,9 @@ struct mxc_isi_fmt mxc_isi_input_formats[] = {
 		.memplanes	= 1,
 		.colplanes	= 1,
 	}, {
-		.name		= "YUV24 (X-Y-U-V)",
-		.fourcc		= V4L2_PIX_FMT_YUV24,
-		.depth		= { 24 },
+		.name		= "YUV32 (X-Y-U-V)",
+		.fourcc		= V4L2_PIX_FMT_YUV32,
+		.depth		= { 32 },
 		.color = MXC_ISI_M2M_IN_FMT_YUV444_1P8P,
 		.memplanes	= 1,
 		.colplanes	= 1,
@@ -226,7 +221,6 @@ static int m2m_vb2_queue_setup(struct vb2_queue *q,
 	struct device *dev = &isi_m2m->pdev->dev;
 	struct mxc_isi_frame *frame;
 	struct mxc_isi_fmt *fmt;
-	unsigned long wh;
 	int i;
 
 	dev_dbg(&isi_m2m->pdev->dev, "%s\n", __func__);
@@ -263,21 +257,13 @@ static int m2m_vb2_queue_setup(struct vb2_queue *q,
 	if (fmt == NULL)
 		return -EINVAL;
 
-	for (i = 0; i < fmt->memplanes; i++)
-		alloc_devs[i] = &isi_m2m->pdev->dev;
-
 	*num_planes = fmt->memplanes;
-	wh = frame->width * frame->height;
 
 	for (i = 0; i < fmt->memplanes; i++) {
-		unsigned int size = (wh * fmt->depth[i]) >> 3;
-
-		if (i == 1 && fmt->fourcc == V4L2_PIX_FMT_NV12)
-			size >>= 1;
-		sizes[i] = max_t(u32, size, frame->sizeimage[i]);
-
+		alloc_devs[i] = &isi_m2m->pdev->dev;
+		sizes[i] = frame->sizeimage[i];
 		dev_dbg(&isi_m2m->pdev->dev, "%s, buf_n=%d, planes[%d]->size=%d\n",
-					__func__,  *num_buffers, i, sizes[i]);
+			__func__,  *num_buffers, i, sizes[i]);
 	}
 
 	return 0;
@@ -309,6 +295,34 @@ static int m2m_vb2_buffer_prepare(struct vb2_buffer *vb2)
 			return -EINVAL;
 		}
 		vb2_set_plane_payload(vb2, i, size);
+	}
+
+	return 0;
+}
+
+static int m2m_vb2_buffer_init(struct vb2_buffer *vb2)
+{
+	struct vb2_queue *vq = vb2->vb2_queue;
+	struct mxc_isi_ctx *mxc_ctx = vb2_get_drv_priv(vq);
+	struct mxc_isi_m2m_dev *isi_m2m = mxc_ctx->isi_m2m;
+	struct vb2_v4l2_buffer *v4l2_buf = to_vb2_v4l2_buffer(vb2);
+	struct mxc_isi_buffer *buf = to_isi_buffer(v4l2_buf);
+	struct mxc_isi_frame *frame;
+	int i;
+
+	if (vq->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE)
+		frame = &isi_m2m->dst_f;
+	else
+		frame = &isi_m2m->src_f;
+
+	for (i = 0; i < frame->fmt->memplanes; ++i)
+		buf->dma_addrs[i] = vb2_dma_contig_plane_dma_addr(vb2, i);
+
+	if (frame->fmt->colplanes != frame->fmt->memplanes) {
+		unsigned int size = frame->bytesperline[0] * frame->height;
+
+		for (i = 1; i < frame->fmt->colplanes; ++i)
+			buf->dma_addrs[i] = buf->dma_addrs[i-1] + size;
 	}
 
 	return 0;
@@ -410,6 +424,7 @@ static void m2m_vb2_stop_streaming(struct vb2_queue *q)
 static struct vb2_ops mxc_m2m_vb2_qops = {
 	.queue_setup		= m2m_vb2_queue_setup,
 	.buf_prepare		= m2m_vb2_buffer_prepare,
+	.buf_init		= m2m_vb2_buffer_init,
 	.buf_queue		= m2m_vb2_buffer_queue,
 	.wait_prepare		= vb2_ops_wait_prepare,
 	.wait_finish		= vb2_ops_wait_finish,
@@ -459,9 +474,22 @@ static void isi_m2m_fmt_init(struct mxc_isi_frame *frm, struct mxc_isi_fmt *fmt)
 	frm->fmt = fmt;
 	set_frame_bounds(frm, ISI_4K, ISI_8K);
 
-	for (i = 0; i < frm->fmt->memplanes; i++) {
+	for (i = 0; i < frm->fmt->colplanes; i++) {
 		frm->bytesperline[i] = frm->width * frm->fmt->depth[i] >> 3;
-		frm->sizeimage[i] = frm->bytesperline[i] * frm->height;
+
+		if ((i == 1) && (frm->fmt->fourcc == V4L2_PIX_FMT_NV12 ||
+				 frm->fmt->fourcc == V4L2_PIX_FMT_NV12M))
+			frm->sizeimage[i] = frm->bytesperline[i] * frm->height >> 1;
+		else
+			frm->sizeimage[i] = frm->bytesperline[i] * frm->height;
+	}
+
+	if (frm->fmt->colplanes != frm->fmt->memplanes) {
+		for (i = 1; i < frm->fmt->colplanes; ++i) {
+			frm->sizeimage[0] += frm->sizeimage[i];
+			frm->sizeimage[i] = 0;
+			frm->bytesperline[i] = 0;
+		}
 	}
 }
 
@@ -474,7 +502,7 @@ static int isi_m2m_try_fmt(struct mxc_isi_frame *frame,
 	int bpl, i;
 
 	if (f->type == V4L2_BUF_TYPE_VIDEO_CAPTURE_MPLANE) {
-		size = ARRAY_SIZE(mxc_isi_out_formats);
+		size = mxc_isi_out_formats_size;
 		formats = mxc_isi_out_formats;
 	} else if (f->type == V4L2_BUF_TYPE_VIDEO_OUTPUT_MPLANE) {
 		size = ARRAY_SIZE(mxc_isi_input_formats);
@@ -511,12 +539,23 @@ static int isi_m2m_try_fmt(struct mxc_isi_frame *frame,
 					(pix->width * fmt->depth[i]) >> 3;
 
 		if (pix->plane_fmt[i].sizeimage == 0) {
-			if ((i == 1) && (pix->pixelformat == V4L2_PIX_FMT_NV12))
+			if ((i == 1) && (pix->pixelformat == V4L2_PIX_FMT_NV12 ||
+					 pix->pixelformat == V4L2_PIX_FMT_NV12M))
 				pix->plane_fmt[i].sizeimage =
 				  (pix->width * (pix->height >> 1) * fmt->depth[i] >> 3);
 			else
 				pix->plane_fmt[i].sizeimage =
 					(pix->width * pix->height * fmt->depth[i] >> 3);
+		}
+	}
+
+	if (fmt->colplanes != fmt->memplanes) {
+		for (i = 1; i < fmt->colplanes; ++i) {
+			struct v4l2_plane_pix_format *plane = &pix->plane_fmt[i];
+
+			pix->plane_fmt[0].sizeimage += plane->sizeimage;
+			plane->bytesperline = 0;
+			plane->sizeimage = 0;
 		}
 	}
 
@@ -660,7 +699,7 @@ static int mxc_isi_m2m_enum_fmt_vid_cap(struct file *file, void *priv,
 	struct mxc_isi_fmt *fmt;
 
 	dev_dbg(&isi_m2m->pdev->dev, "%s\n", __func__);
-	if (f->index >= (int)ARRAY_SIZE(mxc_isi_out_formats))
+	if (f->index >= (int)mxc_isi_out_formats_size)
 		return -EINVAL;
 
 	fmt = &mxc_isi_out_formats[f->index];
@@ -810,13 +849,13 @@ static int mxc_isi_m2m_s_fmt_vid_cap(struct file *file, void *priv,
 		return -EBUSY;
 	}
 
-	for (i = 0; i < ARRAY_SIZE(mxc_isi_out_formats); i++) {
+	for (i = 0; i < mxc_isi_out_formats_size; i++) {
 		fmt = &mxc_isi_out_formats[i];
 		if (pix && fmt->fourcc == pix->pixelformat)
 			break;
 	}
 
-	if (i >= ARRAY_SIZE(mxc_isi_out_formats)) {
+	if (i >= mxc_isi_out_formats_size) {
 		dev_err(&isi_m2m->pdev->dev, "%s, format is not support!\n", __func__);
 		return -EINVAL;
 	}
@@ -829,7 +868,8 @@ static int mxc_isi_m2m_s_fmt_vid_cap(struct file *file, void *priv,
 		return -EINVAL;
 	}
 
-	if ((pix->pixelformat == V4L2_PIX_FMT_NV12) && ((pix->width / 4) % 2)) {
+	if ((pix->pixelformat == V4L2_PIX_FMT_NV12 ||
+	     pix->pixelformat == V4L2_PIX_FMT_NV12M) && ((pix->width / 4) % 2)) {
 		dev_err(&isi_m2m->pdev->dev,
 			"Invalid width or height(w=%d, h=%d) for NV12\n",
 			pix->width, pix->height);
@@ -846,7 +886,7 @@ static int mxc_isi_m2m_s_fmt_vid_cap(struct file *file, void *priv,
 	frame->width = pix->width;
 
 	pix->num_planes = fmt->memplanes;
-	for (i = 0; i < pix->num_planes; i++) {
+	for (i = 0; i < fmt->colplanes; i++) {
 		bpl = pix->plane_fmt[i].bytesperline;
 
 		if ((bpl == 0) || (bpl / (fmt->depth[i] >> 3)) < pix->width)
@@ -854,24 +894,30 @@ static int mxc_isi_m2m_s_fmt_vid_cap(struct file *file, void *priv,
 						(pix->width * fmt->depth[i]) >> 3;
 
 		if (pix->plane_fmt[i].sizeimage == 0) {
-
-			if ((i == 1) && (pix->pixelformat == V4L2_PIX_FMT_NV12))
+			if ((i == 1) && (pix->pixelformat == V4L2_PIX_FMT_NV12 ||
+					 pix->pixelformat == V4L2_PIX_FMT_NV12M)) {
 				pix->plane_fmt[i].sizeimage =
 					(pix->width * (pix->height >> 1) * fmt->depth[i] >> 3);
-			else
+			} else {
 				pix->plane_fmt[i].sizeimage = (pix->width * pix->height *
 						fmt->depth[i] >> 3);
+			}
 		}
 	}
 
-	if (pix->num_planes > 1) {
-		for (i = 0; i < pix->num_planes; i++) {
-			frame->bytesperline[i] = pix->plane_fmt[i].bytesperline;
-			frame->sizeimage[i] = pix->plane_fmt[i].sizeimage;
+	if (fmt->colplanes != fmt->memplanes) {
+		for (i = 1; i < fmt->colplanes; ++i) {
+			struct v4l2_plane_pix_format *plane = &pix->plane_fmt[i];
+
+			pix->plane_fmt[0].sizeimage += plane->sizeimage;
+			plane->bytesperline = 0;
+			plane->sizeimage = 0;
 		}
-	} else {
-		frame->bytesperline[0] = frame->width * frame->fmt->depth[0] / 8;
-		frame->sizeimage[0] = frame->height * frame->bytesperline[0];
+	}
+
+	for (i = 0; i < pix->num_planes; i++) {
+		frame->bytesperline[i] = pix->plane_fmt[i].bytesperline;
+		frame->sizeimage[i]    = pix->plane_fmt[i].sizeimage;
 	}
 
 	memcpy(&isi_m2m->pix, pix, sizeof(*pix));

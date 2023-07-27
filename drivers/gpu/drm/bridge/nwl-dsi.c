@@ -7,12 +7,14 @@
  */
 
 #include <linux/bitfield.h>
+#include <linux/bits.h>
 #include <linux/clk.h>
 #include <linux/component.h>
 #include <linux/irq.h>
 #include <linux/firmware/imx/sci.h>
 #include <linux/math64.h>
 #include <linux/mfd/syscon.h>
+#include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/mux/consumer.h>
 #include <linux/of.h>
@@ -28,7 +30,6 @@
 #include <drm/drm_bridge.h>
 #include <drm/drm_mipi_dsi.h>
 #include <drm/drm_of.h>
-#include <drm/drm_panel.h>
 #include <drm/drm_print.h>
 
 #include <dt-bindings/firmware/imx/rsrc.h>
@@ -93,12 +94,6 @@ enum transfer_direction {
 #define NWL_DSI_ENDPOINT_DCSS	1
 #define NWL_DSI_ENDPOINT_DCNANO	0
 #define NWL_DSI_ENDPOINT_EPDC	1
-
-struct nwl_dsi_plat_clk_config {
-	const char *id;
-	struct clk *clk;
-	bool present;
-};
 
 struct nwl_dsi_transfer {
 	const struct mipi_dsi_msg *msg;
@@ -299,12 +294,9 @@ static u32 ps2bc(struct nwl_dsi *dsi, unsigned long long ps)
 /*
  * ui2bc - UI time periods to byte clock cycles
  */
-static u32 ui2bc(struct nwl_dsi *dsi, unsigned long long ui)
+static u32 ui2bc(unsigned int ui)
 {
-	u32 bpp = mipi_dsi_pixel_format_to_bpp(dsi->format);
-
-	return DIV64_U64_ROUND_UP(ui * dsi->lanes,
-				  dsi->mode.clock * 1000 * bpp);
+	return DIV_ROUND_UP(ui, BITS_PER_BYTE);
 }
 
 /*
@@ -331,18 +323,18 @@ static int nwl_dsi_config_host(struct nwl_dsi *dsi)
 	else
 		nwl_dsi_write(dsi, NWL_DSI_CFG_NONCONTINUOUS_CLK, 0x00);
 
-	if (dsi->dsi_mode_flags & MIPI_DSI_MODE_EOT_PACKET)
+	if (dsi->dsi_mode_flags & MIPI_DSI_MODE_NO_EOT_PACKET)
 		nwl_dsi_write(dsi, NWL_DSI_CFG_AUTOINSERT_EOTP, 0x00);
 	else
 		nwl_dsi_write(dsi, NWL_DSI_CFG_AUTOINSERT_EOTP, 0x01);
 
 	/* values in byte clock cycles */
-	cycles = ui2bc(dsi, cfg->clk_pre);
+	cycles = ui2bc(cfg->clk_pre);
 	DRM_DEV_DEBUG_DRIVER(dsi->dev, "cfg_t_pre: 0x%x\n", cycles);
 	nwl_dsi_write(dsi, NWL_DSI_CFG_T_PRE, cycles);
 	cycles = ps2bc(dsi, cfg->lpx + cfg->clk_prepare + cfg->clk_zero);
 	DRM_DEV_DEBUG_DRIVER(dsi->dev, "cfg_tx_gap (pre): 0x%x\n", cycles);
-	cycles += ui2bc(dsi, cfg->clk_pre);
+	cycles += ui2bc(cfg->clk_pre);
 	DRM_DEV_DEBUG_DRIVER(dsi->dev, "cfg_t_post: 0x%x\n", cycles);
 	nwl_dsi_write(dsi, NWL_DSI_CFG_T_POST, cycles);
 	cycles = ps2bc(dsi, cfg->hs_exit);
@@ -423,15 +415,17 @@ static int nwl_dsi_config_dpi(struct nwl_dsi *dsi)
 	}
 
 	if (of_device_is_compatible(dsi->panel_bridge->of_node,
-				    "raydium,rm68200")) {
+				    "raydium,rm68200") ||
+	    of_device_is_compatible(dsi->panel_bridge->of_node,
+				    "rocktech,hx8394f")) {
 		int bytes = mipi_dsi_pixel_format_to_bpp(dsi->format) >> 3;
 
 		/*
 		 * FIXME: This is a workaround for display shift
-		 * of the RM68200 panel. It is based on previous
-		 * knowledge got from support task for external
-		 * DSI bridges by turning the hfp/hbp/hsa to be
-		 * in bytes and substracting certain magic values.
+		 * of the RM68200 and HX8394F panels. It is based
+		 * on previous knowledge got from support task for
+		 * external DSI bridges by turning the hfp/hbp/hsa
+		 * to be in bytes and substracting certain magic values.
 		 * Furthermore, rounding hsa up to 2 is needed.
 		 * This can be fixed as soon as formulas to
 		 * determine the settings are available.
@@ -465,17 +459,13 @@ static int nwl_dsi_config_dpi(struct nwl_dsi *dsi)
 
 static int nwl_dsi_init_interrupts(struct nwl_dsi *dsi)
 {
-	u32 irq_enable;
-
-	nwl_dsi_write(dsi, NWL_DSI_IRQ_MASK, 0xffffffff);
-	nwl_dsi_write(dsi, NWL_DSI_IRQ_MASK2, 0x7);
-
-	irq_enable = ~(u32)(NWL_DSI_TX_PKT_DONE_MASK |
-			    NWL_DSI_RX_PKT_HDR_RCVD_MASK |
-			    NWL_DSI_TX_FIFO_OVFLW_MASK |
-			    dsi->pdata->bit_hs_tx_timeout);
+	u32 irq_enable = ~(u32)(NWL_DSI_TX_PKT_DONE_MASK |
+				NWL_DSI_RX_PKT_HDR_RCVD_MASK |
+				NWL_DSI_TX_FIFO_OVFLW_MASK |
+				dsi->pdata->bit_hs_tx_timeout);
 
 	nwl_dsi_write(dsi, NWL_DSI_IRQ_MASK, irq_enable);
+	nwl_dsi_write(dsi, NWL_DSI_IRQ_MASK2, 0x7);
 
 	return nwl_dsi_clear_error(dsi);
 }
@@ -814,6 +804,12 @@ static int nwl_dsi_enable(struct nwl_dsi *dsi)
 	if (ret < 0) {
 		DRM_DEV_ERROR(dev, "Failed to init DSI phy: %d\n", ret);
 		return ret;
+	}
+
+	ret = phy_set_mode(dsi->phy, PHY_MODE_MIPI_DPHY);
+	if (ret < 0) {
+		DRM_DEV_ERROR(dev, "Failed to set DSI phy mode: %d\n", ret);
+		goto uninit_phy;
 	}
 
 	ret = phy_configure(dsi->phy, phy_cfg);
@@ -1170,7 +1166,7 @@ nwl_dsi_bridge_mode_valid(struct drm_bridge *bridge,
 	int bit_rate;
 
 	bit_rate = nwl_dsi_get_bit_clock(dsi, mode->clock * 1000, dsi->lanes);
-
+ 
 	DRM_DEV_DEBUG_DRIVER(dsi->dev, "Validating mode:");
 	drm_mode_debug_printmodeline(mode);
 
@@ -1196,12 +1192,12 @@ static int nwl_dsi_bridge_atomic_check(struct drm_bridge *bridge,
 				       struct drm_crtc_state *crtc_state,
 				       struct drm_connector_state *conn_state)
 {
-	struct drm_display_mode *adjusted = &crtc_state->adjusted_mode;
 	struct nwl_dsi *dsi = bridge_to_dsi(bridge);
+	struct drm_display_mode *adjusted = &crtc_state->adjusted_mode;
 	struct mode_config *config;
 	unsigned long pll_rate;
 
-	DRM_DEV_DEBUG_DRIVER(dsi->dev, "Fixup mode:\n");
+	DRM_DEV_DEBUG_DRIVER(dsi->dev, "atomic check:\n");
 	drm_mode_debug_printmodeline(adjusted);
 
 	config = nwl_dsi_mode_probe(dsi, adjusted);
@@ -1293,7 +1289,7 @@ nwl_dsi_bridge_mode_set(struct drm_bridge *bridge,
 	DRM_DEV_DEBUG_DRIVER(dev,
 			     "PHY at ref rate: %lu (actual: %lu)\n",
 			     phy_ref_rate, clk_get_rate(dsi->phy_ref_clk));
- 
+
 	/* Save the new desired phy config */
 	memcpy(&dsi->phy_cfg, &new_cfg, sizeof(new_cfg));
 }
@@ -1305,26 +1301,27 @@ nwl_dsi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 	struct nwl_dsi *dsi = bridge_to_dsi(bridge);
 	int ret;
 
-	pm_runtime_get_sync(dsi->dev);
+	if (pm_runtime_resume_and_get(dsi->dev) < 0)
+		return;
 
 	dsi->pdata->dpi_reset(dsi, true);
 	dsi->pdata->mipi_reset(dsi, true);
 	dsi->pdata->pclk_reset(dsi, true);
 
 	if (dsi->lcdif_clk && clk_prepare_enable(dsi->lcdif_clk) < 0)
-		return;
+		goto runtime_put;
 	if (dsi->core_clk && clk_prepare_enable(dsi->core_clk) < 0)
-		return;
+		goto runtime_put;
 	if (dsi->bypass_clk && clk_prepare_enable(dsi->bypass_clk) < 0)
-		return;
+		goto runtime_put;
 	if (dsi->pixel_clk && clk_prepare_enable(dsi->pixel_clk) < 0)
-		return;
+		goto runtime_put;
 	/*
 	 * Enable rx_esc clock for some platforms to access DSI host controller
 	 * and PHY registers.
 	 */
 	if (dsi->pdata->rx_clk_quirk && clk_prepare_enable(dsi->rx_esc_clk) < 0)
-		return;
+		goto runtime_put;
 
 	/* Always use normal mode(full mode) for Type-4 display */
 	if (dsi->pdata->reg_cm)
@@ -1335,7 +1332,7 @@ nwl_dsi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 	ret = dsi->pdata->pclk_reset(dsi, false);
 	if (ret < 0) {
 		DRM_DEV_ERROR(dsi->dev, "Failed to deassert PCLK: %d\n", ret);
-		return;
+		goto runtime_put;
 	}
 
 	/* Step 2 from DSI reset-out instructions */
@@ -1345,7 +1342,7 @@ nwl_dsi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 	ret = dsi->pdata->mipi_reset(dsi, false);
 	if (ret < 0) {
 		DRM_DEV_ERROR(dsi->dev, "Failed to deassert DSI: %d\n", ret);
-		return;
+		goto runtime_put;
 	}
 
 	/*
@@ -1355,6 +1352,11 @@ nwl_dsi_bridge_atomic_pre_enable(struct drm_bridge *bridge,
 	 * pixels on the data lanes.
 	 */
 	drm_bridge_chain_enable(dsi->panel_bridge);
+
+	return;
+
+runtime_put:
+	pm_runtime_put_sync(dsi->dev);
 }
 
 static void
@@ -1374,26 +1376,13 @@ static int nwl_dsi_bridge_attach(struct drm_bridge *bridge,
 				 enum drm_bridge_attach_flags flags)
 {
 	struct nwl_dsi *dsi = bridge_to_dsi(bridge);
-	struct drm_bridge *panel_bridge;
-	struct drm_panel *panel;
 	struct clk *phy_parent;
 	int ret;
 
-	ret = drm_of_find_panel_or_bridge(dsi->dev->of_node, 1, 0, &panel,
-					  &panel_bridge);
-	if (ret)
-		return ret;
-
-	if (panel) {
-		panel_bridge = drm_panel_bridge_add_typed(panel,
-						DRM_MODE_CONNECTOR_DSI);
-		if (IS_ERR(panel_bridge))
-			return PTR_ERR(panel_bridge);
-	}
-	dsi->panel_bridge = panel_bridge;
-
-	if (!dsi->panel_bridge)
-		return -EPROBE_DEFER;
+	dsi->panel_bridge = devm_drm_of_get_bridge(dsi->dev, dsi->dev->of_node,
+						   1, 0);
+	if (IS_ERR(dsi->panel_bridge))
+		return PTR_ERR(dsi->panel_bridge);
 
 	phy_parent = devm_clk_get(dsi->dev, "phy_parent");
 	if (!IS_ERR_OR_NULL(phy_parent)) {
@@ -1420,10 +1409,38 @@ static int nwl_dsi_bridge_attach(struct drm_bridge *bridge,
 				 flags);
 }
 
-static void nwl_dsi_bridge_detach(struct drm_bridge *bridge)
-{	struct nwl_dsi *dsi = bridge_to_dsi(bridge);
+static u32 *nwl_bridge_atomic_get_input_bus_fmts(struct drm_bridge *bridge,
+						 struct drm_bridge_state *bridge_state,
+						 struct drm_crtc_state *crtc_state,
+						 struct drm_connector_state *conn_state,
+						 u32 output_fmt,
+						 unsigned int *num_input_fmts)
+{
+	u32 *input_fmts, input_fmt;
 
-	drm_of_panel_bridge_remove(dsi->dev->of_node, 1, 0);
+	*num_input_fmts = 0;
+
+	switch (output_fmt) {
+	/* If MEDIA_BUS_FMT_FIXED is tested, return default bus format */
+	case MEDIA_BUS_FMT_FIXED:
+		input_fmt = MEDIA_BUS_FMT_RGB888_1X24;
+		break;
+	case MEDIA_BUS_FMT_RGB888_1X24:
+	case MEDIA_BUS_FMT_RGB666_1X18:
+	case MEDIA_BUS_FMT_RGB565_1X16:
+		input_fmt = output_fmt;
+		break;
+	default:
+		return NULL;
+	}
+
+	input_fmts = kcalloc(1, sizeof(*input_fmts), GFP_KERNEL);
+	if (!input_fmts)
+		return NULL;
+	input_fmts[0] = input_fmt;
+	*num_input_fmts = 1;
+
+	return input_fmts;
 }
 
 static const struct drm_bridge_funcs nwl_dsi_bridge_funcs = {
@@ -1434,10 +1451,10 @@ static const struct drm_bridge_funcs nwl_dsi_bridge_funcs = {
 	.atomic_pre_enable	= nwl_dsi_bridge_atomic_pre_enable,
 	.atomic_enable		= nwl_dsi_bridge_atomic_enable,
 	.atomic_post_disable	= nwl_dsi_bridge_atomic_post_disable,
+	.atomic_get_input_bus_fmts = nwl_bridge_atomic_get_input_bus_fmts,
 	.mode_set		= nwl_dsi_bridge_mode_set,
 	.mode_valid		= nwl_dsi_bridge_mode_valid,
 	.attach			= nwl_dsi_bridge_attach,
-	.detach			= nwl_dsi_bridge_detach,
 };
 
 static void nwl_dsi_encoder_destroy(struct drm_encoder *encoder)
@@ -1926,7 +1943,7 @@ MODULE_DEVICE_TABLE(of, nwl_dsi_dt_ids);
 static const struct soc_device_attribute nwl_dsi_quirks_match[] = {
 	{ .soc_id = "i.MX8MQ", .revision = "2.0",
 	  .data = (void *)E11418_HS_MODE_QUIRK },
-	{ /* sentinel. */ },
+	{ /* sentinel. */ }
 };
 
 static int nwl_dsi_encoder_atomic_check(struct drm_encoder *encoder,
@@ -2064,6 +2081,7 @@ static int nwl_dsi_probe(struct platform_device *pdev)
 
 	ret = nwl_dsi_select_input(dsi);
 	if (ret < 0) {
+		pm_runtime_disable(dev);
 		mipi_dsi_host_unregister(&dsi->dsi_host);
 		return ret;
 	}

@@ -1035,7 +1035,7 @@ static struct caam_drv_ctx *get_drv_ctx(struct caam_ctx *ctx,
 
 			cpu = smp_processor_id();
 			drv_ctx = caam_drv_ctx_init(ctx->qidev, &cpu, desc);
-			if (!IS_ERR_OR_NULL(drv_ctx))
+			if (!IS_ERR(drv_ctx))
 				drv_ctx->op_type = type;
 
 			ctx->drv_ctx[type] = drv_ctx;
@@ -1150,7 +1150,7 @@ static struct aead_edesc *aead_edesc_alloc(struct aead_request *req,
 	struct caam_drv_ctx *drv_ctx;
 
 	drv_ctx = get_drv_ctx(ctx, encrypt ? ENCRYPT : DECRYPT);
-	if (IS_ERR_OR_NULL(drv_ctx))
+	if (IS_ERR(drv_ctx))
 		return (struct aead_edesc *)drv_ctx;
 
 	/* allocate space for base edesc and hw desc commands, link tables */
@@ -1360,7 +1360,7 @@ static inline int aead_crypt(struct aead_request *req, bool encrypt)
 
 	/* allocate extended descriptor */
 	edesc = aead_edesc_alloc(req, encrypt);
-	if (IS_ERR_OR_NULL(edesc))
+	if (IS_ERR(edesc))
 		return PTR_ERR(edesc);
 
 	/* Create and submit job descriptor */
@@ -1686,7 +1686,7 @@ static struct skcipher_edesc *skcipher_edesc_alloc(struct skcipher_request *req,
 	struct caam_drv_ctx *drv_ctx;
 
 	drv_ctx = get_drv_ctx(ctx, encrypt ? ENCRYPT : DECRYPT);
-	if (IS_ERR_OR_NULL(drv_ctx))
+	if (IS_ERR(drv_ctx))
 		return (struct skcipher_edesc *)drv_ctx;
 
 	src_nents = sg_nents_for_len(req->src, req->cryptlen);
@@ -2870,8 +2870,8 @@ static struct caam_aead_alg driver_aeads[] = {
 	{
 		.aead = {
 			.base = {
-				.cra_name = "tls10(hmac(sha1),cbc(aes))",
-				.cra_driver_name = "tls10-hmac-sha1-cbc-aes-caam-qi",
+				.cra_name = "tls11(hmac(sha1),cbc(aes))",
+				.cra_driver_name = "tls11-hmac-sha1-cbc-aes-caam-qi",
 				.cra_blocksize = AES_BLOCK_SIZE,
 			},
 			.setkey = tls_setkey,
@@ -2884,6 +2884,26 @@ static struct caam_aead_alg driver_aeads[] = {
 		.caam = {
 			.class1_alg_type = OP_ALG_ALGSEL_AES | OP_ALG_AAI_CBC,
 			.class2_alg_type = OP_ALG_ALGSEL_SHA1 |
+					   OP_ALG_AAI_HMAC_PRECOMP,
+		},
+	},
+	{
+		.aead = {
+			.base = {
+				.cra_name = "tls12(hmac(sha256),cbc(aes))",
+				.cra_driver_name = "tls12-hmac-sha256-cbc-aes-caam-qi",
+				.cra_blocksize = AES_BLOCK_SIZE,
+			},
+			.setkey = tls_setkey,
+			.setauthsize = tls_setauthsize,
+			.encrypt = tls_encrypt,
+			.decrypt = tls_decrypt,
+			.ivsize = AES_BLOCK_SIZE,
+			.maxauthsize = SHA256_DIGEST_SIZE,
+		},
+		.caam = {
+			.class1_alg_type = OP_ALG_ALGSEL_AES | OP_ALG_AAI_CBC,
+			.class2_alg_type = OP_ALG_ALGSEL_SHA256 |
 					   OP_ALG_AAI_HMAC_PRECOMP,
 		}
 	}

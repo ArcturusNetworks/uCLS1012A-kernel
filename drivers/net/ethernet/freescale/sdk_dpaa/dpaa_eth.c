@@ -688,7 +688,7 @@ static const struct net_device_ops dpa_private_ops = {
 	.ndo_init = dpa_ndo_init,
 	.ndo_set_features = dpa_set_features,
 	.ndo_fix_features = dpa_fix_features,
-	.ndo_do_ioctl = dpa_ioctl,
+	.ndo_eth_ioctl = dpa_ioctl,
 #ifdef CONFIG_NET_POLL_CONTROLLER
 	.ndo_poll_controller = dpaa_eth_poll_controller,
 #endif
@@ -714,7 +714,7 @@ static int dpa_private_napi_add(struct net_device *net_dev)
 
 		for (i = 0; i < qman_portal_max; i++)
 			netif_napi_add(net_dev, &percpu_priv->np[i].napi,
-					dpaa_eth_poll, DPA_NAPI_WEIGHT);
+					dpaa_eth_poll);
 	}
 
 	return 0;
@@ -777,9 +777,6 @@ static int dpa_private_netdev_init(struct net_device *net_dev)
 
 	/* Advertise GRO support */
 	net_dev->features |= NETIF_F_GRO;
-
-	/* Advertise NETIF_F_HW_ACCEL_MQ to avoid Tx timeout warnings */
-	net_dev->features |= NETIF_F_HW_ACCEL_MQ;
 
 	return dpa_netdev_init(net_dev, mac_addr, tx_timeout);
 }

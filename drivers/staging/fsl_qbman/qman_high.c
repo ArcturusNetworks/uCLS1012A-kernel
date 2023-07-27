@@ -3880,7 +3880,14 @@ int qman_ceetm_lni_enable_shaper(struct qm_ceetm_lni *lni, int coupled,
 					cpu_to_be16(lni->cr_token_bucket_limit);
 	config_opts.shaper_config.ertbl =
 					cpu_to_be16(lni->er_token_bucket_limit);
-	config_opts.shaper_config.mps = 60;
+
+	/* Errata A-010383: Do not use both OAL and MPS together on an LNI
+	 * shaper.
+	 */
+	if (oal)
+		config_opts.shaper_config.mps = 0;
+	else
+		config_opts.shaper_config.mps = 60;
 
 	return qman_ceetm_configure_mapping_shaper_tcfc(&config_opts);
 }
@@ -3908,7 +3915,15 @@ int qman_ceetm_lni_disable_shaper(struct qm_ceetm_lni *lni)
 	 */
 	config_opts.shaper_config.crtcr = 0xFFFFFF;
 	config_opts.shaper_config.ertcr = 0xFFFFFF;
-	config_opts.shaper_config.mps = 60;
+
+	/* Errata A-010383: Do not use both OAL and MPS together on an LNI
+	 * shaper.
+	 */
+	if (lni->oal)
+		config_opts.shaper_config.mps = 0;
+	else
+		config_opts.shaper_config.mps = 60;
+
 	lni->shaper_enable = 0;
 	return qman_ceetm_configure_mapping_shaper_tcfc(&config_opts);
 }
@@ -5584,8 +5599,9 @@ int qman_ceetm_cscn_dcp_get(struct qm_ceetm_ccg *ccg,
 }
 EXPORT_SYMBOL(qman_ceetm_cscn_dcp_get);
 
-int qman_ceetm_querycongestion(struct __qm_mcr_querycongestion *ccg_state,
-							unsigned int dcp_idx)
+static int __maybe_unused qman_ceetm_querycongestion
+				(struct __qm_mcr_querycongestion *ccg_state,
+				 unsigned int dcp_idx)
 {
 	struct qm_mc_command *mcc;
 	struct qm_mc_result *mcr;

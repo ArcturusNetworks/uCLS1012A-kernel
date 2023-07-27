@@ -53,6 +53,7 @@
 #include <linux/vmalloc.h>
 #include <linux/timer.h>
 #include <linux/compat.h>
+#include <linux/of.h>
 
 /* our own stuff */
 #include "hx280enc.h"
@@ -66,9 +67,9 @@
 static struct device *hantro_vc8000e_dev;
 static struct clk *hantro_clk_vc8000e;
 static struct clk *hantro_clk_vc8000e_bus;
+static bool hantro_skip_blkctrl;
 #define BLK_CTL_BASE        0x38330000
 #endif
-
 
 /********variables declaration related with race condition**********/
 
@@ -108,7 +109,7 @@ typedef struct {
 	u32 core_id; //core id for driver and sw internal use
 	u32 is_valid; //indicate this core is hantro's core or not
 	u32 is_reserved; //indicate this core is occupied by user or not
-	int pid; //indicate which process is occupying the core
+	struct file *filp; //indicate which instance is occupying the core
 	u32 irq_received; //indicate this core receives irq
 	u32 irq_status;
 	char *buffer;
@@ -120,14 +121,13 @@ typedef struct {
 	struct fasync_struct *async_queue;
 #ifndef VSI
 	struct device *dev;
-	struct mutex dev_mutex;
 #endif
 } hantroenc_t;
 
 static int ReserveIO(void);
 static void ReleaseIO(void);
 static void ResetAsic(hantroenc_t *dev);
-static int CheckCoreOccupation(hantroenc_t *dev);
+static int CheckCoreOccupation(hantroenc_t *dev, struct file *filp);
 
 #ifdef hantroenc_DEBUG
 static void dump_regs(unsigned long data);
@@ -146,7 +146,6 @@ static unsigned int sram_size;
 /* and this is our MAJOR; use 0 for dynamic allocation (recommended)*/
 static int hantroenc_major;
 static int total_core_num;
-static volatile unsigned int asic_status;
 /* dynamic allocation*/
 static hantroenc_t *hantroenc_data;
 //static unsigned int pcie = 0;          /* used in hantro_mmu.c*/
@@ -182,6 +181,9 @@ static int hantro_vc8000e_ctrlblk_reset(struct device *dev)
 	volatile u8 *iobase;
 	u32 val;
 
+	if (hantro_skip_blkctrl)
+		return 0;
+
 	//config vc8000e
 	hantro_vc8000e_clk_enable(dev);
 	iobase = (volatile u8 *)ioremap(BLK_CTL_BASE, 0x10000);
@@ -207,13 +209,7 @@ static int hantro_vc8000e_ctrlblk_reset(struct device *dev)
 
 static int hantro_vc8000e_power_on_disirq(hantroenc_t *hx280enc)
 {
-	//spin_lock_irq(&owner_lock);
-	mutex_lock(&hx280enc->dev_mutex);
-	//disable_irq(hx280enc->irq);
 	pm_runtime_get_sync(hx280enc->dev);
-	//enable_irq(hx280enc->irq);
-	mutex_unlock(&hx280enc->dev_mutex);
-	//spin_unlock_irq(&owner_lock);
 	return 0;
 }
 
@@ -275,13 +271,14 @@ static int WaitEncReady(hantroenc_t *dev, u32 *core_info, u32 *irq_status)
 	if (wait_event_timeout(enc_wait_queue,
 		CheckEncIrq(dev, core_info, irq_status), msecs_to_jiffies(200)) == 0)	{
 		pr_err("%s: wait interrupt timeout !\n", __func__);
+		up(&hantroenc_data[dev->core_id].core_suspend_sem);
 		return -1;
 	}
 
 	return 0;
 }
 
-static int CheckCoreOccupation(hantroenc_t *dev)
+static int CheckCoreOccupation(hantroenc_t *dev, struct file *filp)
 {
 	int ret = 0;
 	unsigned long flags;
@@ -289,9 +286,8 @@ static int CheckCoreOccupation(hantroenc_t *dev)
 	spin_lock_irqsave(&owner_lock, flags);
 	if (!dev->is_reserved) {
 		dev->is_reserved = 1;
-		dev->pid = current->pid;
+		dev->filp = filp;
 		ret = 1;
-		PDEBUG("%s pid=%d\n", __func__, dev->pid);
 	}
 
 	spin_unlock_irqrestore(&owner_lock, flags);
@@ -299,7 +295,7 @@ static int CheckCoreOccupation(hantroenc_t *dev)
 	return ret;
 }
 
-static int GetWorkableCore(hantroenc_t *dev, u32 *core_info, u32 *core_info_tmp)
+static int GetWorkableCore(hantroenc_t *dev, u32 *core_info, u32 *core_info_tmp, struct file *filp)
 {
 	int ret = 0;
 	u32 i = 0;
@@ -326,7 +322,7 @@ static int GetWorkableCore(hantroenc_t *dev, u32 *core_info, u32 *core_info_tmp)
 				if (i > total_core_num-1)
 					break;
 				core_id = i;
-				if (dev[core_id].is_valid && CheckCoreOccupation(&dev[core_id])) {
+				if (dev[core_id].is_valid && CheckCoreOccupation(&dev[core_id], filp)) {
 					*core_info_tmp = ((((*core_info_tmp & 0xF00) >> 8)-1)<<8)|(*core_info_tmp & 0x0FF);
 					*core_info_tmp = *core_info_tmp | (1<<core_id);
 					if (((*core_info_tmp & 0xF00) >> 8) == 0) {
@@ -348,7 +344,7 @@ static int GetWorkableCore(hantroenc_t *dev, u32 *core_info, u32 *core_info_tmp)
 	return ret;
 }
 
-static long ReserveEncoder(hantroenc_t *dev, u32 *core_info)
+static long ReserveEncoder(hantroenc_t *dev, u32 *core_info, struct file *filp)
 {
 	u32 core_info_tmp = 0;
 
@@ -359,13 +355,13 @@ static long ReserveEncoder(hantroenc_t *dev, u32 *core_info)
 	}
 
 	/* lock a core that has specified core id*/
-	if (wait_event_interruptible(hw_queue, GetWorkableCore(dev, core_info, &core_info_tmp) != 0))
+	if (wait_event_interruptible(hw_queue, GetWorkableCore(dev, core_info, &core_info_tmp, filp) != 0))
 		return -ERESTARTSYS;
 
 	return 0;
 }
 
-static void ReleaseEncoder(hantroenc_t *dev, u32 *core_info)
+static void ReleaseEncoder(hantroenc_t *dev, u32 *core_info, struct file *filp)
 {
 	unsigned long flags;
 	u32 core_num = 0;
@@ -382,16 +378,14 @@ static void ReleaseEncoder(hantroenc_t *dev, u32 *core_info)
 		if (core_mapping & 0x1)	{
 			core_id = i;
 			spin_lock_irqsave(&owner_lock, flags);
-			PDEBUG("dev[core_id].pid=%d,current->pid=%d\n", dev[core_id].pid, current->pid);
-			if (dev[core_id].is_reserved && dev[core_id].pid == current->pid) {
-				dev[core_id].pid = -1;
+			if (dev[core_id].is_reserved && dev[core_id].filp == filp) {
+				dev[core_id].filp = NULL;
 				dev[core_id].is_reserved = 0;
 				dev[core_id].irq_received = 0;
 				dev[core_id].irq_status = 0;
 				dev[core_id].reg_corrupt = 0;
-			} else if (dev[core_id].pid != current->pid)
-				pr_err("WARNING:pid(%d) is trying to release core reserved by pid(%d)\n",
-					current->pid, dev[core_id].pid);
+			} else if (dev[core_id].filp != filp)
+				pr_err("WARNING: trying to release core reserved by another instance\n");
 
 			spin_unlock_irqrestore(&owner_lock, flags);
 
@@ -547,7 +541,7 @@ static long hantroenc_ioctl(struct file *filp,
 
 		PDEBUG("Reserve ENC Cores\n");
 		__get_user(core_info, (u32 *)arg);
-		ret = ReserveEncoder(hantroenc_data, &core_info);
+		ret = ReserveEncoder(hantroenc_data, &core_info, filp);
 		if (ret == 0)
 			__put_user(core_info, (u32 *) arg);
 		return ret;
@@ -559,7 +553,7 @@ static long hantroenc_ioctl(struct file *filp,
 
 		PDEBUG("Release ENC Core\n");
 
-		ReleaseEncoder(hantroenc_data, &core_info);
+		ReleaseEncoder(hantroenc_data, &core_info, filp);
 
 		break;
 	}
@@ -673,8 +667,8 @@ static int hantroenc_release(struct inode *inode, struct file *filp)
 
 	for (core_id = 0; core_id < total_core_num; core_id++) {
 		spin_lock_irqsave(&owner_lock, flags);
-		if (dev[core_id].is_reserved == 1 && dev[core_id].pid == current->pid) {
-			dev[core_id].pid = -1;
+		if (dev[core_id].is_reserved == 1 && dev[core_id].filp == filp) {
+			dev[core_id].filp = NULL;
 			dev[core_id].is_reserved = 0;
 			dev[core_id].irq_received = 0;
 			dev[core_id].irq_status = 0;
@@ -699,18 +693,17 @@ static int hantroenc_release(struct inode *inode, struct file *filp)
 	return 0;
 }
 
+#ifdef CONFIG_COMPAT
 static long hantroenc_ioctl32(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	long err = 0;
 
 #define HX280ENC_IOCTL32(err, filp, cmd, arg) { \
-	mm_segment_t old_fs = get_fs(); \
-	set_fs(KERNEL_DS); \
 	err = hantroenc_ioctl(filp, cmd, arg); \
 	if (err) \
 		return err; \
-	set_fs(old_fs); \
 }
+#endif
 
 union {
 	unsigned long kux;
@@ -938,7 +931,7 @@ static int __init hantroenc_init(void)
 #if (LINUX_VERSION_CODE < KERNEL_VERSION(2, 6, 18))
 				SA_INTERRUPT | SA_SHIRQ,
 #else
-				IRQF_SHARED,
+				0,
 #endif
 				"hx280enc", (void *) &hantroenc_data[i]);
 			if (result == -EINVAL) {
@@ -1183,6 +1176,7 @@ static int hantro_vc8000e_probe(struct platform_device *pdev)
 {
 	int err = 0;
 	struct resource *res;
+	struct device_node *node;
 
 	hantro_vc8000e_dev = &pdev->dev;
 	res = platform_get_resource_byname(pdev, IORESOURCE_MEM, "regs_hantro_vc8000e");
@@ -1208,6 +1202,21 @@ static int hantro_vc8000e_probe(struct platform_device *pdev)
 
 	PDEBUG("hantro: vc8000e clock: 0x%lX, 0x%lX\n", clk_get_rate(hantro_clk_vc8000e), clk_get_rate(hantro_clk_vc8000e_bus));
 
+	/*
+	 * If integrate power-domains into blk-ctrl driver, vpu driver don't
+	 * need handle it again.
+	 */
+	node = of_parse_phandle(pdev->dev.of_node, "power-domains", 0);
+	if (!node) {
+		pr_err("hantro vc8000e: not get power-domains\n");
+		return -ENODEV;
+	}
+	if (!strcmp(node->name, "blk-ctl") || !strcmp(node->name, "blk-ctrl"))
+		hantro_skip_blkctrl = 1;
+	else
+		hantro_skip_blkctrl = 0;
+	of_node_put(node);
+
 	hantro_vc8000e_clk_enable(&pdev->dev);
 	pm_runtime_enable(&pdev->dev);
 	pm_runtime_get_sync(&pdev->dev);
@@ -1221,7 +1230,6 @@ static int hantro_vc8000e_probe(struct platform_device *pdev)
 
 	hantroenc_data->dev = &pdev->dev;
 	platform_set_drvdata(pdev, hantroenc_data);
-	mutex_init(&hantroenc_data->dev_mutex);
 
 	goto out;
 

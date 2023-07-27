@@ -55,6 +55,7 @@ static void free_pstore_private(struct pstore_private *private)
 		return;
 	if (private->record) {
 		kfree(private->record->buf);
+		kfree(private->record->priv);
 		kfree(private->record);
 	}
 	kfree(private);
@@ -266,7 +267,7 @@ static void parse_options(char *options)
  */
 static int pstore_show_options(struct seq_file *m, struct dentry *root)
 {
-	if (kmsg_bytes != PSTORE_DEFAULT_KMSG_BYTES)
+	if (kmsg_bytes != CONFIG_PSTORE_DEFAULT_KMSG_BYTES)
 		seq_printf(m, ",kmsg_bytes=%lu", kmsg_bytes);
 	return 0;
 }

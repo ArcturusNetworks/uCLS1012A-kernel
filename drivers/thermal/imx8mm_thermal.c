@@ -22,6 +22,7 @@
 #define TPS			0x4
 #define TRITSR			0x20	/* TMU immediate temp */
 
+#define TER_ADC_PD		BIT(30)
 #define TER_EN			BIT(31)
 #define TRITSR_TEMP0_VAL_MASK	0xff
 #define TRITSR_TEMP1_VAL_MASK	0xff0000
@@ -78,8 +79,14 @@ static int imx8mm_tmu_get_temp(void *data, int *temp)
 	u32 val;
 
 	val = readl_relaxed(tmu->base + TRITSR) & TRITSR_TEMP0_VAL_MASK;
+
+	/*
+	 * Do not validate against the V bit (bit 31) due to errata
+	 * ERR051272: TMU: Bit 31 of registers TMU_TSCR/TMU_TRITSR/TMU_TRATSR invalid
+	 */
+
 	*temp = val * 1000;
-	if (*temp < VER1_TEMP_LOW_LIMIT)
+	if (*temp < VER1_TEMP_LOW_LIMIT || *temp > VER2_TEMP_HIGH_LIMIT)
 		return -EAGAIN;
 
 	return 0;
@@ -112,18 +119,19 @@ static int imx8mp_tmu_get_temp(void *data, int *temp)
 	return 0;
 }
 
-static int tmu_get_temp(void *data, int *temp)
+static int tmu_get_temp(struct thermal_zone_device *tz, int *temp)
 {
-	struct tmu_sensor *sensor = data;
+	struct tmu_sensor *sensor = tz->devdata;
 	struct imx8mm_tmu *tmu = sensor->priv;
 
-	return tmu->socdata->get_temp(data, temp);
+	return tmu->socdata->get_temp(sensor, temp);
 }
 
-static int tmu_get_trend(void *p, int trip, enum thermal_trend *trend)
+static int tmu_get_trend(struct thermal_zone_device *tz, int trip,
+			 enum thermal_trend *trend)
 {
+	struct tmu_sensor *sensor = tz->devdata;
 	int trip_temp;
-	struct tmu_sensor *sensor = p;
 
 	if (!sensor->tzd)
 		return 0;
@@ -131,16 +139,17 @@ static int tmu_get_trend(void *p, int trip, enum thermal_trend *trend)
 	trip_temp = (trip == IMX_TRIP_PASSIVE) ? sensor->temp_passive : sensor->temp_critical;
 
 	if (sensor->tzd->temperature >= (trip_temp - IMX_TEMP_PASSIVE_COOL_DELTA))
-		*trend = THERMAL_TREND_RAISE_FULL;
+		*trend = THERMAL_TREND_RAISING;
 	else
-		*trend = THERMAL_TREND_DROP_FULL;
+		*trend = THERMAL_TREND_DROPPING;
 
 	return 0;
 }
 
-static int tmu_set_trip_temp(void *p, int trip, int temp)
+static int tmu_set_trip_temp(struct thermal_zone_device *tz, int trip, int temp)
+
 {
-	struct tmu_sensor *sensor = p;
+	struct tmu_sensor *sensor = tz->devdata;
 
 	if (trip == IMX_TRIP_CRITICAL)
 		sensor->temp_critical = temp;
@@ -151,7 +160,7 @@ static int tmu_set_trip_temp(void *p, int trip, int temp)
 	return 0;
 }
 
-static struct thermal_zone_of_device_ops tmu_tz_ops = {
+static const struct thermal_zone_device_ops tmu_tz_ops = {
 	.get_temp = tmu_get_temp,
 	.get_trend = tmu_get_trend,
 	.set_trip_temp = tmu_set_trip_temp,
@@ -163,6 +172,8 @@ static void imx8mm_tmu_enable(struct imx8mm_tmu *tmu, bool enable)
 
 	val = readl_relaxed(tmu->base + TER);
 	val = enable ? (val | TER_EN) : (val & ~TER_EN);
+	if (tmu->socdata->version == TMU_VER2)
+		val = enable ? (val & ~TER_ADC_PD) : (val | TER_ADC_PD);
 	writel_relaxed(val, tmu->base + TER);
 }
 
@@ -213,14 +224,15 @@ static int imx8mm_tmu_probe(struct platform_device *pdev)
 	for (i = 0; i < data->num_sensors; i++) {
 		tmu->sensors[i].priv = tmu;
 		tmu->sensors[i].tzd =
-			devm_thermal_zone_of_sensor_register(&pdev->dev, i,
-							     &tmu->sensors[i],
-							     &tmu_tz_ops);
+			devm_thermal_of_zone_register(&pdev->dev, i,
+						      &tmu->sensors[i],
+						      &tmu_tz_ops);
 		if (IS_ERR(tmu->sensors[i].tzd)) {
+			ret = PTR_ERR(tmu->sensors[i].tzd);
 			dev_err(&pdev->dev,
 				"failed to register thermal zone sensor[%d]: %d\n",
 				i, ret);
-			return PTR_ERR(tmu->sensors[i].tzd);
+			goto disable_clk;
 		}
 		tmu->sensors[i].hw_id = i;
 
@@ -264,6 +276,10 @@ static int imx8mm_tmu_probe(struct platform_device *pdev)
 	imx8mm_tmu_enable(tmu, true);
 
 	return 0;
+
+disable_clk:
+	clk_disable_unprepare(tmu->clk);
+	return ret;
 }
 
 static int imx8mm_tmu_remove(struct platform_device *pdev)

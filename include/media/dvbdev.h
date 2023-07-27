@@ -126,6 +126,7 @@ struct dvb_adapter {
  * struct dvb_device - represents a DVB device node
  *
  * @list_head:	List head with all DVB devices
+ * @ref:	reference counter
  * @fops:	pointer to struct file_operations
  * @adapter:	pointer to the adapter that holds this device node
  * @type:	type of the device, as defined by &enum dvb_device_type.
@@ -156,6 +157,7 @@ struct dvb_adapter {
  */
 struct dvb_device {
 	struct list_head list_head;
+	struct kref ref;
 	const struct file_operations *fops;
 	struct dvb_adapter *adapter;
 	enum dvb_device_type type;
@@ -186,6 +188,20 @@ struct dvb_device {
 
 	void *priv;
 };
+
+/**
+ * dvb_device_get - Increase dvb_device reference
+ *
+ * @dvbdev:	pointer to struct dvb_device
+ */
+struct dvb_device *dvb_device_get(struct dvb_device *dvbdev);
+
+/**
+ * dvb_device_put - Decrease dvb_device reference
+ *
+ * @dvbdev:	pointer to struct dvb_device
+ */
+void dvb_device_put(struct dvb_device *dvbdev);
 
 /**
  * dvb_register_adapter - Registers a new DVB adapter
@@ -231,28 +247,16 @@ int dvb_register_device(struct dvb_adapter *adap,
 /**
  * dvb_remove_device - Remove a registered DVB device
  *
- * This does not free memory.  To do that, call dvb_free_device().
+ * This does not free memory. dvb_free_device() will do that when
+ * reference counter is empty
  *
  * @dvbdev:	pointer to struct dvb_device
  */
 void dvb_remove_device(struct dvb_device *dvbdev);
 
-/**
- * dvb_free_device - Free memory occupied by a DVB device.
- *
- * Call dvb_unregister_device() before calling this function.
- *
- * @dvbdev:	pointer to struct dvb_device
- */
-void dvb_free_device(struct dvb_device *dvbdev);
 
 /**
  * dvb_unregister_device - Unregisters a DVB device
- *
- * This is a combination of dvb_remove_device() and dvb_free_device().
- * Using this function is usually a mistake, and is often an indicator
- * for a use-after-free bug (when a userspace process keeps a file
- * handle to a detached device).
  *
  * @dvbdev:	pointer to struct dvb_device
  */
@@ -321,7 +325,7 @@ int dvb_create_media_graph(struct dvb_adapter *adap,
 int dvb_generic_open(struct inode *inode, struct file *file);
 
 /**
- * dvb_generic_close - Digital TV close function, used by DVB devices
+ * dvb_generic_release - Digital TV close function, used by DVB devices
  *
  * @inode: pointer to &struct inode.
  * @file: pointer to &struct file.
@@ -421,7 +425,7 @@ void dvb_module_release(struct i2c_client *client);
  * dvb_attach - attaches a DVB frontend into the DVB core.
  *
  * @FUNCTION:	function on a frontend module to be called.
- * @ARGS...:	@FUNCTION arguments.
+ * @ARGS:	@FUNCTION arguments.
  *
  * This ancillary function loads a frontend module in runtime and runs
  * the @FUNCTION function there, with @ARGS.

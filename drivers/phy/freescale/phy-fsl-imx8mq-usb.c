@@ -574,7 +574,7 @@ static int imx8mq_chg_primary_detect(struct imx8mq_usb_phy *imx_phy)
 	val |= PHY_CTRL1_VDATSRCENB0 | PHY_CTRL1_VDATDETENB0;
 	writel(val, imx_phy->base + PHY_CTRL1);
 
-	usleep_range(1000, 2000);
+	msleep(40);
 
 	/* Check if D- is less than VDAT_REF to determine an SDP per BC 1.2 */
 	val = readl(imx_phy->base + PHY_STS0);
@@ -595,7 +595,7 @@ static int imx8mq_phy_chg_secondary_det(struct imx8mq_usb_phy *imx_phy)
 	writel(val | PHY_CTRL1_VDATSRCENB0 | PHY_CTRL1_VDATDETENB0 |
 		PHY_CTRL1_CHRGSEL, imx_phy->base + PHY_CTRL1);
 
-	usleep_range(1000, 2000);
+	msleep(40);
 
 	/*
 	 * Per BC 1.2, check voltage of D+:
@@ -747,7 +747,7 @@ static const struct phy_ops imx8mq_usb_phy_ops = {
 	.owner		= THIS_MODULE,
 };
 
-static struct phy_ops imx8mp_usb_phy_ops = {
+static const struct phy_ops imx8mp_usb_phy_ops = {
 	.init		= imx8mp_usb_phy_init,
 	.power_on	= imx8mq_phy_power_on,
 	.power_off	= imx8mq_phy_power_off,
@@ -769,7 +769,6 @@ static int imx8mq_usb_phy_probe(struct platform_device *pdev)
 	struct phy_provider *phy_provider;
 	struct device *dev = &pdev->dev;
 	struct imx8mq_usb_phy *imx_phy;
-	struct resource *res;
 	const struct phy_ops *phy_ops;
 
 	imx_phy = devm_kzalloc(dev, sizeof(*imx_phy), GFP_KERNEL);
@@ -782,8 +781,7 @@ static int imx8mq_usb_phy_probe(struct platform_device *pdev)
 		return PTR_ERR(imx_phy->clk);
 	}
 
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	imx_phy->base = devm_ioremap_resource(dev, res);
+	imx_phy->base = devm_platform_ioremap_resource(pdev, 0);
 	if (IS_ERR(imx_phy->base))
 		return PTR_ERR(imx_phy->base);
 
@@ -810,6 +808,8 @@ static int imx8mq_usb_phy_probe(struct platform_device *pdev)
 	imx8m_get_phy_tuning_data(imx_phy);
 
 	debug_create_files(imx_phy);
+
+	device_set_wakeup_capable(dev, true);
 
 	phy_provider = devm_of_phy_provider_register(dev, of_phy_simple_xlate);
 

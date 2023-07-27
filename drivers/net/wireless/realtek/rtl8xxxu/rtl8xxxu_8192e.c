@@ -1554,8 +1554,6 @@ static int rtl8192eu_power_on(struct rtl8xxxu_priv *priv)
 	u32 val32;
 	int ret;
 
-	ret = 0;
-
 	val32 = rtl8xxxu_read32(priv, REG_SYS_CFG);
 	if (val32 & SYS_CFG_SPS_LDO_SEL) {
 		rtl8xxxu_write8(priv, REG_LDO_SW_CTRL, 0xc3);
@@ -1671,6 +1669,11 @@ static void rtl8192e_enable_rf(struct rtl8xxxu_priv *priv)
 	val8 = rtl8xxxu_read8(priv, REG_PAD_CTRL1);
 	val8 &= ~BIT(0);
 	rtl8xxxu_write8(priv, REG_PAD_CTRL1, val8);
+
+	/*
+	 * Fix transmission failure of rtl8192e.
+	 */
+	rtl8xxxu_write8(priv, REG_TXPAUSE, 0x00);
 }
 
 struct rtl8xxxu_fileops rtl8192eu_fops = {

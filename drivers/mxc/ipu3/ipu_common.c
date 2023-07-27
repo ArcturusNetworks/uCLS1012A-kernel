@@ -1,6 +1,6 @@
 /*
  * Copyright 2005-2016 Freescale Semiconductor, Inc. All Rights Reserved.
- * Copyright 2020 NXP
+ * Copyright 2020,2021 NXP
  */
 /*
  * The code contained herein is licensed under the GNU General Public
@@ -599,8 +599,8 @@ static int ipu_probe(struct platform_device *pdev)
 	if (!bypass_reset) {
 		ret = device_reset(&pdev->dev);
 		if (ret) {
-			dev_err(&pdev->dev, "failed to reset: %d\n", ret);
-			return ret;
+			ipu->online = false;
+			return dev_err_probe(&pdev->dev, ret, "failed to reset\n");
 		}
 
 		ipu_mem_reset(ipu);
@@ -2353,7 +2353,7 @@ int32_t ipu_enable_channel(struct ipu_soc *ipu, ipu_channel_t channel)
 	case MEM_ROT_VF_MEM:
 		if (ipu->rot_use_count > 0)
 			ipu_conf |= IPU_CONF_ROT_EN;
-		/* fall through */
+		fallthrough;
 	case MEM_PP_MEM:
 	case MEM_PRP_ENC_MEM:
 	case MEM_PRP_VF_MEM:

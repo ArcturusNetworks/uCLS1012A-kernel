@@ -242,8 +242,7 @@
 	};
 
 	sound-hdmi {
-		compatible = "fsl,imx6q-audio-hdmi",
-			     "fsl,imx-audio-hdmi";
+		compatible = "fsl,imx6qdl-audio-hdmi";
 		model = "imx-audio-hdmi";
 		hdmi-controller = <&hdmi_audio>;
 	};
@@ -252,8 +251,8 @@
 		compatible = "fsl,imx-audio-si476x",
 			   "fsl,imx-tuner-si476x";
 		model = "imx-radio-si4763";
-		ssi-controller = <&ssi2>;
-		fm-controller = <&si476x_codec>;
+		audio-cpu = <&ssi2>;
+		audio-codec = <&si476x_codec>;
 		mux-int-port = <2>;
 		mux-ext-port = <5>;
 	};
@@ -332,7 +331,7 @@
 			};
 
 			light-sensor@44 {
-				compatible = "fsl,isl29023";
+				compatible = "isil,isl29023";
 				reg = <0x44>;
 				rext = <499>;
 				interrupt-parent = <&gpio5>;
@@ -425,7 +424,7 @@
 	pinctrl-0 = <&pinctrl_ecspi1 &pinctrl_ecspi1_cs>;
 	status = "disabled"; /* pin conflict with WEIM NOR */
 
-	flash: m25p80@0 {
+	flash: flash@0 {
 		#address-cells = <1>;
 		#size-cells = <1>;
 		compatible = "st,m25p32", "jedec,spi-nor";
@@ -448,6 +447,9 @@
 	pinctrl-names = "default";
 	pinctrl-0 = <&pinctrl_enet>;
 	phy-mode = "rgmii-id";
+	/delete-property/ interrupts;
+	fsl,magic-packet;
+	fsl,err006687-workaround-present;
 	fsl,magic-packet;
 	status = "okay";
 };

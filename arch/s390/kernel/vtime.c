@@ -13,7 +13,7 @@
 #include <linux/timex.h>
 #include <linux/types.h>
 #include <linux/time.h>
-
+#include <asm/alternative.h>
 #include <asm/vtimer.h>
 #include <asm/vtime.h>
 #include <asm/cpu_mf.h>
@@ -130,11 +130,7 @@ static int do_account_vtime(struct task_struct *tsk)
 	clock = S390_lowcore.last_update_clock;
 	asm volatile(
 		"	stpt	%0\n"	/* Store current cpu timer value */
-#ifdef CONFIG_HAVE_MARCH_Z9_109_FEATURES
 		"	stckf	%1"	/* Store current tod clock value */
-#else
-		"	stck	%1"	/* Store current tod clock value */
-#endif
 		: "=Q" (S390_lowcore.last_update_timer),
 		  "=Q" (S390_lowcore.last_update_clock)
 		: : "cc");

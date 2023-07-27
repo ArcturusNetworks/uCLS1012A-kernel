@@ -92,6 +92,7 @@
 #define SVC_I3C_MINTCLR      0x094
 #define SVC_I3C_MINTMASKED   0x098
 #define SVC_I3C_MERRWARN     0x09C
+#define   SVC_I3C_MERRWARN_NACK BIT(2)
 #define SVC_I3C_MDMACTRL     0x0A0
 #define SVC_I3C_MDATACTRL    0x0AC
 #define   SVC_I3C_MDATACTRL_FLUSHTB BIT(0)
@@ -947,19 +948,19 @@ static int svc_i3c_master_read(struct svc_i3c_master *master,
 			completed = true;
 
 		if (time_after(jiffies, start + msecs_to_jiffies(1000))) {
-			dev_dbg(master->dev, "<%s> timeout\n", __func__);
+			dev_dbg(master->dev, "I3C read timeout\n");
 			return -ETIMEDOUT;
 		}
 
 		mdctrl = readl(master->regs + SVC_I3C_MDATACTRL);
 		count = SVC_I3C_MDATACTRL_RXCOUNT(mdctrl);
 		if (offset + count > len) {
-			dev_err(master->dev, "<%s> recv len too long!\n",
-				__func__);
+			dev_err(master->dev, "I3C receive length too long!\n");
 			return -EINVAL;
 		}
 		for (i = 0; i < count; i++)
 			in[offset + i] = readl(master->regs + SVC_I3C_MRDATAB);
+
 		offset += count;
 	}
 
@@ -1014,12 +1015,18 @@ static int svc_i3c_master_xfer(struct svc_i3c_master *master,
 	if (ret)
 		goto emit_stop;
 
+	if (readl(master->regs + SVC_I3C_MERRWARN) & SVC_I3C_MERRWARN_NACK) {
+		ret = -ENXIO;
+		goto emit_stop;
+	}
+
 	if (rnw)
 		ret = svc_i3c_master_read(master, in, xfer_len);
 	else
 		ret = svc_i3c_master_write(master, out, xfer_len);
 	if (ret < 0)
 		goto emit_stop;
+
 	if (rnw)
 		*read_len = ret;
 
@@ -1027,6 +1034,7 @@ static int svc_i3c_master_xfer(struct svc_i3c_master *master,
 				 SVC_I3C_MSTATUS_COMPLETE(reg), 0, 1000);
 	if (ret)
 		goto emit_stop;
+
 	writel(SVC_I3C_MINT_COMPLETE, master->regs + SVC_I3C_MSTATUS);
 
 	if (!continued) {
@@ -1034,7 +1042,7 @@ static int svc_i3c_master_xfer(struct svc_i3c_master *master,
 
 		/* Wait idle if stop is sent. */
 		readl_poll_timeout(master->regs + SVC_I3C_MSTATUS, reg,
-				   !SVC_I3C_MSTATUS_STATE(reg), 0, 1000);
+				   SVC_I3C_MSTATUS_STATE_IDLE(reg), 0, 1000);
 	}
 
 	return 0;
@@ -1094,12 +1102,6 @@ static void svc_i3c_master_start_xfer_locked(struct svc_i3c_master *master)
 	if (!xfer)
 		return;
 
-	ret = pm_runtime_resume_and_get(master->dev);
-	if (ret < 0) {
-		dev_err(master->dev, "<%s> Cannot get runtime PM.\n", __func__);
-		return;
-	}
-
 	svc_i3c_master_clear_merrwarn(master);
 	svc_i3c_master_flush_fifo(master);
 
@@ -1113,9 +1115,6 @@ static void svc_i3c_master_start_xfer_locked(struct svc_i3c_master *master)
 		if (ret)
 			break;
 	}
-
-	pm_runtime_mark_last_busy(master->dev);
-	pm_runtime_put_autosuspend(master->dev);
 
 	xfer->ret = ret;
 	complete(&xfer->comp);
@@ -1137,6 +1136,13 @@ static void svc_i3c_master_enqueue_xfer(struct svc_i3c_master *master,
 					struct svc_i3c_xfer *xfer)
 {
 	unsigned long flags;
+	int ret;
+
+	ret = pm_runtime_resume_and_get(master->dev);
+	if (ret < 0) {
+		dev_err(master->dev, "<%s> Cannot get runtime PM.\n", __func__);
+		return;
+	}
 
 	init_completion(&xfer->comp);
 	spin_lock_irqsave(&master->xferqueue.lock, flags);
@@ -1147,6 +1153,9 @@ static void svc_i3c_master_enqueue_xfer(struct svc_i3c_master *master,
 		svc_i3c_master_start_xfer_locked(master);
 	}
 	spin_unlock_irqrestore(&master->xferqueue.lock, flags);
+
+	pm_runtime_mark_last_busy(master->dev);
+	pm_runtime_put_autosuspend(master->dev);
 }
 
 static bool
@@ -1451,6 +1460,37 @@ static const struct i3c_master_controller_ops svc_i3c_master_ops = {
 	.disable_ibi = svc_i3c_master_disable_ibi,
 };
 
+static int svc_i3c_master_prepare_clks(struct svc_i3c_master *master)
+{
+	int ret = 0;
+
+	ret = clk_prepare_enable(master->pclk);
+	if (ret)
+		return ret;
+
+	ret = clk_prepare_enable(master->fclk);
+	if (ret) {
+		clk_disable_unprepare(master->pclk);
+		return ret;
+	}
+
+	ret = clk_prepare_enable(master->sclk);
+	if (ret) {
+		clk_disable_unprepare(master->pclk);
+		clk_disable_unprepare(master->fclk);
+		return ret;
+	}
+
+	return 0;
+}
+
+static void svc_i3c_master_unprepare_clks(struct svc_i3c_master *master)
+{
+	clk_disable_unprepare(master->pclk);
+	clk_disable_unprepare(master->fclk);
+	clk_disable_unprepare(master->sclk);
+}
+
 static int svc_i3c_master_probe(struct platform_device *pdev)
 {
 	struct device *dev = &pdev->dev;
@@ -1483,24 +1523,16 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
 
 	master->dev = dev;
 
-	ret = clk_prepare_enable(master->pclk);
+	ret = svc_i3c_master_prepare_clks(master);
 	if (ret)
 		return ret;
-
-	ret = clk_prepare_enable(master->fclk);
-	if (ret)
-		goto err_disable_pclk;
-
-	ret = clk_prepare_enable(master->sclk);
-	if (ret)
-		goto err_disable_fclk;
 
 	INIT_WORK(&master->hj_work, svc_i3c_master_hj_work);
 	INIT_WORK(&master->ibi_work, svc_i3c_master_ibi_work);
 	ret = devm_request_irq(dev, master->irq, svc_i3c_master_irq_handler,
 			       IRQF_NO_SUSPEND, "svc-i3c-irq", master);
 	if (ret)
-		goto err_disable_sclk;
+		goto err_disable_clks;
 
 	master->free_slots = GENMASK(SVC_I3C_MAX_DEVS - 1, 0);
 
@@ -1514,7 +1546,7 @@ static int svc_i3c_master_probe(struct platform_device *pdev)
 					 GFP_KERNEL);
 	if (!master->ibi.slots) {
 		ret = -ENOMEM;
-		goto err_disable_sclk;
+		goto err_disable_clks;
 	}
 
 	platform_set_drvdata(pdev, master);
@@ -1544,14 +1576,8 @@ rpm_disable:
 	pm_runtime_set_suspended(&pdev->dev);
 	pm_runtime_disable(&pdev->dev);
 
-err_disable_sclk:
-	clk_disable_unprepare(master->sclk);
-
-err_disable_fclk:
-	clk_disable_unprepare(master->fclk);
-
-err_disable_pclk:
-	clk_disable_unprepare(master->pclk);
+err_disable_clks:
+	svc_i3c_master_unprepare_clks(master);
 
 	return ret;
 }
@@ -1593,10 +1619,7 @@ static int __maybe_unused svc_i3c_runtime_suspend(struct device *dev)
 	struct svc_i3c_master *master = dev_get_drvdata(dev);
 
 	svc_i3c_save_regs(master);
-
-	clk_disable_unprepare(master->pclk);
-	clk_disable_unprepare(master->fclk);
-	clk_disable_unprepare(master->sclk);
+	svc_i3c_master_unprepare_clks(master);
 	pinctrl_pm_select_sleep_state(dev);
 
 	return 0;
@@ -1605,29 +1628,13 @@ static int __maybe_unused svc_i3c_runtime_suspend(struct device *dev)
 static int __maybe_unused svc_i3c_runtime_resume(struct device *dev)
 {
 	struct svc_i3c_master *master = dev_get_drvdata(dev);
-	int ret = 0;
 
 	pinctrl_pm_select_default_state(dev);
-	ret = clk_prepare_enable(master->pclk);
-	if (ret)
-		return ret;
-
-	ret = clk_prepare_enable(master->fclk);
-	if (ret) {
-		clk_disable_unprepare(master->pclk);
-		return ret;
-	}
-
-	ret = clk_prepare_enable(master->sclk);
-	if (ret) {
-		clk_disable_unprepare(master->pclk);
-		clk_disable_unprepare(master->fclk);
-		return ret;
-	}
+	svc_i3c_master_prepare_clks(master);
 
 	svc_i3c_restore_regs(master);
 
-	return ret;
+	return 0;
 }
 
 static const struct dev_pm_ops svc_i3c_pm_ops = {

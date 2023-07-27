@@ -91,7 +91,7 @@ static Dwarf_Line *cu_getsrc_die(Dwarf_Die *cu_die, Dwarf_Addr addr)
 			return NULL;
 	} while (laddr == addr);
 	l++;
-	/* Going foward to find the statement line */
+	/* Going forward to find the statement line */
 	do {
 		line = dwarf_onesrcline(lines, l++);
 		if (!line || dwarf_lineaddr(line, &laddr) != 0 ||
@@ -113,14 +113,14 @@ static Dwarf_Line *cu_getsrc_die(Dwarf_Die *cu_die, Dwarf_Addr addr)
  *
  * Find a line number and file name for @addr in @cu_die.
  */
-int cu_find_lineinfo(Dwarf_Die *cu_die, unsigned long addr,
-		    const char **fname, int *lineno)
+int cu_find_lineinfo(Dwarf_Die *cu_die, Dwarf_Addr addr,
+		     const char **fname, int *lineno)
 {
 	Dwarf_Line *line;
 	Dwarf_Die die_mem;
 	Dwarf_Addr faddr;
 
-	if (die_find_realfunc(cu_die, (Dwarf_Addr)addr, &die_mem)
+	if (die_find_realfunc(cu_die, addr, &die_mem)
 	    && die_entrypc(&die_mem, &faddr) == 0 &&
 	    faddr == addr) {
 		*fname = dwarf_decl_file(&die_mem);
@@ -128,7 +128,7 @@ int cu_find_lineinfo(Dwarf_Die *cu_die, unsigned long addr,
 		goto out;
 	}
 
-	line = cu_getsrc_die(cu_die, (Dwarf_Addr)addr);
+	line = cu_getsrc_die(cu_die, addr);
 	if (line && dwarf_lineno(line, lineno) == 0) {
 		*fname = dwarf_linesrc(line, NULL, NULL);
 		if (!*fname)
@@ -177,7 +177,7 @@ int cu_walk_functions_at(Dwarf_Die *cu_die, Dwarf_Addr addr,
  * die_get_linkage_name - Get the linkage name of the object
  * @dw_die: A DIE of the object
  *
- * Get the linkage name attiribute of given @dw_die.
+ * Get the linkage name attribute of given @dw_die.
  * For C++ binary, the linkage name will be the mangled symbol.
  */
 const char *die_get_linkage_name(Dwarf_Die *dw_die)
@@ -308,21 +308,8 @@ static int die_get_attr_udata(Dwarf_Die *tp_die, unsigned int attr_name,
 {
 	Dwarf_Attribute attr;
 
-	if (dwarf_attr(tp_die, attr_name, &attr) == NULL ||
+	if (dwarf_attr_integrate(tp_die, attr_name, &attr) == NULL ||
 	    dwarf_formudata(&attr, result) != 0)
-		return -ENOENT;
-
-	return 0;
-}
-
-/* Get attribute and translate it as a sdata */
-static int die_get_attr_sdata(Dwarf_Die *tp_die, unsigned int attr_name,
-			      Dwarf_Sword *result)
-{
-	Dwarf_Attribute attr;
-
-	if (dwarf_attr(tp_die, attr_name, &attr) == NULL ||
-	    dwarf_formsdata(&attr, result) != 0)
 		return -ENOENT;
 
 	return 0;
@@ -467,9 +454,9 @@ int die_get_data_member_location(Dwarf_Die *mb_die, Dwarf_Word *offs)
 /* Get the call file index number in CU DIE */
 static int die_get_call_fileno(Dwarf_Die *in_die)
 {
-	Dwarf_Sword idx;
+	Dwarf_Word idx;
 
-	if (die_get_attr_sdata(in_die, DW_AT_call_file, &idx) == 0)
+	if (die_get_attr_udata(in_die, DW_AT_call_file, &idx) == 0)
 		return (int)idx;
 	else
 		return -ENOENT;
@@ -478,9 +465,9 @@ static int die_get_call_fileno(Dwarf_Die *in_die)
 /* Get the declared file index number in CU DIE */
 static int die_get_decl_fileno(Dwarf_Die *pdie)
 {
-	Dwarf_Sword idx;
+	Dwarf_Word idx;
 
-	if (die_get_attr_sdata(pdie, DW_AT_decl_file, &idx) == 0)
+	if (die_get_attr_udata(pdie, DW_AT_decl_file, &idx) == 0)
 		return (int)idx;
 	else
 		return -ENOENT;
@@ -739,7 +726,7 @@ static int __die_walk_instances_cb(Dwarf_Die *inst, void *data)
  * @data: user data
  *
  * Walk on the instances of give @in_die. @in_die must be an inlined function
- * declartion. This returns the return value of @callback if it returns
+ * declaration. This returns the return value of @callback if it returns
  * non-zero value, or -ENOENT if there is no instance.
  */
 int die_walk_instances(Dwarf_Die *or_die, int (*callback)(Dwarf_Die *, void *),

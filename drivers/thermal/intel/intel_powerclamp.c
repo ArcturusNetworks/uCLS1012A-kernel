@@ -57,13 +57,13 @@
 
 static unsigned int target_mwait;
 static struct dentry *debug_dir;
+static bool poll_pkg_cstate_enable;
 
 /* user selected target */
 static unsigned int set_target_ratio;
 static unsigned int current_ratio;
 static bool should_skip;
-static bool reduce_irq;
-static atomic_t idle_wakeup_counter;
+
 static unsigned int control_cpu; /* The cpu assigned to collect stat and update
 				  * control parameters. default to BSP but BSP
 				  * can be offlined.
@@ -262,6 +262,9 @@ static unsigned int get_compensation(int ratio)
 {
 	unsigned int comp = 0;
 
+	if (!poll_pkg_cstate_enable)
+		return 0;
+
 	/* we only use compensation if all adjacent ones are good */
 	if (ratio == 1 &&
 		cal_data[ratio].confidence >= CONFIDENCE_OK &&
@@ -285,9 +288,6 @@ static unsigned int get_compensation(int ratio)
 			cal_data[ratio + 1].steady_comp) / 3;
 	}
 
-	/* REVISIT: simple penalty of double idle injection */
-	if (reduce_irq)
-		comp = ratio;
 	/* do not exceed limit */
 	if (comp + ratio >= MAX_TARGET_RATIO)
 		comp = MAX_TARGET_RATIO - ratio - 1;
@@ -301,13 +301,9 @@ static void adjust_compensation(int target_ratio, unsigned int win)
 	struct powerclamp_calibration_data *d = &cal_data[target_ratio];
 
 	/*
-	 * adjust compensations if confidence level has not been reached or
-	 * there are too many wakeups during the last idle injection period, we
-	 * cannot trust the data for compensation.
+	 * adjust compensations if confidence level has not been reached.
 	 */
-	if (d->confidence >= CONFIDENCE_OK ||
-		atomic_read(&idle_wakeup_counter) >
-		win * num_online_cpus())
+	if (d->confidence >= CONFIDENCE_OK)
 		return;
 
 	delta = set_target_ratio - current_ratio;
@@ -347,14 +343,7 @@ static bool powerclamp_adjust_controls(unsigned int target_ratio,
 	tsc_last = tsc_now;
 
 	adjust_compensation(target_ratio, win);
-	/*
-	 * too many external interrupts, set flag such
-	 * that we can take measure later.
-	 */
-	reduce_irq = atomic_read(&idle_wakeup_counter) >=
-		2 * win * num_online_cpus();
 
-	atomic_set(&idle_wakeup_counter, 0);
 	/* if we are above target+guard, skip */
 	return set_target_ratio + guard <= current_ratio;
 }
@@ -528,21 +517,20 @@ static int start_power_clamp(void)
 
 	set_target_ratio = clamp(set_target_ratio, 0U, MAX_TARGET_RATIO - 1);
 	/* prevent cpu hotplug */
-	get_online_cpus();
+	cpus_read_lock();
 
 	/* prefer BSP */
-	control_cpu = 0;
-	if (!cpu_online(control_cpu))
-		control_cpu = smp_processor_id();
+	control_cpu = cpumask_first(cpu_online_mask);
 
 	clamping = true;
-	schedule_delayed_work(&poll_pkg_cstate_work, 0);
+	if (poll_pkg_cstate_enable)
+		schedule_delayed_work(&poll_pkg_cstate_work, 0);
 
 	/* start one kthread worker per online cpu */
 	for_each_online_cpu(cpu) {
 		start_power_clamp_worker(cpu);
 	}
-	put_online_cpus();
+	cpus_read_unlock();
 
 	return 0;
 }
@@ -556,12 +544,9 @@ static void end_power_clamp(void)
 	 * stop faster.
 	 */
 	clamping = false;
-	if (bitmap_weight(cpu_clamping_mask, num_possible_cpus())) {
-		for_each_set_bit(i, cpu_clamping_mask, num_possible_cpus()) {
-			pr_debug("clamping worker for cpu %d alive, destroy\n",
-				 i);
-			stop_power_clamp_worker(i);
-		}
+	for_each_set_bit(i, cpu_clamping_mask, num_possible_cpus()) {
+		pr_debug("clamping worker for cpu %d alive, destroy\n", i);
+		stop_power_clamp_worker(i);
 	}
 }
 
@@ -605,11 +590,15 @@ static int powerclamp_get_max_state(struct thermal_cooling_device *cdev,
 static int powerclamp_get_cur_state(struct thermal_cooling_device *cdev,
 				 unsigned long *state)
 {
-	if (true == clamping)
-		*state = pkg_cstate_ratio_cur;
-	else
+	if (clamping) {
+		if (poll_pkg_cstate_enable)
+			*state = pkg_cstate_ratio_cur;
+		else
+			*state = set_target_ratio;
+	} else {
 		/* to save power, do not poll idle ratio while not clamping */
 		*state = -1; /* indicates invalid state */
+	}
 
 	return 0;
 }
@@ -641,7 +630,7 @@ exit_set:
 }
 
 /* bind to generic thermal layer as cooling device*/
-static struct thermal_cooling_device_ops powerclamp_cooling_ops = {
+static const struct thermal_cooling_device_ops powerclamp_cooling_ops = {
 	.get_max_state = powerclamp_get_max_state,
 	.get_cur_state = powerclamp_get_cur_state,
 	.set_cur_state = powerclamp_set_cur_state,
@@ -705,10 +694,8 @@ static enum cpuhp_state hp_state;
 static int __init powerclamp_init(void)
 {
 	int retval;
-	int bitmap_size;
 
-	bitmap_size = BITS_TO_LONGS(num_possible_cpus()) * sizeof(long);
-	cpu_clamping_mask = kzalloc(bitmap_size, GFP_KERNEL);
+	cpu_clamping_mask = bitmap_zalloc(num_possible_cpus(), GFP_KERNEL);
 	if (!cpu_clamping_mask)
 		return -ENOMEM;
 
@@ -734,6 +721,9 @@ static int __init powerclamp_init(void)
 		goto exit_unregister;
 	}
 
+	if (topology_max_packages() == 1 && topology_max_die_per_package() == 1)
+		poll_pkg_cstate_enable = true;
+
 	cooling_dev = thermal_cooling_device_register("intel_powerclamp", NULL,
 						&powerclamp_cooling_ops);
 	if (IS_ERR(cooling_dev)) {
@@ -753,7 +743,7 @@ exit_free_thread:
 exit_unregister:
 	cpuhp_remove_state_nocalls(hp_state);
 exit_free:
-	kfree(cpu_clamping_mask);
+	bitmap_free(cpu_clamping_mask);
 	return retval;
 }
 module_init(powerclamp_init);
@@ -764,7 +754,7 @@ static void __exit powerclamp_exit(void)
 	cpuhp_remove_state_nocalls(hp_state);
 	free_percpu(worker_data);
 	thermal_cooling_device_unregister(cooling_dev);
-	kfree(cpu_clamping_mask);
+	bitmap_free(cpu_clamping_mask);
 
 	cancel_delayed_work_sync(&poll_pkg_cstate_work);
 	debugfs_remove_recursive(debug_dir);

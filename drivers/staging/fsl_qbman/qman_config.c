@@ -251,7 +251,7 @@ static const struct qman_error_info_mdata error_mdata[] = {
 	QMAN_ERR_MDATA(0x01FF, 24, "FQD cache tag memory 3"),
 	QMAN_ERR_MDATA(0x0FFF, 512, "FQD cache memory"),
 	QMAN_ERR_MDATA(0x07FF, 128, "SFDR memory"),
-	QMAN_ERR_MDATA(0x01FF, 72, "WQ context memory"),
+	QMAN_ERR_MDATA(0x01FF, 84, "WQ context memory"),
 	QMAN_ERR_MDATA(0x00FF, 240, "CGR memory"),
 	QMAN_ERR_MDATA(0x00FF, 302, "Internal Order Restoration List memory"),
 	QMAN_ERR_MDATA(0x7FFF, 256, "SW portal ring memory"),
@@ -479,7 +479,7 @@ static int qman_pfdr(struct reserved_mem *rmem)
 }
 RESERVEDMEM_OF_DECLARE(qman_fbpr, "fsl,qman-pfdr", qman_pfdr);
 
-size_t get_qman_fqd_size()
+size_t get_qman_fqd_size(void)
 {
 	return fqd_sz;
 }

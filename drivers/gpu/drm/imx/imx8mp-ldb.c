@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0+
 /*
- * Copyright 2020 NXP
+ * Copyright 2020,2022 NXP
  */
 
 #include <linux/clk.h>
 #include <linux/component.h>
+#include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/of_device.h>
 #include <linux/phy/phy.h>
@@ -111,7 +112,6 @@ imx8mp_ldb_encoder_atomic_mode_set(struct drm_encoder *encoder,
 	struct imx8mp_ldb_channel *imx8mp_ldb_ch =
 						enc_to_imx8mp_ldb_ch(encoder);
 	struct imx8mp_ldb *imx8mp_ldb = imx8mp_ldb_ch->imx8mp_ldb;
-	struct ldb_channel *ldb_ch = &imx8mp_ldb_ch->base;
 	struct ldb *ldb = &imx8mp_ldb->base;
 	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
 	unsigned long serial_clk;
@@ -127,14 +127,6 @@ imx8mp_ldb_encoder_atomic_mode_set(struct drm_encoder *encoder,
 
 	serial_clk = mode->clock * (ldb->dual ? 3500UL : 7000UL);
 	clk_set_rate(imx8mp_ldb->clk_root, serial_clk);
-
-	if (!ldb_ch->bus_format) {
-		struct drm_connector *connector = connector_state->connector;
-		struct drm_display_info *di = &connector->display_info;
-
-		if (di->num_bus_formats)
-			ldb_ch->bus_format = di->bus_formats[0];
-	}
 }
 
 static void imx8mp_ldb_encoder_disable(struct drm_encoder *encoder)
@@ -170,19 +162,19 @@ imx8mp_ldb_encoder_atomic_check(struct drm_encoder *encoder,
 	struct ldb_channel *ldb_ch = &imx8mp_ldb_ch->base;
 	struct imx8mp_ldb *imx8mp_ldb = imx8mp_ldb_ch->imx8mp_ldb;
 	struct ldb *ldb = &imx8mp_ldb->base;
-	struct drm_display_info *di = &conn_state->connector->display_info;
 	struct drm_display_mode *mode = &crtc_state->adjusted_mode;
-	u32 bus_format = ldb_ch->bus_format;
+	struct drm_bridge_state *bridge_state = NULL;
+	struct drm_bridge *bridge;
 
-	/* Bus format description in DT overrides connector display info. */
-	if (!bus_format && di->num_bus_formats) {
-		bus_format = di->bus_formats[0];
-		imx_crtc_state->bus_flags = di->bus_flags;
-	} else {
-		bus_format = ldb_ch->bus_format;
-		imx_crtc_state->bus_flags = imx8mp_ldb_ch->bus_flags;
-	}
-	switch (bus_format) {
+	bridge = drm_bridge_chain_get_first_bridge(encoder);
+	bridge_state = drm_atomic_get_new_bridge_state(crtc_state->state, bridge);
+
+	if (!ldb_ch->bus_format)
+		ldb_ch->bus_format = bridge_state->output_bus_cfg.format;
+
+	imx_crtc_state->bus_flags = bridge_state->input_bus_cfg.flags;
+
+	switch (ldb_ch->bus_format) {
 	case MEDIA_BUS_FMT_RGB666_1X7X3_SPWG:
 		imx_crtc_state->bus_format = MEDIA_BUS_FMT_RGB666_1X18;
 		break;
@@ -287,7 +279,14 @@ imx8mp_ldb_bind(struct device *dev, struct device *master, void *data)
 	if (IS_ERR(imx8mp_ldb->clk_root))
 		return PTR_ERR(imx8mp_ldb->clk_root);
 
-	for (i = 0; i < LDB_CH_NUM; i++) {
+	for_each_child_of_node(np, child) {
+		ret = of_property_read_u32(child, "reg", &i);
+		if (ret || i < 0 || i > 1)
+			return -EINVAL;
+
+		if (!of_device_is_available(child))
+			continue;
+
 		encoder[i] = &imx8mp_ldb->channel[i].encoder;
 
 		drm_encoder_helper_add(encoder[i],
@@ -344,10 +343,9 @@ get_phy:
 
 	for (i = 0; i < LDB_CH_NUM; i++) {
 		ldb_ch = &imx8mp_ldb->channel[i].base;
-		if (!ldb_ch->is_valid) {
-			drm_encoder_cleanup(encoder[i]);
+
+		if (!ldb_ch->is_valid)
 			continue;
-		}
 
 		ret = imx_drm_encoder_parse_of(drm, encoder[i], ldb_ch->child);
 		if (ret)

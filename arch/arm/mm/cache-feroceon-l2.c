@@ -1,11 +1,8 @@
+// SPDX-License-Identifier: GPL-2.0-only
 /*
  * arch/arm/mm/cache-feroceon-l2.c - Feroceon L2 cache controller support
  *
  * Copyright (C) 2008 Marvell Semiconductor
- *
- * This file is licensed under the terms of the GNU General Public
- * License version 2.  This program is licensed "as is" without any
- * warranty of any kind, whether express or implied.
  *
  * References:
  * - Unified Layer 2 Cache for Feroceon CPU Cores,
@@ -49,9 +46,9 @@ static inline unsigned long l2_get_va(unsigned long paddr)
 	 * we simply install a virtual mapping for it only for the
 	 * TLB lookup to occur, hence no need to flush the untouched
 	 * memory mapping afterwards (note: a cache flush may happen
-	 * in some circumstances depending on the path taken in kunmap_local).
+	 * in some circumstances depending on the path taken in kunmap_atomic).
 	 */
-	void *vaddr = kmap_local_pfn(paddr >> PAGE_SHIFT);
+	void *vaddr = kmap_atomic_pfn(paddr >> PAGE_SHIFT);
 	return (unsigned long)vaddr + (paddr & ~PAGE_MASK);
 #else
 	return __phys_to_virt(paddr);
@@ -61,7 +58,7 @@ static inline unsigned long l2_get_va(unsigned long paddr)
 static inline void l2_put_va(unsigned long vaddr)
 {
 #ifdef CONFIG_HIGHMEM
-	kunmap_local((void *)vaddr);
+	kunmap_atomic((void *)vaddr);
 #endif
 }
 

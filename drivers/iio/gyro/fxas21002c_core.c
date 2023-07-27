@@ -7,9 +7,9 @@
 
 #include <linux/interrupt.h>
 #include <linux/module.h>
-#include <linux/of_irq.h>
 #include <linux/pm.h>
 #include <linux/pm_runtime.h>
+#include <linux/property.h>
 #include <linux/regmap.h>
 #include <linux/regulator/consumer.h>
 
@@ -150,10 +150,10 @@ struct fxas21002c_data {
 	struct regulator *vddio;
 
 	/*
-	 * DMA (thus cache coherency maintenance) requires the
-	 * transfer buffers to live in their own cache lines.
+	 * DMA (thus cache coherency maintenance) may require the
+	 * transfer buffers live in their own cache lines.
 	 */
-	s16 buffer[8] ____cacheline_aligned;
+	s16 buffer[8] __aligned(IIO_DMA_MINALIGN);
 };
 
 enum fxas21002c_channel_index {
@@ -727,11 +727,23 @@ static irqreturn_t fxas21002c_trigger_handler(int irq, void *p)
 	struct iio_poll_func *pf = p;
 	struct iio_dev *indio_dev = pf->indio_dev;
 	struct fxas21002c_data *data = iio_priv(indio_dev);
+	struct device *dev = regmap_get_device(data->regmap);
 	int ret;
 
 	mutex_lock(&data->lock);
+	ret = fxas21002c_pm_get(data);
+	if (ret < 0)
+		goto out_unlock;
+
 	ret = regmap_bulk_read(data->regmap, FXAS21002C_REG_OUT_X_MSB,
 			       data->buffer, CHANNEL_SCAN_MAX * sizeof(s16));
+	if (ret < 0) {
+		dev_err(dev, "failed to read data into buffer %d\n", ret);
+		fxas21002c_pm_put(data);
+		goto out_unlock;
+	}
+
+	ret = fxas21002c_pm_put(data);
 	if (ret < 0)
 		goto out_unlock;
 
@@ -822,7 +834,6 @@ static int fxas21002c_trigger_probe(struct fxas21002c_data *data)
 {
 	struct device *dev = regmap_get_device(data->regmap);
 	struct iio_dev *indio_dev = dev_get_drvdata(dev);
-	struct device_node *np = indio_dev->dev.of_node;
 	unsigned long irq_trig;
 	bool irq_open_drain;
 	int irq1;
@@ -831,8 +842,7 @@ static int fxas21002c_trigger_probe(struct fxas21002c_data *data)
 	if (!data->irq)
 		return 0;
 
-	irq1 = of_irq_get_byname(np, "INT1");
-
+	irq1 = fwnode_irq_get_byname(dev_fwnode(dev), "INT1");
 	if (irq1 == data->irq) {
 		dev_info(dev, "using interrupt line INT1\n");
 		ret = regmap_field_write(data->regmap_fields[F_INT_CFG_DRDY],
@@ -843,11 +853,11 @@ static int fxas21002c_trigger_probe(struct fxas21002c_data *data)
 
 	dev_info(dev, "using interrupt line INT2\n");
 
-	irq_open_drain = of_property_read_bool(np, "drive-open-drain");
+	irq_open_drain = device_property_read_bool(dev, "drive-open-drain");
 
 	data->dready_trig = devm_iio_trigger_alloc(dev, "%s-dev%d",
 						   indio_dev->name,
-						   indio_dev->id);
+						   iio_device_id(indio_dev));
 	if (!data->dready_trig)
 		return -ENOMEM;
 
@@ -870,7 +880,6 @@ static int fxas21002c_trigger_probe(struct fxas21002c_data *data)
 	if (ret < 0)
 		return ret;
 
-	data->dready_trig->dev.parent = dev;
 	data->dready_trig->ops = &fxas21002c_trigger_ops;
 	iio_trigger_set_drvdata(data->dready_trig, indio_dev);
 

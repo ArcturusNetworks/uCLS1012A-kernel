@@ -1,5 +1,5 @@
 /*
- * Copyright 2019-2021 NXP
+ * Copyright 2019-2022 NXP
  *
  * this program is free software; you can redistribute it and/or modify
  * it under the terms of the gnu general public license version 2 as
@@ -480,7 +480,6 @@ int cdns_mhdp_power_on_imx8qm(struct cdns_mhdp_device *mhdp)
 {
 	struct imx_mhdp_device *imx_mhdp =
 				container_of(mhdp, struct imx_mhdp_device, mhdp);
-
 	/* Power on PM Domains */
 
 	imx8qm_attach_pm_domains(imx_mhdp);
@@ -507,19 +506,19 @@ int cdns_mhdp_power_on_imx8qm(struct cdns_mhdp_device *mhdp)
 int cdns_mhdp_power_off_imx8qm(struct cdns_mhdp_device *mhdp)
 {
 	struct imx_mhdp_device *imx_mhdp =
-		container_of(mhdp, struct imx_mhdp_device, mhdp);
+				container_of(mhdp, struct imx_mhdp_device, mhdp);
 
 	imx8qm_phy_reset(0);
+
+	/* disable pixel and ipg clock */
 	imx8qm_pixel_clk_disable(imx_mhdp);
 	imx8qm_ipg_clk_disable(imx_mhdp);
 
-	/* Power off PM Domains */
 	imx8qm_detach_pm_domains(imx_mhdp);
-
 	return 0;
 }
 
-void cdns_mhdp_plat_init_imx8qm(struct cdns_mhdp_device *mhdp)
+void cdns_mhdp_plat_deinit_imx8qm(struct cdns_mhdp_device *mhdp)
 {
 	struct imx_mhdp_device *imx_mhdp =
 				container_of(mhdp, struct imx_mhdp_device, mhdp);
@@ -529,7 +528,7 @@ void cdns_mhdp_plat_init_imx8qm(struct cdns_mhdp_device *mhdp)
 	imx8qm_pixel_link_invalid(dual_mode);
 }
 
-void cdns_mhdp_plat_deinit_imx8qm(struct cdns_mhdp_device *mhdp)
+void cdns_mhdp_plat_init_imx8qm(struct cdns_mhdp_device *mhdp)
 {
 	struct imx_mhdp_device *imx_mhdp =
 				container_of(mhdp, struct imx_mhdp_device, mhdp);
@@ -544,12 +543,16 @@ void cdns_mhdp_pclk_rate_imx8qm(struct cdns_mhdp_device *mhdp)
 	struct imx_mhdp_device *imx_mhdp =
 				container_of(mhdp, struct imx_mhdp_device, mhdp);
 
+	mutex_lock(&mhdp->iolock);
+
 	/* set pixel clock before video mode setup */
 	imx8qm_pixel_clk_disable(imx_mhdp);
 
 	imx8qm_pixel_clk_set_rate(imx_mhdp, imx_mhdp->mhdp.mode.clock * 1000);
 
 	imx8qm_pixel_clk_enable(imx_mhdp);
+
+	mutex_unlock(&mhdp->iolock);
 
 	/* Config pixel link mux */
 	imx8qm_pixel_link_mux(imx_mhdp);
@@ -597,7 +600,7 @@ static int cdns_mhdp_firmware_load(struct imx_mhdp_device *imx_mhdp)
 		goto out;
 
 	if (!imx_mhdp->fw) {
-		ret = request_firmware_nowait(THIS_MODULE, FW_ACTION_NOHOTPLUG,
+		ret = request_firmware_nowait(THIS_MODULE, FW_ACTION_NOUEVENT,
 						imx_mhdp->firmware_name,
 						imx_mhdp->mhdp.dev, GFP_KERNEL,
 						imx_mhdp,

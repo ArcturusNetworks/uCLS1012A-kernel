@@ -25,12 +25,12 @@
 	};
 
 	i2c_rpbus_0: i2c-rpbus-0 {
-		compatible = "fsl,i2c-rpbus";
+		compatible = "fsl,i2c-rpbus-v2";
 		status = "disabled";
 	};
 
 	i2c_rpbus_1: i2c-rpbus-1 {
-		compatible = "fsl,i2c-rpbus";
+		compatible = "fsl,i2c-rpbus-v2";
 		status = "disabled";
 	};
 
@@ -61,5 +61,10 @@
 		#pwm-cells = <3>;
 		fsl,pwm-channel-number = <6>;
 		status = "disabled";
+	};
+
+	rpmsg_sensor: rpmsg-sensor {
+		compatible = "nxp,rpmsg-iio-pedometer";
+		status = "okay";
 	};
 };

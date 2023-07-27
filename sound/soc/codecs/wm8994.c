@@ -3853,7 +3853,12 @@ static irqreturn_t wm1811_jackdet_irq(int irq, void *data)
 	} else {
 		dev_dbg(component->dev, "Jack not detected\n");
 
+		/* Release wm8994->accdet_lock to avoid deadlock:
+		 * cancel_delayed_work_sync() takes wm8994->mic_work internal
+		 * lock and wm1811_mic_work takes wm8994->accdet_lock */
+		mutex_unlock(&wm8994->accdet_lock);
 		cancel_delayed_work_sync(&wm8994->mic_work);
+		mutex_lock(&wm8994->accdet_lock);
 
 		snd_soc_component_update_bits(component, WM8958_MICBIAS2,
 				    WM8958_MICB2_DISCH, WM8958_MICB2_DISCH);
@@ -4351,7 +4356,7 @@ static int wm8994_component_probe(struct snd_soc_component *component)
 	}
 	if ((reg & WM8994_GPN_FN_MASK) != WM8994_GP_FN_PIN_SPECIFIC) {
 		wm8994->lrclk_shared[0] = 1;
-		wm8994_dai[0].symmetric_rates = 1;
+		wm8994_dai[0].symmetric_rate = 1;
 	} else {
 		wm8994->lrclk_shared[0] = 0;
 	}
@@ -4363,7 +4368,7 @@ static int wm8994_component_probe(struct snd_soc_component *component)
 	}
 	if ((reg & WM8994_GPN_FN_MASK) != WM8994_GP_FN_PIN_SPECIFIC) {
 		wm8994->lrclk_shared[1] = 1;
-		wm8994_dai[1].symmetric_rates = 1;
+		wm8994_dai[1].symmetric_rate = 1;
 	} else {
 		wm8994->lrclk_shared[1] = 0;
 	}
@@ -4614,7 +4619,6 @@ static const struct snd_soc_component_driver soc_component_dev_wm8994 = {
 	.idle_bias_on		= 1,
 	.use_pmdown_time	= 1,
 	.endianness		= 1,
-	.non_legacy_dai_naming	= 1,
 };
 
 static int wm8994_probe(struct platform_device *pdev)

@@ -23,27 +23,15 @@
 				SNDRV_PCM_FMTBIT_S24_LE)
 
 static struct fsl_esai_soc_data fsl_esai_vf610 = {
-	.imx = false,
 	.reset_at_xrun = true,
-	.use_edma = false,
 };
 
 static struct fsl_esai_soc_data fsl_esai_imx35 = {
-	.imx = true,
 	.reset_at_xrun = true,
-	.use_edma = false,
 };
 
 static struct fsl_esai_soc_data fsl_esai_imx6ull = {
-	.imx = true,
 	.reset_at_xrun = false,
-	.use_edma = false,
-};
-
-static struct fsl_esai_soc_data fsl_esai_imx8qm = {
-	.imx = true,
-	.reset_at_xrun = false,
-	.use_edma = true,
 };
 
 static irqreturn_t esai_isr(int irq, void *devid)
@@ -255,7 +243,7 @@ static int fsl_esai_set_dai_sysclk(struct snd_soc_dai *dai, int clk_id,
 
 	if (IS_ERR(clksrc)) {
 		dev_err(dai->dev, "no assigned %s clock\n",
-				clk_id % 2 ? "extal" : "fsys");
+			(clk_id % 2) ? "extal" : "fsys");
 		return PTR_ERR(clksrc);
 	}
 	clk_rate = clk_get_rate(clksrc);
@@ -317,8 +305,8 @@ static int fsl_esai_set_bclk(struct snd_soc_dai *dai, bool tx, u32 freq)
 	u32 sub, ratio = hck_rate / freq;
 	int ret;
 
-	/* Don't apply for fully slave mode or unchanged bclk */
-	if (esai_priv->slave_mode[tx] || esai_priv->sck_rate[tx] == freq)
+	/* Don't apply for fully consumer mode or unchanged bclk */
+	if (esai_priv->consumer_mode[tx] || esai_priv->sck_rate[tx] == freq)
 		return 0;
 
 	if (ratio * freq > hck_rate)
@@ -427,12 +415,12 @@ static int fsl_esai_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 		return -EINVAL;
 	}
 
-	if (esai_priv->slave_mode[0] == esai_priv->slave_mode[1]) {
+	if (esai_priv->consumer_mode[0] == esai_priv->consumer_mode[1]) {
 		/* DAI clock master masks */
 		switch (fmt & SND_SOC_DAIFMT_MASTER_MASK) {
 		case SND_SOC_DAIFMT_CBM_CFM:
-			esai_priv->slave_mode[0] = true;
-			esai_priv->slave_mode[1] = true;
+			esai_priv->consumer_mode[0] = true;
+			esai_priv->consumer_mode[1] = true;
 			break;
 		case SND_SOC_DAIFMT_CBS_CFM:
 			xccr |= ESAI_xCCR_xCKD;
@@ -442,8 +430,8 @@ static int fsl_esai_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 			break;
 		case SND_SOC_DAIFMT_CBS_CFS:
 			xccr |= ESAI_xCCR_xFSD | ESAI_xCCR_xCKD;
-			esai_priv->slave_mode[0] = false;
-			esai_priv->slave_mode[1] = false;
+			esai_priv->consumer_mode[0] = false;
+			esai_priv->consumer_mode[1] = false;
 			break;
 		default:
 			return -EINVAL;
@@ -460,7 +448,7 @@ static int fsl_esai_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 
 		mask = ESAI_xCCR_xCKP | ESAI_xCCR_xHCKP | ESAI_xCCR_xFSP |
 			ESAI_xCCR_xFSD | ESAI_xCCR_xCKD;
-		if (esai_priv->slave_mode[0])
+		if (esai_priv->consumer_mode[0])
 			regmap_update_bits(esai_priv->regmap,
 					REG_ESAI_RCCR, mask, xccr);
 		else
@@ -469,7 +457,7 @@ static int fsl_esai_set_dai_fmt(struct snd_soc_dai *dai, unsigned int fmt)
 						xccr | ESAI_xCCR_xFSD |
 							ESAI_xCCR_xCKD);
 
-		if (esai_priv->slave_mode[1])
+		if (esai_priv->consumer_mode[1])
 			regmap_update_bits(esai_priv->regmap,
 						REG_ESAI_TCCR, mask, xccr);
 		else
@@ -507,11 +495,6 @@ static int fsl_esai_startup(struct snd_pcm_substream *substream,
 				   ESAI_xCCR_xDC(esai_priv->slots));
 	}
 
-	if (esai_priv->soc->use_edma)
-		snd_pcm_hw_constraint_step(substream->runtime, 0,
-					   SNDRV_PCM_HW_PARAM_PERIOD_SIZE,
-					   tx ? esai_priv->dma_params_tx.maxburst :
-					   esai_priv->dma_params_rx.maxburst);
 	if (esai_priv->sw_mix)
 		fsl_esai_mix_open(substream, &esai_priv->mix[tx]);
 
@@ -842,7 +825,8 @@ static struct snd_soc_dai_driver fsl_esai_dai = {
 };
 
 static const struct snd_soc_component_driver fsl_esai_component = {
-	.name		= "fsl-esai",
+	.name			= "fsl-esai",
+	.legacy_dai_naming	= 1,
 };
 
 static const struct reg_default fsl_esai_reg_defaults[] = {
@@ -965,6 +949,9 @@ static const struct regmap_config fsl_esai_regmap_config = {
 	.cache_type = REGCACHE_FLAT,
 };
 
+static int fsl_esai_runtime_resume(struct device *dev);
+static int fsl_esai_runtime_suspend(struct device *dev);
+
 static int fsl_esai_probe(struct platform_device *pdev)
 {
 	struct device_node *np = pdev->dev.of_node;
@@ -982,19 +969,13 @@ static int fsl_esai_probe(struct platform_device *pdev)
 	snprintf(esai_priv->name, sizeof(esai_priv->name), "%pOFn", np);
 
 	esai_priv->soc = of_device_get_match_data(&pdev->dev);
-	if (!esai_priv->soc) {
-		dev_err(&pdev->dev, "failed to get soc data\n");
-		return -ENODEV;
-	}
 
 	/* Get the addresses and IRQ */
-	res = platform_get_resource(pdev, IORESOURCE_MEM, 0);
-	regs = devm_ioremap_resource(&pdev->dev, res);
+	regs = devm_platform_get_and_ioremap_resource(pdev, 0, &res);
 	if (IS_ERR(regs))
 		return PTR_ERR(regs);
 
-	esai_priv->regmap = devm_regmap_init_mmio_clk(&pdev->dev,
-			NULL, regs, &fsl_esai_regmap_config);
+	esai_priv->regmap = devm_regmap_init_mmio(&pdev->dev, regs, &fsl_esai_regmap_config);
 	if (IS_ERR(esai_priv->regmap)) {
 		dev_err(&pdev->dev, "failed to init regmap: %ld\n",
 				PTR_ERR(esai_priv->regmap));
@@ -1055,35 +1036,40 @@ static int fsl_esai_probe(struct platform_device *pdev)
 	if (!esai_priv->synchronous) {
 		if (of_property_read_bool(pdev->dev.of_node, "fsl,txm-rxs")) {
 			/* 0 --  rx,  1 -- tx */
-			esai_priv->slave_mode[0] = true;
-			esai_priv->slave_mode[1] = false;
+			esai_priv->consumer_mode[0] = true;
+			esai_priv->consumer_mode[1] = false;
 		}
 
 		if (of_property_read_bool(pdev->dev.of_node, "fsl,txs-rxm")) {
 			/* 0 --  rx,  1 -- tx */
-			esai_priv->slave_mode[0] = false;
-			esai_priv->slave_mode[1] = true;
+			esai_priv->consumer_mode[0] = false;
+			esai_priv->consumer_mode[1] = true;
 		}
 	}
 
 	/* Implement full symmetry for synchronous mode */
 	if (esai_priv->synchronous) {
-		fsl_esai_dai.symmetric_rates = 1;
+		fsl_esai_dai.symmetric_rate = 1;
 		fsl_esai_dai.symmetric_channels = 1;
-		fsl_esai_dai.symmetric_samplebits = 1;
+		fsl_esai_dai.symmetric_sample_bits = 1;
 	}
 
 	dev_set_drvdata(&pdev->dev, esai_priv);
-
 	spin_lock_init(&esai_priv->lock);
+	pm_runtime_enable(&pdev->dev);
+	if (!pm_runtime_enabled(&pdev->dev)) {
+		ret = fsl_esai_runtime_resume(&pdev->dev);
+		if (ret)
+			goto err_pm_disable;
+	}
 
-	ret = clk_prepare_enable(esai_priv->coreclk);
-	if (ret)
-		return ret;
+	ret = pm_runtime_resume_and_get(&pdev->dev);
+	if (ret < 0)
+		goto err_pm_get_sync;
 
 	ret = fsl_esai_hw_init(esai_priv);
 	if (ret)
-		return ret;
+		goto err_pm_get_sync;
 
 	esai_priv->tx_mask = 0xFFFFFFFF;
 	esai_priv->rx_mask = 0xFFFFFFFF;
@@ -1094,32 +1080,45 @@ static int fsl_esai_probe(struct platform_device *pdev)
 	regmap_write(esai_priv->regmap, REG_ESAI_RSMA, 0);
 	regmap_write(esai_priv->regmap, REG_ESAI_RSMB, 0);
 
-	clk_disable_unprepare(esai_priv->coreclk);
+	ret = pm_runtime_put_sync(&pdev->dev);
+	if (ret < 0 && ret != -ENOSYS)
+		goto err_pm_get_sync;
+
+	/*
+	 * Register platform component before registering cpu dai for there
+	 * is not defer probe for platform component in snd_soc_add_pcm_runtime().
+	 */
+	if (of_property_read_bool(pdev->dev.of_node, "client-dais")) {
+		esai_priv->sw_mix = true;
+		ret = fsl_esai_mix_probe(&pdev->dev, &esai_priv->mix[0], &esai_priv->mix[1]);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to init imx pcm dma: %d\n", ret);
+			goto err_pm_get_sync;
+		}
+	} else {
+		ret = imx_pcm_dma_init(pdev);
+		if (ret) {
+			dev_err(&pdev->dev, "failed to init imx pcm dma: %d\n", ret);
+			goto err_pm_get_sync;
+		}
+	}
 
 	ret = devm_snd_soc_register_component(&pdev->dev, &fsl_esai_component,
 					      &fsl_esai_dai, 1);
 	if (ret) {
 		dev_err(&pdev->dev, "failed to register DAI: %d\n", ret);
-		return ret;
+		goto err_pm_get_sync;
 	}
 
 	INIT_WORK(&esai_priv->work, fsl_esai_hw_reset);
 
-	pm_runtime_enable(&pdev->dev);
+	return ret;
 
-	regcache_cache_only(esai_priv->regmap, true);
-
-	if (of_property_read_bool(pdev->dev.of_node, "client-dais")) {
-		esai_priv->sw_mix = true;
-		ret = fsl_esai_mix_probe(&pdev->dev, &esai_priv->mix[0], &esai_priv->mix[1]);
-		if (ret)
-			dev_err(&pdev->dev, "failed to init imx pcm dma: %d\n", ret);
-	} else {
-		ret = imx_pcm_dma_init(pdev, IMX_ESAI_DMABUF_SIZE);
-		if (ret)
-			dev_err(&pdev->dev, "failed to init imx pcm dma: %d\n", ret);
-	}
-
+err_pm_get_sync:
+	if (!pm_runtime_status_suspended(&pdev->dev))
+		fsl_esai_runtime_suspend(&pdev->dev);
+err_pm_disable:
+	pm_runtime_disable(&pdev->dev);
 	return ret;
 }
 
@@ -1131,6 +1130,9 @@ static int fsl_esai_remove(struct platform_device *pdev)
 		fsl_esai_mix_remove(&pdev->dev, &esai_priv->mix[0], &esai_priv->mix[1]);
 
 	pm_runtime_disable(&pdev->dev);
+	if (!pm_runtime_status_suspended(&pdev->dev))
+		fsl_esai_runtime_suspend(&pdev->dev);
+
 	cancel_work_sync(&esai_priv->work);
 
 	return 0;
@@ -1140,12 +1142,10 @@ static const struct of_device_id fsl_esai_dt_ids[] = {
 	{ .compatible = "fsl,imx35-esai", .data = &fsl_esai_imx35 },
 	{ .compatible = "fsl,vf610-esai", .data = &fsl_esai_vf610 },
 	{ .compatible = "fsl,imx6ull-esai", .data = &fsl_esai_imx6ull },
-	{ .compatible = "fsl,imx8qm-esai", .data = &fsl_esai_imx8qm },
 	{}
 };
 MODULE_DEVICE_TABLE(of, fsl_esai_dt_ids);
 
-#ifdef CONFIG_PM
 static int fsl_esai_runtime_resume(struct device *dev)
 {
 	struct fsl_esai *esai = dev_get_drvdata(dev);
@@ -1213,7 +1213,6 @@ static int fsl_esai_runtime_suspend(struct device *dev)
 
 	return 0;
 }
-#endif /* CONFIG_PM */
 
 static const struct dev_pm_ops fsl_esai_pm_ops = {
 	SET_RUNTIME_PM_OPS(fsl_esai_runtime_suspend,

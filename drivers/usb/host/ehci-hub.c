@@ -643,7 +643,7 @@ ehci_hub_status_data (struct usb_hcd *hcd, char *buf)
 	 * always set, seem to clear PORT_OCC and PORT_CSC when writing to
 	 * PORT_POWER; that's surprising, but maybe within-spec.
 	 */
-	if (!ignore_oc)
+	if (!ignore_oc && !ehci->spurious_oc)
 		mask = PORT_CSC | PORT_PEC | PORT_OCC;
 	else
 		mask = PORT_CSC | PORT_PEC;
@@ -745,12 +745,13 @@ int ehci_hub_control(
 	unsigned	selector;
 
 	/*
-	 * Avoid underflow while calculating (wIndex & 0xff) - 1.
-	 * The compiler might deduce that wIndex can never be 0 and then
-	 * optimize away the tests for !wIndex below.
+	 * Avoid out-of-bounds values while calculating the port index
+	 * from wIndex.  The compiler doesn't like pointers to invalid
+	 * addresses, even if they are never used.
 	 */
-	temp = wIndex & 0xff;
-	temp -= (temp > 0);
+	temp = (wIndex - 1) & 0xff;
+	if (temp >= HCS_N_PORTS_MAX)
+		temp = 0;
 	status_reg = &ehci->regs->port_status[temp];
 	hostpc_reg = &ehci->regs->hostpc[temp];
 
@@ -874,7 +875,7 @@ int ehci_hub_control(
 		if (temp & PORT_PEC)
 			status |= USB_PORT_STAT_C_ENABLE << 16;
 
-		if ((temp & PORT_OCC) && !ignore_oc){
+		if ((temp & PORT_OCC) && (!ignore_oc && !ehci->spurious_oc)){
 			status |= USB_PORT_STAT_C_OVERCURRENT << 16;
 
 			/*

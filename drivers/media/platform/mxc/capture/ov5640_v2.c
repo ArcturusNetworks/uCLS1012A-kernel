@@ -592,7 +592,7 @@ static struct regulator *analog_regulator;
 
 static int ov5640_probe(struct i2c_client *adapter,
 				const struct i2c_device_id *device_id);
-static int ov5640_remove(struct i2c_client *client);
+static void ov5640_remove(struct i2c_client *client);
 
 static s32 ov5640_read_reg(u16 reg, u8 *val);
 static s32 ov5640_write_reg(u16 reg, u8 val);
@@ -1552,7 +1552,7 @@ error:
 }
 
 static int ov5640_set_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -1579,7 +1579,7 @@ static int ov5640_set_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov5640_get_fmt(struct v4l2_subdev *sd,
-			  struct v4l2_subdev_pad_config *cfg,
+			  struct v4l2_subdev_state *sd_state,
 			  struct v4l2_subdev_format *format)
 {
 	struct v4l2_mbus_framefmt *mf = &format->format;
@@ -1598,7 +1598,7 @@ static int ov5640_get_fmt(struct v4l2_subdev *sd,
 }
 
 static int ov5640_enum_code(struct v4l2_subdev *sd,
-			    struct v4l2_subdev_pad_config *cfg,
+			    struct v4l2_subdev_state *sd_state,
 			    struct v4l2_subdev_mbus_code_enum *code)
 {
 	if (code->pad || code->index >= ARRAY_SIZE(ov5640_colour_fmts))
@@ -1617,7 +1617,7 @@ static int ov5640_enum_code(struct v4l2_subdev *sd,
  * Return 0 if successful, otherwise -EINVAL.
  */
 static int ov5640_enum_framesizes(struct v4l2_subdev *sd,
-			       struct v4l2_subdev_pad_config *cfg,
+			       struct v4l2_subdev_state *sd_state,
 			       struct v4l2_subdev_frame_size_enum *fse)
 {
 	if (fse->index > ov5640_mode_MAX)
@@ -1643,12 +1643,12 @@ static int ov5640_enum_framesizes(struct v4l2_subdev *sd,
  * Return 0 if successful, otherwise -EINVAL.
  */
 static int ov5640_enum_frameintervals(struct v4l2_subdev *sd,
-		struct v4l2_subdev_pad_config *cfg,
+		struct v4l2_subdev_state *sd_state,
 		struct v4l2_subdev_frame_interval_enum *fie)
 {
 	int i, j, count;
 
-	if (fie->index < 0 || fie->index > ov5640_mode_MAX)
+	if (fie->index > ov5640_mode_MAX)
 		return -EINVAL;
 
 	if (fie->width == 0 || fie->height == 0 ||
@@ -1893,7 +1893,7 @@ static int ov5640_probe(struct i2c_client *client,
  * @param client            struct i2c_client *
  * @return  Error code indicating success or failure
  */
-static int ov5640_remove(struct i2c_client *client)
+static void ov5640_remove(struct i2c_client *client)
 {
 	struct v4l2_subdev *sd = i2c_get_clientdata(client);
 
@@ -1904,8 +1904,6 @@ static int ov5640_remove(struct i2c_client *client)
 	ov5640_power_down(1);
 
 	ov5640_regualtor_disable();
-
-	return 0;
 }
 
 module_i2c_driver(ov5640_i2c_driver);

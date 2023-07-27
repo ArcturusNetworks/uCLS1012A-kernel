@@ -5,6 +5,7 @@
  * it under the terms of the gnu general public license version 2 as
  * published by the free software foundation.
  */
+#include <linux/media-bus-format.h>
 #include <linux/module.h>
 #include <linux/platform_device.h>
 #include <linux/component.h>
@@ -35,8 +36,11 @@ static void cdns_mhdp_imx_encoder_enable(struct drm_encoder *encoder)
 	struct drm_bridge *bridge = drm_bridge_chain_get_first_bridge(encoder);
 	struct cdns_mhdp_device *mhdp = bridge->driver_private;
 
-	cdns_mhdp_plat_call(mhdp, plat_deinit);
-	cdns_hdmi_phy_power_up(mhdp);
+	cdns_mhdp_plat_call(mhdp, plat_init);
+	if (mhdp->is_dp)
+		cdns_dp_phy_power_up(mhdp);
+	else
+		cdns_hdmi_phy_power_up(mhdp);
 }
 
 static int cdns_mhdp_imx_encoder_atomic_check(struct drm_encoder *encoder,
@@ -127,6 +131,7 @@ static struct cdns_plat_data ls1028a_dp_drv_data = {
 	.unbind = cdns_dp_unbind,
 	.phy_set = cdns_dp_phy_set_imx8mq,
 	.power_on = cdns_mhdp_power_on_ls1028a,
+	.power_off = cdns_mhdp_power_off_ls1028a,
 	.firmware_init = cdns_mhdp_firmware_init_imx8qm,
 	.pclk_rate = cdns_mhdp_pclk_rate_ls1028a,
 	.bus_type = BUS_TYPE_NORMAL_APB,
@@ -171,6 +176,9 @@ static int cdns_mhdp_imx_bind(struct device *dev, struct device *master,
 		return -ENOMEM;
 
 	match = of_match_node(cdns_mhdp_imx_dt_ids, pdev->dev.of_node);
+	if (!match)
+		return -EFAULT;
+
 	plat_data = match->data;
 	encoder = &imx_mhdp->encoder;
 

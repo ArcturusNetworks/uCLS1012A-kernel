@@ -24,6 +24,8 @@ struct gpio_regmap {
 	unsigned int reg_dir_in_base;
 	unsigned int reg_dir_out_base;
 
+	int (*get_direction)(struct gpio_regmap *gpio, unsigned int offset);
+
 	int (*reg_mask_xlate)(struct gpio_regmap *gpio, unsigned int base,
 			      unsigned int offset, unsigned int *reg,
 			      unsigned int *mask);
@@ -111,6 +113,9 @@ static int gpio_regmap_get_direction(struct gpio_chip *chip,
 	unsigned int base, val, reg, mask;
 	int invert, ret;
 
+	if (gpio->get_direction)
+		return gpio->get_direction(gpio, offset);
+
 	if (gpio->reg_dir_out_base) {
 		base = gpio_regmap_addr(gpio->reg_dir_out_base);
 		invert = 0;
@@ -140,7 +145,16 @@ static int gpio_regmap_set_direction(struct gpio_chip *chip,
 {
 	struct gpio_regmap *gpio = gpiochip_get_data(chip);
 	unsigned int base, val, reg, mask;
-	int invert, ret;
+	int invert, ret, dir;
+
+	if (gpio->get_direction) {
+		dir = gpio->get_direction(gpio, offset);
+		if (dir == GPIO_LINE_DIRECTION_IN && output)
+			return -EOPNOTSUPP;
+		if (dir == GPIO_LINE_DIRECTION_OUT && !output)
+			return -EOPNOTSUPP;
+		return 0;
+	}
 
 	if (gpio->reg_dir_out_base) {
 		base = gpio_regmap_addr(gpio->reg_dir_out_base);
@@ -177,12 +191,6 @@ static int gpio_regmap_direction_output(struct gpio_chip *chip,
 
 	return gpio_regmap_set_direction(chip, offset, true);
 }
-
-void gpio_regmap_set_drvdata(struct gpio_regmap *gpio, void *data)
-{
-	gpio->driver_data = data;
-}
-EXPORT_SYMBOL_GPL(gpio_regmap_set_drvdata);
 
 void *gpio_regmap_get_drvdata(struct gpio_regmap *gpio)
 {
@@ -226,6 +234,7 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
 		return ERR_PTR(-ENOMEM);
 
 	gpio->parent = config->parent;
+	gpio->driver_data = config->drvdata;
 	gpio->regmap = config->regmap;
 	gpio->ngpio_per_reg = config->ngpio_per_reg;
 	gpio->reg_stride = config->reg_stride;
@@ -235,6 +244,7 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
 	gpio->reg_clr_base = config->reg_clr_base;
 	gpio->reg_dir_in_base = config->reg_dir_in_base;
 	gpio->reg_dir_out_base = config->reg_dir_out_base;
+	gpio->get_direction = config->get_direction;
 
 	/* if not set, assume there is only one register */
 	if (!gpio->ngpio_per_reg)
@@ -249,6 +259,7 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
 
 	chip = &gpio->gpio_chip;
 	chip->parent = config->parent;
+	chip->fwnode = config->fwnode;
 	chip->base = -1;
 	chip->ngpio = config->ngpio;
 	chip->names = config->names;
@@ -269,7 +280,8 @@ struct gpio_regmap *gpio_regmap_register(const struct gpio_regmap_config *config
 	else if (gpio->reg_set_base)
 		chip->set = gpio_regmap_set;
 
-	if (gpio->reg_dir_in_base || gpio->reg_dir_out_base) {
+	if (gpio->reg_dir_in_base || gpio->reg_dir_out_base ||
+	    gpio->get_direction) {
 		chip->get_direction = gpio_regmap_get_direction;
 		chip->direction_input = gpio_regmap_direction_input;
 		chip->direction_output = gpio_regmap_direction_output;
@@ -306,9 +318,9 @@ void gpio_regmap_unregister(struct gpio_regmap *gpio)
 }
 EXPORT_SYMBOL_GPL(gpio_regmap_unregister);
 
-static void devm_gpio_regmap_unregister(struct device *dev, void *res)
+static void devm_gpio_regmap_unregister(void *res)
 {
-	gpio_regmap_unregister(*(struct gpio_regmap **)res);
+	gpio_regmap_unregister(res);
 }
 
 /**
@@ -325,20 +337,17 @@ static void devm_gpio_regmap_unregister(struct device *dev, void *res)
 struct gpio_regmap *devm_gpio_regmap_register(struct device *dev,
 					      const struct gpio_regmap_config *config)
 {
-	struct gpio_regmap **ptr, *gpio;
-
-	ptr = devres_alloc(devm_gpio_regmap_unregister, sizeof(*ptr),
-			   GFP_KERNEL);
-	if (!ptr)
-		return ERR_PTR(-ENOMEM);
+	struct gpio_regmap *gpio;
+	int ret;
 
 	gpio = gpio_regmap_register(config);
-	if (!IS_ERR(gpio)) {
-		*ptr = gpio;
-		devres_add(dev, ptr);
-	} else {
-		devres_free(ptr);
-	}
+
+	if (IS_ERR(gpio))
+		return gpio;
+
+	ret = devm_add_action_or_reset(dev, devm_gpio_regmap_unregister, gpio);
+	if (ret)
+		return ERR_PTR(ret);
 
 	return gpio;
 }

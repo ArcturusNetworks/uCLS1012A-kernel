@@ -26,6 +26,7 @@
 #include <linux/sched/cputime.h>
 
 #include <asm/delay.h>
+#include <asm/efi.h>
 #include <asm/hw_irq.h>
 #include <asm/ptrace.h>
 #include <asm/sal.h>
@@ -183,15 +184,10 @@ timer_interrupt (int irq, void *dev_id)
 		printk(KERN_ERR "Oops: timer tick before it's due (itc=%lx,itm=%lx)\n",
 		       ia64_get_itc(), new_itm);
 
-	profile_tick(CPU_PROFILING);
-
 	while (1) {
-		update_process_times(user_mode(get_irq_regs()));
-
 		new_itm += local_cpu_data->itm_delta;
 
-		if (smp_processor_id() == time_keeper_id)
-			xtime_update(1);
+		legacy_timer_tick(smp_processor_id() == time_keeper_id);
 
 		local_cpu_data->itm_next = new_itm;
 
