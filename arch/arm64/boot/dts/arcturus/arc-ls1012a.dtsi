@@ -389,7 +389,7 @@
 			clock-names = "dspi";
 			clocks = <&clockgen QORIQ_CLK_PLATFORM_PLL
 					    QORIQ_CLK_PLL_DIV(1)>;
-			spi-num-chipselects = <5>;
+			spi-num-chipselects = <7>;
 			big-endian;
 			status = "disabled";
 		};

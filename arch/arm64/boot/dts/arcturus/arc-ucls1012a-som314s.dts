@@ -77,6 +77,8 @@
 		status = "okay";
 	};
 #endif
+
+#if 0
 	gpio-leds {
 		compatible = "gpio-leds";
  		status = "disabled";
@@ -142,6 +144,7 @@
 			debounce-interval = <20>;
 		};
 	};
+#endif
 };
 
 &pcie1 {
@@ -183,6 +186,43 @@
 		interrupts = <12 IRQ_TYPE_EDGE_BOTH>;
 
 		reset-gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
+
+		internal-pull-down;
+	};
+
+	/* U13 */
+	gpio3: pca9575@21 {
+		compatible = "nxp,pca9575";
+		reg =<0x21>;
+		vcc-supply = <&reg_3p3v>;
+
+		/* GPIO pin base & pin0# = 416 */
+		gpio-controller;
+		#gpio-cells = <2>;
+
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		interrupt-parent = <&gpio1>;
+		interrupts = <14 IRQ_TYPE_EDGE_BOTH>;
+
+		internal-pull-down;
+	};
+
+	/* U8 on Mbarx Site Controller Rev.2.1 & Rev.3.1 host boards */
+	gpio4: tca9555@27 {
+		compatible = "nxp,pca9555";
+		reg =<0x27>;
+
+		/* GPIO pin base & pin0# =  */
+		gpio-controller;
+		#gpio-cells = <2>;
+#if 0 /* No Interruots for now */
+		interrupt-controller;
+		#interrupt-cells = <2>;
+		interrupt-parent = <&gpio0>;
+		interrupts = <11 IRQ_TYPE_EDGE_FALLING>;
+		vcc-supply = <&reg_3p3v>;
+#endif
 	};
 };
 
@@ -238,6 +278,43 @@
 &dspi {
 	bus-num = <1>;
 	status = "okay";
+	cs-gpios = <0>, <0>, <0>, <&gpio0 10 1>, <&gpio1 11 1>, <&gpio1 6 1>, <&gpio1 4 1>;
+
+	spidev0@0 {
+		compatible = "spidev";
+		reg = <0>;
+		spi-max-frequency = <10000000>;
+	};
+	spidev1@1 {
+		compatible = "spidev";
+		reg = <1>;
+		spi-max-frequency = <10000000>;
+	};
+	spidev2@2 {
+		compatible = "spidev";
+		reg = <2>;
+		spi-max-frequency = <10000000>;
+	};
+	spidev3@3 {
+		compatible = "spidev";
+		reg = <3>;
+		spi-max-frequency = <10000000>;
+	};
+	spidev4@4 {
+		compatible = "spidev";
+		reg = <4>;
+		spi-max-frequency = <10000000>;
+	};
+	spidev5@5 {
+		compatible = "spidev";
+		reg = <5>;
+		spi-max-frequency = <10000000>;
+	};
+	spidev6@6 {
+		compatible = "spidev";
+		reg = <6>;
+		spi-max-frequency = <10000000>;
+	};
 
 #if 0
 	dflash: s25fl008k@0 {
@@ -365,38 +442,38 @@
 
 &gpio0 {
 	ngpios = <32>;
-	gpio-line-names =	"UART1_SOUT",	/* P134 */
-				"UART1_SIN",	/* P135 */
-				"IIC1_SCL",	/* S48 */
-				"IIC1_SDA",	/* S49 */
-				"QSPI_A_SCK",	/* P56 */
-				"QSPI_A_CS0",	/* P54 */
-				"UART2_SIN",	/* P130 */
-				"GPIO1_07",	/* P131 */
-				"UART2_SOUT",	/* P129 */
-				"GPIO1_09",	/* P132 */
-				"IRQ4",		/* P116 */	/* _TOD_INT_ GPIO1_10 */
-				"QSPI_A_DATA0",	/* P58 */
-				"QSPI_A_DATA1",	/* P57 */
-				"QSPI_A_DATA2",	/* S56 */
-				"QSPI_A_DATA3",	/* S57 */
-				"SHDC1_CMD",	/* P34 */
-				"SHDC1_DAT0",	/* P39 */
-				"SHDC1_DAT1",	/* P40 */
-				"SHDC1_DAT2",	/* P41 */
-				"SHDC1_DAT3",	/* P42 */
-				"SHDC1_CLK",	/* P36 */
-				"GPIO1_21",	/* P35 */	/* SDHC1_CD_B */
-				"GPIO1_22",	/* P33 */	/* SDHC1_WP */
-				"SDHC1_VSEL",	/*     */	/* Lo - 3V3, Hi - 1V8 */
-				"SPI_MOSI",	/* P46 */
-				"SPI_CS0",	/* P43 */
-				"SPI_CS1",	/* P31 */
-				"SPI_CS2",	/* P55 */
-				"SPI_MISO",	/* P45 */
-				"SPI_CLK",	/* P44 */
-				"GPIO_EXP_RST",	/*     */	/* GPIO1_30 */
-				"CLK_OUT";	/* S53 */	/* GPIO1_31 */
+	gpio-line-names =	"UART1_SOUT",	/* P134 */ //
+				"UART1_SIN",	/* P135 */ //
+				"IIC1_SCL",	/* S48 */  ////
+				"IIC1_SDA",	/* S49 */  ////
+				"QSPI_A_SCK",	/* P56 */  ////
+				"QSPI_A_CS0",	/* P54 */  ////
+				"UART2_SIN",	/* P130 */ //
+				"GPIO1_07",	/* P131 */ ////
+				"UART2_SOUT",	/* P129 */ //
+				"GPIO1_09",	/* P132 */ ////
+				"ESPI_CS0",	/* P116 C15_06 */ //		/* TRST_B GPIO1_10 */
+				"QSPI_A_DATA0",	/* P58 */  ////
+				"QSPI_A_DATA1",	/* P57 */  ////
+				"QSPI_A_DATA2",	/* S56 */  ////
+				"QSPI_A_DATA3",	/* S57 */  ////
+				"SHDC1_CMD",	/* P34 */  ////
+				"SHDC1_DAT0",	/* P39 */  ////
+				"SHDC1_DAT1",	/* P40 */  ////
+				"SHDC1_DAT2",	/* P41 */  ////
+				"SHDC1_DAT3",	/* P42 */  ////
+				"SHDC1_CLK",	/* P36 */  ////
+				"GPIO1_21",	/* P35 */  ////		/* SDHC1_CD_B */
+				"GPIO1_22",	/* P33 */  ////		/* SDHC1_WP */
+				"SDHC1_VSEL",	/*     */  //		/* Lo - 3V3, Hi - 1V8 */
+				"SPI_MOSI",	/* P46 */  //		/* C15_13 */
+				"SPI_CS0",	/* P43 */  //		/* SDHC2_DAT0 C15_12*/
+				"SPI_CS1",	/* P31 */  //		/* SDHC2_DAT1 C15_15*/
+				"SPI_CS2",	/* P55 */  ////		/* SDHC2_DAT2 */
+				"SPI_MISO",	/* P45 */  //		/* C15_11 */
+				"SPI_CLK",	/* P44 */  //		/* C15_14 */
+				"GPIO_EXP_RST",	/*     */  ////		/* GPIO1_30 */
+				"CLK_OUT";	/* S53 */  ////		/* GPIO1_31, RESET, C11_09 */
 };
 
 &gpio1 {
@@ -404,21 +481,21 @@
 	gpio-line-names =	"USB1_DRVVBUS",		/*   */
 				"USB1_PWR_FAULT",	/* P74 */
 				"PHY_A_IRQ",		/*   */
-				"IRQ0",			/* P115 */	/* _READY_INT_N_ EC1_TXD2 GPIO2_03 */
-				"IRQ1",			/* P119 */	/* _SPI_BP_INT_N_ EC1_TXD1 GPIO2_04 */
-				"SPI_eCS2",		/* P112 */	/*  EC1_TXD0 GPIO2_05 */
-				"IRQ2",			/* P118 */	/* _SPARE_INT_ EC1_TX_EN GPIO2_06 */
-				"SPI_eCS3",		/* P113 */	/* EC1_GTX_CLK GPIO2_07 */
+				"SPI_BP_INT_N",		/* P115 */	/* EC1_TXD2 GPIO2_03 C15_16 */
+				"ESPI_CS3",		/* P119 */	/* EC1_TXD1 GPIO2_04 C11_14 */
+				"TOD_INT_N",		/* P112 */	/* EC1_TXD0 GPIO2_05 C11_10 */
+				"ESPI_CS2",		/* P118 */	/* EC1_TX_EN GPIO2_06 C11_12 */
+				"PPS_INT",		/* P113 */	/* EC1_GTX_CLK GPIO2_07 C11_11 */
 				"reserved",
-				"SPI_eCS4",		/* P114 */	/* EC1_RXD3 GPIO2_09 */
-				"SPI_eCS1",		/* P111 */	/* EC1_RXD2 GPIO2_10 */
-				"IRQ3",			/* P117 */	/*_PPS_INT_ EC1_RXD1 GPIO2_11  Dongle A13 */
-				"GPIO_EXP_IRQ0",	/*   */
+				"SPARE_INT",		/* P114 */	/* EC1_RXD3 GPIO2_09 C15_10*/
+				"PHASE_READY_INT_N",	/* P111 */	/* EC1_RXD2 GPIO2_10 */
+				"ESPI_CS1",		/* P117 */	/* EC1_RXD1 GPIO2_11  Dongle A13 C15_07*/
+				"GPIO_EXP0_IRQ",	/* PCA_IRQ */
 				"PHY_B_IRQ",		/*   */
-				"GPIO2_14",		/* S51 */	/* EC1_RX_DV GPIO2_14 Dongle B13 */
+				"GPIO_EXP1_IRQ",	/* S51 */	/* EC1_RX_DV GPIO2_14 Dongle B13 */
 				"EMI1_MDC",		/* S45 */
 				"EMI1_MDIO",		/* S46 */
-				"TMP_DETECT_N",		/* S52 */
+				"TMP_DETECT_N",		/* S52 */	/* C11_16 */
 				"reserved",
 				"reserved",
 				"reserved",
@@ -438,20 +515,62 @@
 /* U23 */
 &gpio2 {
 	ngpios = <16>;
-	gpio-line-names =	"BP85",			/* GPIO10 */
-				"BP83",			/* GPIO11 */
-				"BP81",			/* GPIO12 */
-				"BP79",			/* GPIO13 */
-				"BP53",			/* GPIO5 */
-				"BP55",			/* GPIO6 */
-				"BP57",			/* GPIO7 */
-				"BP49",			/* GPIO2 */
-				"BP47",			/* GPIO0 */
-				"BP41",			/* GPIO4 */
-				"BP59", 		/* IRQ_OUT */
-				"WDI",			/* GPIO14 */
-				"BP45",			/* GPIO1 */
-				"BP43",			/* GPIO3 */
-				"BP110",		/* GPIO9 */
-				"BP108";		/* GPIO8 */
+	gpio-line-names =	"C11_01",		/* S123, TP2_5011  */
+				"C11_02",		/* P110 */
+				"C11_03",		/* P109 */
+				"C11_04",		/* P108 */
+				"P107",			/*  */
+				"P106",			/*  */
+				"P105",			/* C15_02 */
+				"P104",			/* c15_05 */
+				"TP1_5011",		/* S142 */
+				"P125",			/*  */
+				"S152", 		/*  */
+				"S153",			/*  */
+				"C11_08",		/* S154 */
+				"C11_05",		/* S146 */
+				"C11_06",		/* S148 */
+				"C11_07";		/* S149 */
+};
+
+/* U13 */
+&gpio3 {
+	ngpios = <16>;
+	gpio-line-names =	"S129",			/*  */
+				"S118",			/*  */
+				"S117",			/*  */
+				"S115",			/*  */
+				"S114",			/*  */
+				"S113",			/*  */
+				"S112",			/*  */
+				"S111",			/*  */
+				"S109",			/*  */
+				"S108",			/*  */
+				"S107", 		/*  */
+				"S106",			/*  */
+				"S105",			/*  */
+				"S116",			/*  */
+				"S103",			/*  */
+				"S102";			/*  */
+};
+
+/* U8 on Mbarx Site Controller Rev.2.1 & Rev.3.1 host boards */
+&gpio4 {
+	ngpios = <16>;
+	gpio-line-names =	"LTE0_RESET",
+				"LTE0_PWR",
+				"LTE1_PWR",
+				"LTE1_RESET",
+				"MDM_DPC",
+				"MDM_RST",
+				"RF_EN",
+				"MDM_PWR",
+				"LED7",
+				"LED6",
+				"LED5",
+				"LED8",
+				"AP26",
+				"AP50",
+				"TP17",
+				"AC_INT";
 };
