@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: (GPL-2.0+ OR MIT)
 /*
- * Device Tree Include file for Arcturus uCLS1012A-SOM314
+ * Device Tree Include file for Arcturus uCLS1012A-SOM314S
  *
  * Copyright 2017-2023, Arcturus Networks Inc.
  *
@@ -14,7 +14,7 @@
 
 / {
 	model = "uCLS1012A-SOM314s";
-	compatible = "arc,ucls1012a-som", "fsl,ls1012a";
+	compatible = "arc,ucls1012a-som314", "fsl,ls1012a";
 
 	aliases {
 		ethernet0 = &pfe_mac0;
@@ -414,8 +414,8 @@
 			rtl821x,aldps-disable;
 			rtl821x,clkout-disable;
 		};
-		sgmii_phy2: ethernet-phy@6 {
-			reg = <0x6>;
+		sgmii_phy2: ethernet-phy@5 {
+			reg = <0x5>;
 			at803x,eee-disabled;
 			rtl821x,aldps-disable;
 			rtl821x,clkout-disable;

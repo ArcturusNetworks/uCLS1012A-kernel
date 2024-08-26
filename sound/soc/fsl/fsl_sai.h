@@ -219,8 +219,8 @@
 #define FSL_SAI_MCLK_MAX	4
 
 /* SAI data transfer numbers per DMA request */
-#define FSL_SAI_MAXBURST_TX 6
-#define FSL_SAI_MAXBURST_RX 6
+#define FSL_SAI_MAXBURST_TX 4
+#define FSL_SAI_MAXBURST_RX 4
 
 #define PMQOS_CPU_LATENCY   BIT(0)
 
