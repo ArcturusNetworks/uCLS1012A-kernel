@@ -332,8 +332,8 @@
 			rtl821x,aldps-disable;
 			rtl821x,clkout-disable;
 		};
-		sgmii_phy2: ethernet-phy@5 {
-			reg = <0x5>;
+		sgmii_phy2: ethernet-phy@6 {
+			reg = <0x6>;
 			at803x,eee-disabled;
 			rtl821x,aldps-disable;
 			rtl821x,clkout-disable;
