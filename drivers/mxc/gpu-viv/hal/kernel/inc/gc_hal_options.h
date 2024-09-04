@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2022 Vivante Corporation
+*    Copyright (c) 2014 - 2023 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2022 Vivante Corporation
+*    Copyright (C) 2014 - 2023 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -51,7 +51,6 @@
 *    version of this file.
 *
 *****************************************************************************/
-
 
 #ifndef __gc_hal_options_h_
 #define __gc_hal_options_h_
@@ -1538,6 +1537,20 @@
 #endif
 
 /*
+ *   gcdENABLE_GPU_WORK_PERIOD_TRACE
+ *       Creat tracepoint power/gpu_work_period, if set to 1.
+ *       Depends on kernel support.
+ *       Only support Linux OS currently.
+ */
+#ifndef gcdENABLE_GPU_WORK_PERIOD_TRACE
+#ifdef gcdANDROID
+#    define gcdENABLE_GPU_WORK_PERIOD_TRACE         1
+#    else
+#    define gcdENABLE_GPU_WORK_PERIOD_TRACE         0
+#    endif
+#endif
+
+/*
  *   gcdUSER_COMMAND_IN_EXCLUSIVE
  *       User command buffer can be able in exclusive local memory.
  */
@@ -1594,6 +1607,15 @@
  *
  *   Calculating the time taken by 2D driver
  */
+
+ /*
+  *   gcdLOCAL_MEMORY_USAGE
+  *
+  *   Record usage of local memory and pass to kernel
+  */
+#ifndef gcdLOCAL_MEMORY_USAGE
+#    define gcdLOCAL_MEMORY_USAGE                 1
+#endif
 
 #endif /* __gc_hal_options_h_ */
 

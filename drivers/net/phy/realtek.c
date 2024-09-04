@@ -12,6 +12,7 @@
 #include <linux/phy.h>
 #include <linux/module.h>
 #include <linux/delay.h>
+#include <linux/clk.h>
 
 #define RTL821x_PHYSR				0x11
 #define RTL821x_PHYSR_DUPLEX			BIT(13)
@@ -29,6 +30,7 @@
 
 #define RTL8211F_PHYCR1				0x18
 #define RTL8211F_PHYCR2				0x19
+#define RTL8211FVD_PHYCR2			0x11
 #define RTL8211F_INSR				0x1d
 
 #define RTL8211F_TX_DELAY			BIT(8)
@@ -42,9 +44,8 @@
 #define RTL8211E_TX_DELAY			BIT(12)
 #define RTL8211E_RX_DELAY			BIT(11)
 
-#define RTL8211F_CLK_OUT_FEQ_SEL		BIT(11)
-#define RTL8211F_PHY_MODE_EEE_EN		BIT(5)
 #define RTL8211F_CLKOUT_EN			BIT(0)
+#define RTL8211FVD_CLKOUT_EN			BIT(8)
 
 #define RTL8201F_ISR				0x1e
 #define RTL8201F_ISR_ANERR			BIT(15)
@@ -74,11 +75,6 @@
 #define RTL_GENERIC_PHYID			0x001cc800
 #define RTL_8211FVD_PHYID			0x001cc878
 
-/* page 0xd04, register 0x10-0x11 */
-#define RTL8211F_PHYLED_PAGE			0x0d04
-#define RTL8211F_EEE_LED_REG			0x11
-#define RTL8211F_LED_REG			0x10
-
 MODULE_DESCRIPTION("Realtek PHY driver");
 MODULE_AUTHOR("Johnson Leung");
 MODULE_LICENSE("GPL");
@@ -86,7 +82,7 @@ MODULE_LICENSE("GPL");
 struct rtl821x_priv {
 	u16 phycr1;
 	u16 phycr2;
-	bool has_phycr2;
+	struct clk *clk;
 };
 
 static int rtl821x_read_page(struct phy_device *phydev)
@@ -104,12 +100,17 @@ static int rtl821x_probe(struct phy_device *phydev)
 	struct device *dev = &phydev->mdio.dev;
 	struct rtl821x_priv *priv;
 	u32 phy_id = phydev->drv->phy_id;
-	u32 freq;
+	bool disable_clk_out;
 	int ret;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
 		return -ENOMEM;
+
+	priv->clk = devm_clk_get_optional_enabled(dev, NULL);
+	if (IS_ERR(priv->clk))
+		return dev_err_probe(dev, PTR_ERR(priv->clk),
+				     "failed to get phy clock\n");
 
 	ret = phy_read_paged(phydev, 0xa43, RTL8211F_PHYCR1);
 	if (ret < 0)
@@ -119,69 +120,26 @@ static int rtl821x_probe(struct phy_device *phydev)
 	if (of_property_read_bool(dev->of_node, "realtek,aldps-enable"))
 		priv->phycr1 |= RTL8211F_ALDPS_PLL_OFF | RTL8211F_ALDPS_ENABLE | RTL8211F_ALDPS_XTAL_OFF;
 
-	priv->has_phycr2 = !(phy_id == RTL_8211FVD_PHYID);
-	if (priv->has_phycr2) {
+	disable_clk_out = of_property_read_bool(dev->of_node, "realtek,clkout-disable");
+	if (phy_id == RTL_8211FVD_PHYID) {
+		ret = phy_read_paged(phydev, 0xd05, RTL8211FVD_PHYCR2);
+		if (ret < 0)
+			return ret;
+
+		priv->phycr2 = ret & RTL8211FVD_CLKOUT_EN;
+		if (disable_clk_out)
+			priv->phycr2 &= ~RTL8211FVD_CLKOUT_EN;
+	} else {
 		ret = phy_read_paged(phydev, 0xa43, RTL8211F_PHYCR2);
 		if (ret < 0)
 			return ret;
 
-		priv->phycr2 = ret & (RTL8211F_CLKOUT_EN | RTL8211F_PHY_MODE_EEE_EN | RTL8211F_CLK_OUT_FEQ_SEL);
-		if (of_property_read_bool(dev->of_node, "realtek,clkout-disable"))
+		priv->phycr2 = ret & RTL8211F_CLKOUT_EN;
+		if (disable_clk_out)
 			priv->phycr2 &= ~RTL8211F_CLKOUT_EN;
-
-		if (of_property_read_bool(dev->of_node, "realtek,phy-mode-eee-disable"))
-			priv->phycr2 &= ~RTL8211F_PHY_MODE_EEE_EN;
-
-		ret = of_property_read_u32(dev->of_node, "qca,clk-out-frequency", &freq);
-		if (!ret) {
-			switch (freq) {
-			case 25000000:
-				priv->phycr2 &= ~RTL8211F_CLK_OUT_FEQ_SEL;
-				break;
-			case 125000000:
-				priv->phycr2 |= RTL8211F_CLK_OUT_FEQ_SEL;
-				break;
-			default:
-				dev_err(dev, "invalid qca,clk-out-frequency\n");
-				return -EINVAL;
-			}
-		}
 	}
 
 	phydev->priv = priv;
-
-	/* disable EEE LED*/
-	phy_write_paged(phydev, RTL8211F_PHYLED_PAGE, RTL8211F_EEE_LED_REG, 0x0000);
-
-
-#if 0
-/* OZH */
-	/* setting 1000Mbps for orange LED, 100Mbps for green LED */
-	phy_write_paged(phydev, RTL8211F_PHYLED_PAGE, RTL8211F_LED_REG, 0x091f);
-#else
-	/*
-	 * List of common embedded LED usages:
-	 *  LED0 = LINK for 10                             0x0001
-	 *  LED0 = LINK for    100                         0x0002
-	 *  LED0 = LINK for        1000                    0x0008
-	 *  LED0 =                        FLASH for active 0x0010
-	 *  LED0 = LINK for 10/100/1000 + FLASH for active 0x001b
-	 *  LED1 = LINK for 10/100/1000 + FLASH for active 0x0360
-	 *  LED2 = LINK for 10/100/1000 + FLASH for active 0x6c00
-	 */
-
-#if 1 // uCLS1012A-SOM314s
-	/* SiteController V3.1 (LS1012A)
-	 * LED0 (Left grn  LSv3) for ANY Link       0x000b
-	 * LED0 (Left grn  LSv3) for 1000 Link      0x0008
-	 * LED2 (Right yel LSv3) for LINK +ACTIVE   0x6c00
-	 */
-	phy_write_paged(phydev, RTL8211F_PHYLED_PAGE, RTL8211F_LED_REG, 0x6c08);
-#else // uCMX93-SOM144
-	/* Set LED0, LED1 and LED2 for any speed Link + Active */
-	phy_write_paged(phydev, RTL8211F_PHYLED_PAGE, RTL8211F_LED_REG, 0x6f7b);
-#endif
-#endif
 
 	return 0;
 }
@@ -398,17 +356,9 @@ static int rtl8211f_config_init(struct phy_device *phydev)
 {
 	struct rtl821x_priv *priv = phydev->priv;
 	struct device *dev = &phydev->mdio.dev;
-	u16 val_txdly, val_rxdly, oldpage;
+	u32 phy_id = phydev->drv->phy_id;
+	u16 val_txdly, val_rxdly;
 	int ret;
-
-	for (oldpage = 0; oldpage < 10; oldpage++) {
-		ret = phy_read_paged(phydev, 0xa43, RTL8211F_PHYCR1);
-		if (ret < 0)
-			return ret;
-		else if (ret == 0x2118)		/* PHYCR1 default value is 0x2118 */
-			break;
-		msleep(1);
-	}
 
 	ret = phy_modify_paged_changed(phydev, 0xa43, RTL8211F_PHYCR1,
 				       RTL8211F_ALDPS_PLL_OFF | RTL8211F_ALDPS_ENABLE | RTL8211F_ALDPS_XTAL_OFF,
@@ -474,63 +424,45 @@ static int rtl8211f_config_init(struct phy_device *phydev)
 			val_rxdly ? "enabled" : "disabled");
 	}
 
-	if (priv->has_phycr2) {
+	if (phy_id == RTL_8211FVD_PHYID)
+		ret = phy_modify_paged(phydev, 0xd05, RTL8211FVD_PHYCR2,
+				       RTL8211FVD_CLKOUT_EN, priv->phycr2);
+	else
 		ret = phy_modify_paged(phydev, 0xa43, RTL8211F_PHYCR2,
-				       RTL8211F_CLKOUT_EN | RTL8211F_PHY_MODE_EEE_EN | RTL8211F_CLK_OUT_FEQ_SEL, priv->phycr2);
-		if (ret < 0) {
-			dev_err(dev, "clkout and PHY-mode EEE configuration failed: %pe\n",
-				ERR_PTR(ret));
-			return ret;
-		}
+				       RTL8211F_CLKOUT_EN, priv->phycr2);
+	if (ret < 0) {
+		dev_err(dev, "clkout configuration failed: %pe\n",
+			ERR_PTR(ret));
+		return ret;
 	}
-
-	oldpage = phy_select_page(phydev, RTL8211F_PHYLED_PAGE);
-	if (oldpage < 0)
-		dev_err(&phydev->mdio.dev, "select page failed\n");
-
-	/* disable EEE LED*/
-	ret = __phy_write(phydev, RTL8211F_EEE_LED_REG, 0x0000);
-	if (ret < 0)
-		dev_err(&phydev->mdio.dev, "write EEE register failed\n");
-#if 0
-/* OZH */
-	/* setting 1000Mbps for orange LED, 100Mbps for green LED */
-	ret = __phy_write(phydev, RTL8211F_LED_REG, 0x091f);
-#else
-	/*
-	 * List of common embedded LED usages:
-	 *  LED0 = LINK for 10                             0x0001
-	 *  LED0 = LINK for    100                         0x0002
-	 *  LED0 = LINK for        1000                    0x0008
-	 *  LED0 =                        FLASH for active 0x0010
-	 *  LED0 = LINK for 10/100/1000 + FLASH for active 0x001b
-	 *  LED1 = LINK for 10/100/1000 + FLASH for active 0x0360
-	 *  LED2 = LINK for 10/100/1000 + FLASH for active 0x6c00
-	 */
-#if 1 // uCLS1012A-SOM314s
-
-	/* SiteController V3.1 (LS1012A)
-	 * LED0 (Left grn  LSv3) for ANY Link       0x000b
-	 * LED0 (Left grn  LSv3) for 1000 Link      0x0008
-	 * LED2 (Right yel LSv3) for LINK +ACTIVE   0x6c00
-	 */
-	ret = __phy_write(phydev, RTL8211F_LED_REG, 0x6c08);
-#else // uCMX93-SOM144
-	/* Set LED0, LED1 and LED2 for any speed Link +Active */
-	ret = __phy_write(phydev, RTL8211F_LED_REG, 0x6f7b);
-#endif
-#endif
-	if (ret < 0)
-		dev_err(&phydev->mdio.dev, "select LED register failed\n");
-
-	phy_restore_page(phydev, oldpage, ret);
 
 	return genphy_soft_reset(phydev);
 }
 
+static int rtl821x_suspend(struct phy_device *phydev)
+{
+	struct rtl821x_priv *priv = phydev->priv;
+	int ret = 0;
+
+	if (!phydev->wol_enabled) {
+		ret = genphy_suspend(phydev);
+
+		if (ret)
+			return ret;
+
+		clk_disable_unprepare(priv->clk);
+	}
+
+	return ret;
+}
+
 static int rtl821x_resume(struct phy_device *phydev)
 {
+	struct rtl821x_priv *priv = phydev->priv;
 	int ret;
+
+	if (!phydev->wol_enabled)
+		clk_prepare_enable(priv->clk);
 
 	ret = genphy_resume(phydev);
 	if (ret < 0)
@@ -1036,10 +968,11 @@ static struct phy_driver realtek_drvs[] = {
 		.read_status	= rtlgen_read_status,
 		.config_intr	= &rtl8211f_config_intr,
 		.handle_interrupt = rtl8211f_handle_interrupt,
-		.suspend	= genphy_suspend,
+		.suspend	= rtl821x_suspend,
 		.resume		= rtl821x_resume,
 		.read_page	= rtl821x_read_page,
 		.write_page	= rtl821x_write_page,
+		.flags		= PHY_ALWAYS_CALL_SUSPEND,
 	}, {
 		PHY_ID_MATCH_EXACT(RTL_8211FVD_PHYID),
 		.name		= "RTL8211F-VD Gigabit Ethernet",
@@ -1048,10 +981,11 @@ static struct phy_driver realtek_drvs[] = {
 		.read_status	= rtlgen_read_status,
 		.config_intr	= &rtl8211f_config_intr,
 		.handle_interrupt = rtl8211f_handle_interrupt,
-		.suspend	= genphy_suspend,
+		.suspend	= rtl821x_suspend,
 		.resume		= rtl821x_resume,
 		.read_page	= rtl821x_read_page,
 		.write_page	= rtl821x_write_page,
+		.flags		= PHY_ALWAYS_CALL_SUSPEND,
 	}, {
 		.name		= "Generic FE-GE Realtek PHY",
 		.match_phy_device = rtlgen_match_phy_device,

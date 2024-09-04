@@ -352,6 +352,17 @@ int vsi_v4l2_send_reschange(struct vsi_v4l2_ctx *ctx)
 	v4l2_event_queue_fh(&ctx->fh, &event);
 	ctx->reschanged_need_notify = false;
 	ctx->reschange_notified = true;
+
+	if (ctx->need_capture_on) {
+		int ret;
+
+		ret = vb2_streamon(&ctx->output_que, V4L2_BUF_TYPE_VIDEO_CAPTURE);
+		if (!ret) {
+			ctx->output_que.last_buffer_dequeued = true;
+			wake_up(&ctx->output_que.done_wq);
+		}
+	}
+
 	return 0;
 }
 
@@ -507,6 +518,30 @@ int vsi_v4l2_handle_cropchange(struct vsi_v4l2_msg *pmsg)
 	return 0;
 }
 
+bool vsi_v4l2_dec_in_source_change(struct vsi_v4l2_ctx *ctx)
+{
+	if (test_bit(CTX_FLAG_DELAY_SRCCHANGED_BIT, &ctx->flag))
+		return true;
+	if (ctx->reschanged_need_notify)
+		return true;
+	if (ctx->reschange_notified)
+		return true;
+
+	return false;
+}
+
+void vsi_v4l2_dec_handle_last_empty_buffer(struct vsi_v4l2_ctx *ctx)
+{
+	if (vsi_v4l2_dec_in_source_change(ctx))
+		return;
+	if (ctx->status == DEC_STATUS_DRAINING ||
+	    test_bit(CTX_FLAG_PRE_DRAINING_BIT, &ctx->flag)) {
+		ctx->status = DEC_STATUS_ENDSTREAM;
+		set_bit(CTX_FLAG_ENDOFSTRM_BIT, &ctx->flag);
+		clear_bit(CTX_FLAG_PRE_DRAINING_BIT, &ctx->flag);
+	}
+}
+
 int vsi_v4l2_bufferdone(struct vsi_v4l2_msg *pmsg)
 {
 	unsigned long ctxid = pmsg->inst_id;
@@ -619,15 +654,12 @@ int vsi_v4l2_bufferdone(struct vsi_v4l2_msg *pmsg)
 				if (bytesused[0] == 0) {
 					vbuf->flags |= V4L2_BUF_FLAG_LAST;
 					v4l2_klog(LOGLVL_BRIEF, "%llx decoder got zero buffer in state %d", ctx->ctxid, ctx->status);
-					if ((ctx->status == DEC_STATUS_DRAINING) || test_bit(CTX_FLAG_PRE_DRAINING_BIT, &ctx->flag)) {
-						ctx->status = DEC_STATUS_ENDSTREAM;
-						set_bit(CTX_FLAG_ENDOFSTRM_BIT, &ctx->flag);
-						clear_bit(CTX_FLAG_PRE_DRAINING_BIT, &ctx->flag);
-					}
-				} else
+					vsi_v4l2_dec_handle_last_empty_buffer(ctx);
+				} else {
 					vb->timestamp = pmsg->params.dec_params.io_buffer.timestamp;
-				ctx->buffed_capnum++;
-				ctx->buffed_cropcapnum++;
+					ctx->buffed_capnum++;
+					ctx->buffed_cropcapnum++;
+				}
 				v4l2_klog(LOGLVL_FLOW, "dec output framed %d size = %d", outbufidx, vb->planes[0].bytesused);
 			}
 			vbuf->sequence = ctx->cap_sequence++;
@@ -691,7 +723,7 @@ static int v4l2_probe(struct platform_device *pdev)
 		goto err;
 
 	vsidaemondev = kzalloc(sizeof(struct device), GFP_KERNEL);
-	vsidaemondev->class = class_create(THIS_MODULE, "vsi_class");
+	vsidaemondev->class = class_create("vsi_class");
 	vsidaemondev->parent = NULL;
 	vsidaemondev->devt = MKDEV(VSI_DAEMON_DEVMAJOR, 0);
 	dev_set_name(vsidaemondev, "%s", VSI_DAEMON_FNAME);

@@ -14,7 +14,7 @@
 #include <linux/iopoll.h>
 #include <linux/math64.h>
 #include <linux/module.h>
-#include <linux/of_device.h>
+#include <linux/platform_device.h>
 #include <linux/pm_runtime.h>
 #include <linux/reset.h>
 
@@ -30,6 +30,7 @@
 #include <drm/drm_print.h>
 
 #define HWVER_131			0x31333100	/* IP version 1.31 */
+#define HWVER_151			0x30313531	/* IP version 1.51 */
 
 #define DSI_VERSION			0x00
 #define VERSION				GENMASK(31, 8)
@@ -561,6 +562,28 @@ static const struct mipi_dsi_host_ops dw_mipi_dsi_host_ops = {
 	.transfer = dw_mipi_dsi_host_transfer,
 };
 
+static int dw_mipi_dsi_bridge_atomic_check(struct drm_bridge *bridge,
+					   struct drm_bridge_state *bridge_state,
+					   struct drm_crtc_state *crtc_state,
+					   struct drm_connector_state *conn_state)
+{
+	struct dw_mipi_dsi *dsi = bridge_to_dsi(bridge);
+	const struct dw_mipi_dsi_plat_data *pdata = dsi->plat_data;
+	bool ret;
+
+	if (pdata->mode_fixup) {
+		ret = pdata->mode_fixup(pdata->priv_data, &crtc_state->mode,
+					&crtc_state->adjusted_mode);
+		if (!ret) {
+			DRM_DEBUG_DRIVER("failed to fixup mode " DRM_MODE_FMT "\n",
+					 DRM_MODE_ARG(&crtc_state->mode));
+			return -EINVAL;
+		}
+	}
+
+	return 0;
+}
+
 static void dw_mipi_dsi_video_mode_config(struct dw_mipi_dsi *dsi)
 {
 	u32 val;
@@ -726,26 +749,44 @@ static void dw_mipi_dsi_command_mode_config(struct dw_mipi_dsi *dsi)
 	dsi_write(dsi, DSI_MODE_CFG, ENABLE_CMD_MODE);
 }
 
+static const u32 minimum_lbccs[] = {10, 5, 4, 3};
+
+static inline u32 dw_mipi_dsi_get_minimum_lbcc(struct dw_mipi_dsi *dsi)
+{
+	return minimum_lbccs[dsi->lanes - 1];
+}
+
 /* Get lane byte clock cycles. */
 static u32 dw_mipi_dsi_get_hcomponent_lbcc(struct dw_mipi_dsi *dsi,
 					   const struct drm_display_mode *mode,
 					   u32 hcomponent)
 {
-	u32 frac, lbcc;
+	u32 frac, lbcc, minimum_lbcc;
 	int bpp;
 
-	bpp = mipi_dsi_pixel_format_to_bpp(dsi->format);
-	if (bpp < 0) {
-		dev_err(dsi->dev, "failed to get bpp\n");
-		return 0;
-	}
+	if (dsi->mode_flags & MIPI_DSI_MODE_VIDEO_BURST) {
+		/* lbcc based on lane_mbps */
+		lbcc = hcomponent * dsi->lane_mbps * MSEC_PER_SEC / 8;
+	} else {
+		/* lbcc based on pixel clock rate */
+		bpp = mipi_dsi_pixel_format_to_bpp(dsi->format);
+		if (bpp < 0) {
+			dev_err(dsi->dev, "failed to get bpp\n");
+			return 0;
+		}
 
-	lbcc = div_u64((u64)hcomponent * mode->clock * bpp, dsi->lanes * 8);
+		lbcc = div_u64((u64)hcomponent * mode->clock * bpp, dsi->lanes * 8);
+	}
 
 	frac = lbcc % mode->clock;
 	lbcc = lbcc / mode->clock;
 	if (frac)
 		lbcc++;
+
+	minimum_lbcc = dw_mipi_dsi_get_minimum_lbcc(dsi);
+
+	if (lbcc < minimum_lbcc)
+		lbcc = minimum_lbcc;
 
 	return lbcc;
 }
@@ -793,6 +834,7 @@ static void dw_mipi_dsi_dphy_timing_config(struct dw_mipi_dsi *dsi)
 {
 	const struct dw_mipi_dsi_phy_ops *phy_ops = dsi->plat_data->phy_ops;
 	struct dw_mipi_dsi_dphy_timing timing;
+	bool hwver_is_151 = false;
 	u32 hw_version;
 	int ret;
 
@@ -809,9 +851,13 @@ static void dw_mipi_dsi_dphy_timing_config(struct dw_mipi_dsi *dsi)
 	 * DSI_CMD_MODE_CFG.MAX_RD_PKT_SIZE_LP (see CMD_MODE_ALL_LP)
 	 */
 
-	hw_version = dsi_read(dsi, DSI_VERSION) & VERSION;
+	hw_version = dsi_read(dsi, DSI_VERSION);
+	if (hw_version == HWVER_151)
+		hwver_is_151 = true;
+	else
+		hw_version &= VERSION;
 
-	if (hw_version >= HWVER_131) {
+	if (hw_version >= HWVER_131 || hwver_is_151) {
 		dsi_write(dsi, DSI_PHY_TMR_CFG,
 			  PHY_HS2LP_TIME_V131(timing.data_hs2lp) |
 			  PHY_LP2HS_TIME_V131(timing.data_lp2hs));
@@ -1045,6 +1091,7 @@ static int dw_mipi_dsi_bridge_attach(struct drm_bridge *bridge,
 static const struct drm_bridge_funcs dw_mipi_dsi_bridge_funcs = {
 	.atomic_duplicate_state	= drm_atomic_helper_bridge_duplicate_state,
 	.atomic_destroy_state	= drm_atomic_helper_bridge_destroy_state,
+	.atomic_check		= dw_mipi_dsi_bridge_atomic_check,
 	.atomic_reset		= drm_atomic_helper_bridge_reset,
 	.atomic_enable		= dw_mipi_dsi_bridge_atomic_enable,
 	.atomic_post_disable	= dw_mipi_dsi_bridge_post_atomic_disable,
@@ -1251,6 +1298,12 @@ void dw_mipi_dsi_set_slave(struct dw_mipi_dsi *dsi, struct dw_mipi_dsi *slave)
 	dsi->slave->mode_flags = dsi->mode_flags;
 }
 EXPORT_SYMBOL_GPL(dw_mipi_dsi_set_slave);
+
+struct drm_bridge *dw_mipi_dsi_get_bridge(struct dw_mipi_dsi *dsi)
+{
+	return &dsi->bridge;
+}
+EXPORT_SYMBOL_GPL(dw_mipi_dsi_get_bridge);
 
 /*
  * Probe/remove API, used from platforms based on the DRM bridge API.

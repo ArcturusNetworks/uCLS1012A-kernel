@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2022 Vivante Corporation
+*    Copyright (c) 2014 - 2023 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2022 Vivante Corporation
+*    Copyright (C) 2014 - 2023 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -51,7 +51,6 @@
 *    version of this file.
 *
 *****************************************************************************/
-
 
 #ifndef __gc_hal_driver_shared_h_
 #define __gc_hal_driver_shared_h_
@@ -648,6 +647,10 @@ typedef struct _gcsHAL_SUBCOMMIT {
 
     /* Does it require top priority. */
     gctBOOL                     topPriority;
+#endif
+#if gcdLOCAL_MEMORY_USAGE
+    /* Does commands use local memory. */
+    gctBOOL                     useLocalMem;
 #endif
 } gcsHAL_SUBCOMMIT, *gcsHAL_SUBCOMMIT_PTR;
 

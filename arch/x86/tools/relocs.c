@@ -406,7 +406,7 @@ static void read_ehdr(FILE *fp)
 	if (ehdr.e_version != EV_CURRENT)
 		die("Unknown ELF version\n");
 	if (ehdr.e_ehsize != sizeof(Elf_Ehdr))
-		die("Bad Elf header size\n");
+		die("Bad ELF header size\n");
 	if (ehdr.e_phentsize != sizeof(Elf_Phdr))
 		die("Bad program header entry\n");
 	if (ehdr.e_shentsize != sizeof(Elf_Shdr))
@@ -651,6 +651,14 @@ static void print_absolute_relocs(void)
 		sec_symtab  = sec->link;
 		sec_applies = &secs[sec->shdr.sh_info];
 		if (!(sec_applies->shdr.sh_flags & SHF_ALLOC)) {
+			continue;
+		}
+		/*
+		 * Do not perform relocations in .notes section; any
+		 * values there are meant for pre-boot consumption (e.g.
+		 * startup_xen).
+		 */
+		if (sec_applies->shdr.sh_type == SHT_NOTE) {
 			continue;
 		}
 		sh_symtab  = sec_symtab->symtab;

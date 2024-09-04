@@ -274,6 +274,15 @@ static void xgbe_sgmii_1000_mode(struct xgbe_prv_data *pdata)
 	pdata->phy_if.phy_impl.set_mode(pdata, XGBE_MODE_SGMII_1000);
 }
 
+static void xgbe_sgmii_10_mode(struct xgbe_prv_data *pdata)
+{
+	/* Set MAC to 10M speed */
+	pdata->hw_if.set_speed(pdata, SPEED_10);
+
+	/* Call PHY implementation support to complete rate change */
+	pdata->phy_if.phy_impl.set_mode(pdata, XGBE_MODE_SGMII_10);
+}
+
 static void xgbe_sgmii_100_mode(struct xgbe_prv_data *pdata)
 {
 	/* Set MAC to 1G speed */
@@ -305,6 +314,9 @@ static void xgbe_change_mode(struct xgbe_prv_data *pdata,
 		break;
 	case XGBE_MODE_KR:
 		xgbe_kr_mode(pdata);
+		break;
+	case XGBE_MODE_SGMII_10:
+		xgbe_sgmii_10_mode(pdata);
 		break;
 	case XGBE_MODE_SGMII_100:
 		xgbe_sgmii_100_mode(pdata);
@@ -1077,6 +1089,8 @@ static const char *xgbe_phy_fc_string(struct xgbe_prv_data *pdata)
 static const char *xgbe_phy_speed_string(int speed)
 {
 	switch (speed) {
+	case SPEED_10:
+		return "10Mbps";
 	case SPEED_100:
 		return "100Mbps";
 	case SPEED_1000:
@@ -1164,6 +1178,7 @@ static int xgbe_phy_config_fixed(struct xgbe_prv_data *pdata)
 	case XGBE_MODE_KX_1000:
 	case XGBE_MODE_KX_2500:
 	case XGBE_MODE_KR:
+	case XGBE_MODE_SGMII_10:
 	case XGBE_MODE_SGMII_100:
 	case XGBE_MODE_SGMII_1000:
 	case XGBE_MODE_X:
@@ -1178,7 +1193,19 @@ static int xgbe_phy_config_fixed(struct xgbe_prv_data *pdata)
 	if (pdata->phy.duplex != DUPLEX_FULL)
 		return -EINVAL;
 
-	xgbe_set_mode(pdata, mode);
+	/* Force the mode change for SFI in Fixed PHY config.
+	 * Fixed PHY configs needs PLL to be enabled while doing mode set.
+	 * When the SFP module isn't connected during boot, driver assumes
+	 * AN is ON and attempts autonegotiation. However, if the connected
+	 * SFP comes up in Fixed PHY config, the link will not come up as
+	 * PLL isn't enabled while the initial mode set command is issued.
+	 * So, force the mode change for SFI in Fixed PHY configuration to
+	 * fix link issues.
+	 */
+	if (mode == XGBE_MODE_SFI)
+		xgbe_change_mode(pdata, mode);
+	else
+		xgbe_set_mode(pdata, mode);
 
 	return 0;
 }
@@ -1225,6 +1252,8 @@ static int __xgbe_phy_config_aneg(struct xgbe_prv_data *pdata, bool set_mode)
 			xgbe_set_mode(pdata, XGBE_MODE_SGMII_1000);
 		} else if (xgbe_use_mode(pdata, XGBE_MODE_SGMII_100)) {
 			xgbe_set_mode(pdata, XGBE_MODE_SGMII_100);
+		} else if (xgbe_use_mode(pdata, XGBE_MODE_SGMII_10)) {
+			xgbe_set_mode(pdata, XGBE_MODE_SGMII_10);
 		} else {
 			enable_irq(pdata->an_irq);
 			ret = -EINVAL;
@@ -1312,7 +1341,7 @@ static enum xgbe_mode xgbe_phy_status_aneg(struct xgbe_prv_data *pdata)
 	return pdata->phy_if.phy_impl.an_outcome(pdata);
 }
 
-static void xgbe_phy_status_result(struct xgbe_prv_data *pdata)
+static bool xgbe_phy_status_result(struct xgbe_prv_data *pdata)
 {
 	struct ethtool_link_ksettings *lks = &pdata->phy.lks;
 	enum xgbe_mode mode;
@@ -1325,6 +1354,9 @@ static void xgbe_phy_status_result(struct xgbe_prv_data *pdata)
 		mode = xgbe_phy_status_aneg(pdata);
 
 	switch (mode) {
+	case XGBE_MODE_SGMII_10:
+		pdata->phy.speed = SPEED_10;
+		break;
 	case XGBE_MODE_SGMII_100:
 		pdata->phy.speed = SPEED_100;
 		break;
@@ -1347,8 +1379,13 @@ static void xgbe_phy_status_result(struct xgbe_prv_data *pdata)
 
 	pdata->phy.duplex = DUPLEX_FULL;
 
-	if (xgbe_set_mode(pdata, mode) && pdata->an_again)
+	if (!xgbe_set_mode(pdata, mode))
+		return false;
+
+	if (pdata->an_again)
 		xgbe_phy_reconfig_aneg(pdata);
+
+	return true;
 }
 
 static void xgbe_phy_status(struct xgbe_prv_data *pdata)
@@ -1378,7 +1415,8 @@ static void xgbe_phy_status(struct xgbe_prv_data *pdata)
 			return;
 		}
 
-		xgbe_phy_status_result(pdata);
+		if (xgbe_phy_status_result(pdata))
+			return;
 
 		if (test_bit(XGBE_LINK_INIT, &pdata->dev_state))
 			clear_bit(XGBE_LINK_INIT, &pdata->dev_state);
@@ -1467,6 +1505,8 @@ static int xgbe_phy_start(struct xgbe_prv_data *pdata)
 		xgbe_sgmii_1000_mode(pdata);
 	} else if (xgbe_use_mode(pdata, XGBE_MODE_SGMII_100)) {
 		xgbe_sgmii_100_mode(pdata);
+	} else if (xgbe_use_mode(pdata, XGBE_MODE_SGMII_10)) {
+		xgbe_sgmii_10_mode(pdata);
 	} else {
 		ret = -EINVAL;
 		goto err_irq;
@@ -1564,6 +1604,8 @@ static int xgbe_phy_best_advertised_speed(struct xgbe_prv_data *pdata)
 		return SPEED_1000;
 	else if (XGBE_ADV(lks, 100baseT_Full))
 		return SPEED_100;
+	else if (XGBE_ADV(lks, 10baseT_Full))
+		return SPEED_10;
 
 	return SPEED_UNKNOWN;
 }

@@ -958,7 +958,7 @@ void gemac_clear_laddrN(void *base, unsigned int entry_index)
  */
 void gemac_set_loop(void *base, enum mac_loop gem_loop)
 {
-	pr_debug("%s()\n", __func__);
+	pr_info("%s()\n", __func__);
 	writel(readl(base + EMAC_RCNTRL_REG) | EMAC_RCNTRL_LOOP, (base +
 		EMAC_RCNTRL_REG));
 }
@@ -1338,14 +1338,14 @@ void tmu_init(struct tmu_cfg *cfg)
 	writel(0x0,			TMU_CTRL);
 
 	/* MEM init */
-	pr_debug("%s: mem init\n", __func__);
+	pr_info("%s: mem init\n", __func__);
 	writel(MEM_INIT,	TMU_CTRL);
 
 	while (!(readl(TMU_CTRL) & MEM_INIT_DONE))
 		;
 
 	/* LLM init */
-	pr_debug("%s: lmem init\n", __func__);
+	pr_info("%s: lmem init\n", __func__);
 	writel(LLM_INIT,	TMU_CTRL);
 
 	while (!(readl(TMU_CTRL) & LLM_INIT_DONE))

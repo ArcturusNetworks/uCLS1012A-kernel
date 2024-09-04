@@ -28,9 +28,9 @@ struct pfe;
 
 struct pfe_tmu_credit {
 	/* Number of allowed TX packet in-flight, matches TMU queue size */
-	unsigned int tx_credit[MAX_NUM_GEMAC_SUPPORT][EMAC_TXQ_CNT];
-	unsigned int tx_credit_max[MAX_NUM_GEMAC_SUPPORT][EMAC_TXQ_CNT];
-	unsigned int tx_packets[MAX_NUM_GEMAC_SUPPORT][EMAC_TXQ_CNT];
+	unsigned int tx_credit[NUM_GEMAC_SUPPORT][EMAC_TXQ_CNT];
+	unsigned int tx_credit_max[NUM_GEMAC_SUPPORT][EMAC_TXQ_CNT];
+	unsigned int tx_packets[NUM_GEMAC_SUPPORT][EMAC_TXQ_CNT];
 };
 
 struct pfe {

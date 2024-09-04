@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2022 Vivante Corporation
+*    Copyright (c) 2014 - 2023 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2022 Vivante Corporation
+*    Copyright (C) 2014 - 2023 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -51,7 +51,6 @@
 *    version of this file.
 *
 *****************************************************************************/
-
 
 #include "gc_hal_kernel_linux.h"
 
@@ -315,12 +314,14 @@ gckKERNEL_DestroyProcessReservedUserMap(IN gckKERNEL Kernel, IN gctUINT32 Pid)
 
     physHandle = (PLINUX_MDL)galDevice->internalPhysical;
     bytes = galDevice->internalSize;
+
     if (bytes) {
         gckOS_UnmapMemoryEx(Kernel->os, physHandle, bytes, Logical, Pid);
     }
 
     physHandle = (PLINUX_MDL)device->externalPhysical;
     bytes = device->externalSize;
+
     if (bytes) {
         gckOS_UnmapMemoryEx(Kernel->os, physHandle, bytes, Logical, Pid);
     }
@@ -330,6 +331,7 @@ gckKERNEL_DestroyProcessReservedUserMap(IN gckKERNEL Kernel, IN gctUINT32 Pid)
     for (i = 0; i < gcdSYSTEM_RESERVE_COUNT; i++) {
         physHandle = (PLINUX_MDL)device->contiguousPhysicals[i];
         bytes = device->contiguousSizes[i];
+
         if (bytes) {
             gckOS_UnmapMemoryEx(Kernel->os, physHandle, bytes, Logical, Pid);
         }

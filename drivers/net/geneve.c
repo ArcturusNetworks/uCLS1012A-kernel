@@ -221,7 +221,7 @@ static void geneve_rx(struct geneve_dev *geneve, struct geneve_sock *gs,
 	struct genevehdr *gnvh = geneve_hdr(skb);
 	struct metadata_dst *tun_dst = NULL;
 	unsigned int len;
-	int err = 0;
+	int nh, err = 0;
 	void *oiph;
 
 	if (ip_tunnel_collect_metadata() || gs->collect_md) {
@@ -272,8 +272,22 @@ static void geneve_rx(struct geneve_dev *geneve, struct geneve_sock *gs,
 		skb->pkt_type = PACKET_HOST;
 	}
 
-	oiph = skb_network_header(skb);
+	/* Save offset of outer header relative to skb->head,
+	 * because we are going to reset the network header to the inner header
+	 * and might change skb->head.
+	 */
+	nh = skb_network_header(skb) - skb->head;
+
 	skb_reset_network_header(skb);
+
+	if (!pskb_inet_may_pull(skb)) {
+		DEV_STATS_INC(geneve->dev, rx_length_errors);
+		DEV_STATS_INC(geneve->dev, rx_errors);
+		goto drop;
+	}
+
+	/* Get the outer header. */
+	oiph = skb->head + nh;
 
 	if (geneve_get_sk_family(gs) == AF_INET)
 		err = IP_ECN_decapsulate(oiph, skb);
@@ -365,13 +379,6 @@ static int geneve_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	if (unlikely(geneveh->ver != GENEVE_VER))
 		goto drop;
 
-	inner_proto = geneveh->proto_type;
-
-	if (unlikely((inner_proto != htons(ETH_P_TEB) &&
-		      inner_proto != htons(ETH_P_IP) &&
-		      inner_proto != htons(ETH_P_IPV6))))
-		goto drop;
-
 	gs = rcu_dereference_sk_user_data(sk);
 	if (!gs)
 		goto drop;
@@ -379,6 +386,8 @@ static int geneve_udp_encap_recv(struct sock *sk, struct sk_buff *skb)
 	geneve = geneve_lookup_skb(gs, skb);
 	if (!geneve)
 		goto drop;
+
+	inner_proto = geneveh->proto_type;
 
 	if (unlikely((!geneve->cfg.inner_proto_inherit &&
 		      inner_proto != htons(ETH_P_TEB)))) {
@@ -1426,7 +1435,7 @@ static int geneve_configure(struct net *net, struct net_device *dev,
 		dev->type = ARPHRD_NONE;
 		dev->hard_header_len = 0;
 		dev->addr_len = 0;
-		dev->flags = IFF_NOARP;
+		dev->flags = IFF_POINTOPOINT | IFF_NOARP;
 	}
 
 	err = register_netdevice(dev);
@@ -1907,7 +1916,7 @@ struct net_device *geneve_dev_create_fb(struct net *net, const char *name,
 	if (err)
 		goto err;
 
-	err = rtnl_configure_link(dev, NULL);
+	err = rtnl_configure_link(dev, NULL, 0, NULL);
 	if (err < 0)
 		goto err;
 

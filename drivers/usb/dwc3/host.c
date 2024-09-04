@@ -12,7 +12,6 @@
 #include <linux/platform_device.h>
 
 #include "../host/xhci.h"
-
 #include "core.h"
 
 static void dwc3_host_fill_xhci_irq_res(struct dwc3 *dwc,
@@ -92,13 +91,8 @@ static int dwc3_host_get_irq(struct dwc3 *dwc)
 		goto out;
 
 	irq = platform_get_irq(dwc3_pdev, 0);
-	if (irq > 0) {
+	if (irq > 0)
 		dwc3_host_fill_xhci_irq_res(dwc, irq, NULL);
-		goto out;
-	}
-
-	if (!irq)
-		irq = -EINVAL;
 
 out:
 	return irq;
@@ -106,7 +100,7 @@ out:
 
 int dwc3_host_init(struct dwc3 *dwc)
 {
-	struct property_entry	props[4];
+	struct property_entry	props[5];
 	struct platform_device	*xhci;
 	struct dwc3_platform_data *dwc3_pdata;
 	int			ret, irq;
@@ -141,6 +135,8 @@ int dwc3_host_init(struct dwc3 *dwc)
 	}
 
 	memset(props, 0, sizeof(struct property_entry) * ARRAY_SIZE(props));
+
+	props[prop_idx++] = PROPERTY_ENTRY_BOOL("xhci-sg-trb-cache-size-quirk");
 
 	if (dwc->usb3_lpm_capable)
 		props[prop_idx++] = PROPERTY_ENTRY_BOOL("usb3-lpm-capable");

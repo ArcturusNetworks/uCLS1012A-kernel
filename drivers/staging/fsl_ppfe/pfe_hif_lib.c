@@ -29,7 +29,6 @@ MODULE_PARM_DESC(tx_qos, "0: disable ,\n"
 unsigned int pfe_pkt_size;
 unsigned int pfe_pkt_headroom;
 unsigned int emac_txq_cnt;
-extern int NUM_GEMAC_SUPPORT;
 
 /*
  * @pfe_hal_lib.c.
@@ -346,7 +345,7 @@ int hif_lib_client_unregister(struct hif_client_s *client)
 	struct pfe *pfe = client->pfe;
 	u32 client_id = client->id;
 
-	pr_debug(
+	pr_info(
 		"%s : client: %p, client_id: %d, txQ_depth: %d, rxQ_depth: %d\n"
 		, __func__, client, client->id, client->tx_qsize,
 		client->rx_qsize);
@@ -597,7 +596,7 @@ int pfe_hif_lib_init(struct pfe *pfe)
 {
 	int rc;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	if (lro_mode) {
 		page_mode = 1;
@@ -623,7 +622,7 @@ int pfe_hif_lib_init(struct pfe *pfe)
 
 void pfe_hif_lib_exit(struct pfe *pfe)
 {
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	pfe_hif_shm_clean(pfe->hif.shm);
 }

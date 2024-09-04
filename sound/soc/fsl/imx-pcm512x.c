@@ -282,6 +282,7 @@ static int imx_pcm512x_set_bias_level(struct snd_soc_card *card,
 			break;
 		/* mute amp */
 		gpiod_set_value_cansleep(data->mute_gpio, 0);
+		break;
 	default:
 		break;
 	}
@@ -563,7 +564,7 @@ static int imx_asoc_card_parse_dt(struct snd_soc_card *card,
 			goto fail;
 		}
 
-		ret = snd_soc_of_get_dai_name(cpu_np, &link->cpus->dai_name);
+		ret = snd_soc_of_get_dai_name(cpu_np, &link->cpus->dai_name, 0);
 		if (ret) {
 			if (ret != -EPROBE_DEFER)
 				dev_err(dev, "failed to get cpu dai name\n");

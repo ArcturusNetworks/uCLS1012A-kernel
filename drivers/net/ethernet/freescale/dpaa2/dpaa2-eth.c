@@ -8,7 +8,6 @@
 #include <linux/etherdevice.h>
 #include <linux/of_net.h>
 #include <linux/interrupt.h>
-#include <linux/msi.h>
 #include <linux/kthread.h>
 #include <linux/iommu.h>
 #include <linux/fsl/mc.h>
@@ -519,8 +518,6 @@ struct sk_buff *dpaa2_eth_alloc_skb(struct dpaa2_eth_priv *priv,
 
 	memcpy(skb->data, fd_vaddr + fd_offset, fd_length);
 
-	dpaa2_eth_recycle_buf(priv, ch, dpaa2_fd_get_addr(fd));
-
 	return skb;
 }
 
@@ -605,6 +602,7 @@ void dpaa2_eth_rx(struct dpaa2_eth_priv *priv,
 	struct rtnl_link_stats64 *percpu_stats;
 	struct dpaa2_eth_drv_stats *percpu_extras;
 	struct device *dev = priv->net_dev->dev.parent;
+	bool recycle_rx_buf = false;
 	void *buf_data;
 	u32 xdp_act;
 
@@ -634,6 +632,8 @@ void dpaa2_eth_rx(struct dpaa2_eth_priv *priv,
 			dma_unmap_page(dev, addr, priv->rx_buf_size,
 				       DMA_BIDIRECTIONAL);
 			skb = dpaa2_eth_build_linear_skb(ch, fd, vaddr);
+		} else {
+			recycle_rx_buf = true;
 		}
 	} else if (fd_format == dpaa2_fd_sg) {
 		WARN_ON(priv->xdp_prog);
@@ -654,6 +654,8 @@ void dpaa2_eth_rx(struct dpaa2_eth_priv *priv,
 
 	dpaa2_eth_receive_skb(priv, ch, fd, vaddr, fq, percpu_stats, skb);
 
+	if (recycle_rx_buf)
+		dpaa2_eth_recycle_buf(priv, ch, dpaa2_fd_get_addr(fd));
 	return;
 
 err_build_skb:
@@ -1090,14 +1092,12 @@ static int dpaa2_eth_build_single_fd(struct dpaa2_eth_priv *priv,
 	dma_addr_t addr;
 
 	buffer_start = skb->data - dpaa2_eth_needed_headroom(skb);
-
-	/* If there's enough room to align the FD address, do it.
-	 * It will help hardware optimize accesses.
-	 */
 	aligned_start = PTR_ALIGN(buffer_start - DPAA2_ETH_TX_BUF_ALIGN,
 				  DPAA2_ETH_TX_BUF_ALIGN);
 	if (aligned_start >= skb->head)
 		buffer_start = aligned_start;
+	else
+		return -ENOMEM;
 
 	/* Store a backpointer to the skb at the beginning of the buffer
 	 * (in the private data area) such that we can release it
@@ -3092,10 +3092,12 @@ static struct fsl_mc_device *dpaa2_eth_setup_dpcon(struct dpaa2_eth_priv *priv)
 	err = fsl_mc_object_allocate(to_fsl_mc_device(dev),
 				     FSL_MC_POOL_DPCON, &dpcon);
 	if (err) {
-		if (err == -ENXIO)
+		if (err == -ENXIO) {
+			dev_dbg(dev, "Waiting for DPCON\n");
 			err = -EPROBE_DEFER;
-		else
+		} else {
 			dev_info(dev, "Not enough DPCONs, will go on as-is\n");
+		}
 		return ERR_PTR(err);
 	}
 
@@ -3205,7 +3207,9 @@ static int dpaa2_eth_setup_dpio(struct dpaa2_eth_priv *priv)
 		channel = dpaa2_eth_alloc_channel(priv);
 		if (IS_ERR_OR_NULL(channel)) {
 			err = PTR_ERR_OR_ZERO(channel);
-			if (err != -EPROBE_DEFER)
+			if (err == -EPROBE_DEFER)
+				dev_dbg(dev, "waiting for affine channel\n");
+			else
 				dev_info(dev,
 					 "No affine channel for cpu %d and above\n", i);
 			goto err_alloc_ch;
@@ -4627,6 +4631,12 @@ static int dpaa2_eth_netdev_init(struct net_device *net_dev)
 			    NETIF_F_LLTX | NETIF_F_HW_TC | NETIF_F_TSO;
 	net_dev->gso_max_segs = DPAA2_ETH_ENQUEUE_MAX_FDS;
 	net_dev->hw_features = net_dev->features;
+	net_dev->xdp_features = NETDEV_XDP_ACT_BASIC |
+				NETDEV_XDP_ACT_REDIRECT |
+				NETDEV_XDP_ACT_NDO_XMIT;
+	if (priv->dpni_attrs.wriop_version >= DPAA2_WRIOP_VERSION(3, 0, 0) &&
+	    priv->dpni_attrs.num_queues <= 8)
+		net_dev->xdp_features |= NETDEV_XDP_ACT_XSK_ZEROCOPY;
 
 	if (priv->dpni_attrs.vlan_filter_entries)
 		net_dev->hw_features |= NETIF_F_HW_VLAN_CTAG_FILTER;
@@ -4659,8 +4669,10 @@ static int dpaa2_eth_connect_mac(struct dpaa2_eth_priv *priv)
 	dpni_dev = to_fsl_mc_device(priv->net_dev->dev.parent);
 	dpmac_dev = fsl_mc_get_endpoint(dpni_dev, 0);
 
-	if (PTR_ERR(dpmac_dev) == -EPROBE_DEFER)
+	if (PTR_ERR(dpmac_dev) == -EPROBE_DEFER) {
+		netdev_dbg(priv->net_dev, "waiting for mac\n");
 		return PTR_ERR(dpmac_dev);
+	}
 
 	if (IS_ERR(dpmac_dev) || dpmac_dev->dev.type != &fsl_mc_bus_dpmac_type)
 		return 0;
@@ -4681,11 +4693,16 @@ static int dpaa2_eth_connect_mac(struct dpaa2_eth_priv *priv)
 
 	if (dpaa2_mac_is_type_phy(mac)) {
 		err = dpaa2_mac_connect(mac);
-		if (err && err != -EPROBE_DEFER)
-			netdev_err(priv->net_dev, "Error connecting to the MAC endpoint: %pe",
-				   ERR_PTR(err));
-		if (err)
+		if (err) {
+			if (err == -EPROBE_DEFER)
+				netdev_dbg(priv->net_dev,
+					   "could not connect to MAC\n");
+			else
+				netdev_err(priv->net_dev,
+					   "Error connecting to the MAC endpoint: %pe",
+					   ERR_PTR(err));
 			goto err_close_mac;
+		}
 	}
 
 	mutex_lock(&priv->mac_lock);
@@ -4849,6 +4866,7 @@ static int dpaa2_eth_probe(struct fsl_mc_device *dpni_dev)
 
 	priv = netdev_priv(net_dev);
 	priv->net_dev = net_dev;
+	SET_NETDEV_DEVLINK_PORT(net_dev, &priv->devlink_port);
 
 	mutex_init(&priv->mac_lock);
 
@@ -4873,10 +4891,12 @@ static int dpaa2_eth_probe(struct fsl_mc_device *dpni_dev)
 	err = fsl_mc_portal_allocate(dpni_dev, FSL_MC_IO_ATOMIC_CONTEXT_PORTAL,
 				     &priv->mc_io);
 	if (err) {
-		if (err == -ENXIO)
+		if (err == -ENXIO) {
+			dev_dbg(dev, "waiting for MC portal\n");
 			err = -EPROBE_DEFER;
-		else
+		} else {
 			dev_err(dev, "MC portal allocation failed\n");
+		}
 		goto err_portal_alloc;
 	}
 
@@ -5009,6 +5029,8 @@ static int dpaa2_eth_probe(struct fsl_mc_device *dpni_dev)
 	if (err)
 		goto err_dl_port_add;
 
+	net_dev->needed_headroom = DPAA2_ETH_SWA_SIZE + DPAA2_ETH_TX_BUF_ALIGN;
+
 	err = register_netdev(net_dev);
 	if (err < 0) {
 		dev_err(dev, "register_netdev() failed\n");
@@ -5067,7 +5089,7 @@ err_wq_alloc:
 	return err;
 }
 
-static int dpaa2_eth_remove(struct fsl_mc_device *ls_dev)
+static void dpaa2_eth_remove(struct fsl_mc_device *ls_dev)
 {
 	struct device *dev;
 	struct net_device *net_dev;
@@ -5115,8 +5137,6 @@ static int dpaa2_eth_remove(struct fsl_mc_device *ls_dev)
 	dev_dbg(net_dev->dev.parent, "Removed interface %s\n", net_dev->name);
 
 	free_netdev(net_dev);
-
-	return 0;
 }
 
 static const struct fsl_mc_device_id dpaa2_eth_match_id_table[] = {
@@ -5131,7 +5151,6 @@ MODULE_DEVICE_TABLE(fslmc, dpaa2_eth_match_id_table);
 static struct fsl_mc_driver dpaa2_eth_driver = {
 	.driver = {
 		.name = KBUILD_MODNAME,
-		.owner = THIS_MODULE,
 	},
 	.probe = dpaa2_eth_probe,
 	.remove = dpaa2_eth_remove,

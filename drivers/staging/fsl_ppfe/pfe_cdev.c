@@ -34,7 +34,7 @@ static ssize_t pfe_cdev_read(struct file *fp, char *buf,
 {
 	int ret = 0;
 
-	pr_debug("PFE CDEV attempt copying (%lu) size of user.\n",
+	pr_info("PFE CDEV attempt copying (%lu) size of user.\n",
 		sizeof(link_states));
 
 	pr_debug("Dump link_state on screen before copy_to_user\n");
@@ -68,7 +68,7 @@ static ssize_t pfe_cdev_read(struct file *fp, char *buf,
 static ssize_t pfe_cdev_write(struct file *fp, const char *buf,
 			      size_t len, loff_t *off)
 {
-	pr_debug("PFE CDEV Write operation not supported!\n");
+	pr_info("PFE CDEV Write operation not supported!\n");
 
 	return -EFAULT;
 }
@@ -81,7 +81,7 @@ static int pfe_cdev_release(struct inode *inp, struct file *fp)
 		g_trigger = NULL;
 	}
 
-	pr_debug("PFE_CDEV: Device successfully closed\n");
+	pr_info("PFE_CDEV: Device successfully closed\n");
 	return 0;
 }
 
@@ -157,7 +157,7 @@ static long pfe_cdev_ioctl(struct file *fp, unsigned int cmd,
 		ret = 0;
 		break;
 	default:
-		pr_debug("Unsupport cmd (%d) for PFE CDEV.\n", cmd);
+		pr_info("Unsupport cmd (%d) for PFE CDEV.\n", cmd);
 		break;
 	};
 
@@ -167,7 +167,7 @@ static long pfe_cdev_ioctl(struct file *fp, unsigned int cmd,
 static unsigned int pfe_cdev_poll(struct file *fp,
 				  struct poll_table_struct *wait)
 {
-	pr_debug("PFE CDEV poll method not supported\n");
+	pr_info("PFE CDEV poll method not supported\n");
 	return 0;
 }
 
@@ -197,7 +197,7 @@ int pfe_cdev_init(void)
 	pr_debug("PFE CDEV assigned major number: %d\n", pfe_majno);
 
 	/* Register the class for the device */
-	pfe_char_class = class_create(THIS_MODULE, PFE_CLASS_NAME);
+	pfe_char_class = class_create(PFE_CLASS_NAME);
 	if (IS_ERR(pfe_char_class)) {
 		pr_err(
 		"Failed to init class for PFE CDEV. PFE CDEV not available.\n");
@@ -221,7 +221,7 @@ int pfe_cdev_init(void)
 	memset(link_states, 0, sizeof(struct pfe_shared_info) *
 			PFE_CDEV_ETH_COUNT);
 
-	pr_debug("PFE CDEV created: %s\n", PFE_CDEV_NAME);
+	pr_info("PFE CDEV created: %s\n", PFE_CDEV_NAME);
 
 	ret = 0;
 	return ret;
@@ -254,5 +254,5 @@ void pfe_cdev_exit(void)
 	pfe_char_class = NULL;
 	pfe_char_dev = NULL;
 
-	pr_debug("PFE CDEV Removed.\n");
+	pr_info("PFE CDEV Removed.\n");
 }

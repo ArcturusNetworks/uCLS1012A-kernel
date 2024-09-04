@@ -1,4 +1,0 @@
-repo: 1fc0fa6085ff208c9f6fa4e5bffc5f21c9c88d0b
-node: ba4ba4964e2c3a55790ce967921cfa92e5b70111
-branch: default
-tag: br_som314s_001

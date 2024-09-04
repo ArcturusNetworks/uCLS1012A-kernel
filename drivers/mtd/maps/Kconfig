@@ -385,18 +385,4 @@ config MTD_PISMO
 
 	  When built as a module, it will be called pismo.ko
 
-config MTD_MODULE_ONLY # This is only to exclude 'y' from the tristate shoice
-	tristate
-        depends on MTD_CFI
-	default m
-
-config MTD_PART_SINGLE
-        tristate "Creates single partition on CFI Flash device"
-        depends on MTD_MODULE_ONLY
-	default m
-        help
-          This module creates single partition with specific parameters 
-	  on the specified Flash ROM chip.
-          Say 'M' if you need to create special/temporary partition at run time by insmod.
-
 endmenu

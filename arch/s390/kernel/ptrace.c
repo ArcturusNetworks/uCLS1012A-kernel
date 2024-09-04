@@ -385,6 +385,7 @@ static int __poke_user(struct task_struct *child, addr_t addr, addr_t data)
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
+		save_fpu_regs();
 		if ((unsigned int) data != 0 ||
 		    test_fp_ctl(data >> (BITS_PER_LONG - 32)))
 			return -EINVAL;
@@ -474,9 +475,7 @@ long arch_ptrace(struct task_struct *child, long request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		put_user(child->thread.last_break,
-			 (unsigned long __user *) data);
-		return 0;
+		return put_user(child->thread.last_break, (unsigned long __user *)data);
 	case PTRACE_ENABLE_TE:
 		if (!MACHINE_HAS_TE)
 			return -EIO;
@@ -743,6 +742,7 @@ static int __poke_user_compat(struct task_struct *child,
 		/*
 		 * floating point control reg. is in the thread structure
 		 */
+		save_fpu_regs();
 		if (test_fp_ctl(tmp))
 			return -EINVAL;
 		child->thread.fpu.fpc = data;
@@ -824,9 +824,7 @@ long compat_arch_ptrace(struct task_struct *child, compat_long_t request,
 		}
 		return 0;
 	case PTRACE_GET_LAST_BREAK:
-		put_user(child->thread.last_break,
-			 (unsigned int __user *) data);
-		return 0;
+		return put_user(child->thread.last_break, (unsigned int __user *)data);
 	}
 	return compat_ptrace_request(child, request, addr, data);
 }
@@ -908,9 +906,7 @@ static int s390_fpregs_set(struct task_struct *target,
 	int rc = 0;
 	freg_t fprs[__NUM_FPRS];
 
-	if (target == current)
-		save_fpu_regs();
-
+	save_fpu_regs();
 	if (MACHINE_HAS_VX)
 		convert_vx_to_fp(fprs, target->thread.fpu.vxrs);
 	else
@@ -990,7 +986,7 @@ static int s390_vxrs_low_get(struct task_struct *target,
 	if (target == current)
 		save_fpu_regs();
 	for (i = 0; i < __NUM_VXRS_LOW; i++)
-		vxrs[i] = *((__u64 *)(target->thread.fpu.vxrs + i) + 1);
+		vxrs[i] = target->thread.fpu.vxrs[i].low;
 	return membuf_write(&to, vxrs, sizeof(vxrs));
 }
 
@@ -1008,12 +1004,12 @@ static int s390_vxrs_low_set(struct task_struct *target,
 		save_fpu_regs();
 
 	for (i = 0; i < __NUM_VXRS_LOW; i++)
-		vxrs[i] = *((__u64 *)(target->thread.fpu.vxrs + i) + 1);
+		vxrs[i] = target->thread.fpu.vxrs[i].low;
 
 	rc = user_regset_copyin(&pos, &count, &kbuf, &ubuf, vxrs, 0, -1);
 	if (rc == 0)
 		for (i = 0; i < __NUM_VXRS_LOW; i++)
-			*((__u64 *)(target->thread.fpu.vxrs + i) + 1) = vxrs[i];
+			target->thread.fpu.vxrs[i].low = vxrs[i];
 
 	return rc;
 }

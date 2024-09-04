@@ -14,6 +14,7 @@
 		startup-delay-us = <0>;
 		off-on-delay-us  = <1000>;
 		gpio = <&pca9538 0 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-high;
 	};
 
@@ -25,6 +26,7 @@
 		startup-delay-us = <200>;
 		off-on-delay-us  = <500>;
 		gpio = <&pca9538 1 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-high;
 	};
 
@@ -36,6 +38,7 @@
 		startup-delay-us = <500>;
 		off-on-delay-us  = <200>;
 		gpio = <&pca9538 2 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-high;
 	};
 
@@ -45,6 +48,7 @@
 		startup-delay-us = <1000>;
 		off-on-delay-us  = <0>;
 		gpio = <&pca9538 3 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-high;
 	};
 
@@ -52,6 +56,7 @@
 		compatible = "regulator-fixed";
 		regulator-name = "mt9m114-ctrl-9509";
 		gpio = <&pca9538 4 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-high;
 		regulator-always-on;
 	};
@@ -60,6 +65,7 @@
 		compatible = "regulator-fixed";
 		regulator-name = "mt9m114-ctrl-4t245";
 		gpio = <&pca9538 5 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-low;
 		regulator-always-on;
 	};
@@ -68,6 +74,7 @@
 		compatible = "regulator-fixed";
 		regulator-name = "mt9m114-ctrl-16t245";
 		gpio = <&pca9538 6 GPIO_ACTIVE_HIGH>;
+		vin-supply = <&reg_rpi_3v3>;
 		enable-active-low;
 		regulator-always-on;
 	};
@@ -103,6 +110,11 @@
 	};
 };
 
+&reg_rpi_3v3 {
+	regulator-boot-on;
+	status = "okay";
+};
+
 &cameradev {
 	parallel_csi;
 	status = "okay";
@@ -118,12 +130,9 @@
 };
 
 &parallel_csi {
-	#address-cells = <1>;
-	#size-cells = <0>;
 	status = "okay";
 
-	port@0 {
-		reg = <0>;
+	port {
 		parallel_csi_ep: endpoint {
 			remote-endpoint = <&mt9m114_ep>;
 		};
@@ -149,6 +158,7 @@
 		reg = <0x70>;
 		gpio-controller;
 		#gpio-cells = <2>;
+		vcc-supply = <&reg_rpi_3v3>;
 		status = "okay";
 	};
 

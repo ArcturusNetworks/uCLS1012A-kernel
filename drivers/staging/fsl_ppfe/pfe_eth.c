@@ -112,8 +112,6 @@ const struct soc_device_attribute ls1012a_rev1_soc_attr[] = {
 	{ },
 };
 
-extern int NUM_GEMAC_SUPPORT;
-
 /********************************************************************/
 /*                   SYSFS INTERFACE				    */
 /********************************************************************/
@@ -524,7 +522,7 @@ static int pfe_eth_stats_count(struct net_device *ndev, int sset)
  */
 static int pfe_eth_gemac_reglen(struct net_device *ndev)
 {
-	pr_debug("%s()\n", __func__);
+	pr_info("%s()\n", __func__);
 	return (sizeof(gemac_regs) / sizeof(u32));
 }
 
@@ -540,7 +538,7 @@ static void  pfe_eth_gemac_get_regs(struct net_device *ndev, struct ethtool_regs
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 	u32 *buf = (u32 *)regbuf;
 
-	pr_debug("%s()\n", __func__);
+	pr_info("%s()\n", __func__);
 	for (i = 0; i < sizeof(gemac_regs) / sizeof(u32); i++)
 		buf[i] = readl(priv->EMAC_baseaddr + gemac_regs[i]);
 }
@@ -886,24 +884,6 @@ static int pfe_eth_mdio_mux(u8 muxval)
 	return 0;
 }
 
-static int pfe_eth_mdio_write_addr(struct mii_bus *bus, int mii_id,
-				   int dev_addr, int regnum)
-{
-	struct pfe_mdio_priv_s *priv = (struct pfe_mdio_priv_s *)bus->priv;
-
-	__raw_writel(EMAC_MII_DATA_PA(mii_id) |
-		     EMAC_MII_DATA_RA(dev_addr) |
-		     EMAC_MII_DATA_TA | EMAC_MII_DATA(regnum),
-		     priv->mdio_base + EMAC_MII_DATA_REG);
-
-	if (pfe_eth_mdio_timeout(priv, EMAC_MDIO_TIMEOUT)) {
-		dev_err(&bus->dev, "phy MDIO address write timeout\n");
-		return -1;
-	}
-
-	return 0;
-}
-
 static int pfe_eth_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 			      u16 value)
 {
@@ -913,22 +893,12 @@ static int pfe_eth_mdio_write(struct mii_bus *bus, int mii_id, int regnum,
 	if ((mii_id) && (pfe->mdio_muxval[mii_id]))
 		pfe_eth_mdio_mux(pfe->mdio_muxval[mii_id]);
 
-	if (regnum & MII_ADDR_C45) {
-		pfe_eth_mdio_write_addr(bus, mii_id, (regnum >> 16) & 0x1f,
-					regnum & 0xffff);
-		__raw_writel(EMAC_MII_DATA_OP_CL45_WR |
-			     EMAC_MII_DATA_PA(mii_id) |
-			     EMAC_MII_DATA_RA((regnum >> 16) & 0x1f) |
-			     EMAC_MII_DATA_TA | EMAC_MII_DATA(value),
-			     priv->mdio_base + EMAC_MII_DATA_REG);
-	} else {
-		/* start a write op */
-		__raw_writel(EMAC_MII_DATA_ST | EMAC_MII_DATA_OP_WR |
-			     EMAC_MII_DATA_PA(mii_id) |
-			     EMAC_MII_DATA_RA(regnum) |
-			     EMAC_MII_DATA_TA | EMAC_MII_DATA(value),
-			     priv->mdio_base + EMAC_MII_DATA_REG);
-	}
+	/* start a write op */
+	__raw_writel(EMAC_MII_DATA_ST | EMAC_MII_DATA_OP_WR |
+		     EMAC_MII_DATA_PA(mii_id) |
+		     EMAC_MII_DATA_RA(regnum) |
+		     EMAC_MII_DATA_TA | EMAC_MII_DATA(value),
+		     priv->mdio_base + EMAC_MII_DATA_REG);
 
 	if (pfe_eth_mdio_timeout(priv, EMAC_MDIO_TIMEOUT)) {
 		dev_err(&bus->dev, "%s: phy MDIO write timeout\n", __func__);
@@ -946,22 +916,12 @@ static int pfe_eth_mdio_read(struct mii_bus *bus, int mii_id, int regnum)
 	if ((mii_id) && (pfe->mdio_muxval[mii_id]))
 		pfe_eth_mdio_mux(pfe->mdio_muxval[mii_id]);
 
-	if (regnum & MII_ADDR_C45) {
-		pfe_eth_mdio_write_addr(bus, mii_id, (regnum >> 16) & 0x1f,
-					regnum & 0xffff);
-		__raw_writel(EMAC_MII_DATA_OP_CL45_RD |
-			     EMAC_MII_DATA_PA(mii_id) |
-			     EMAC_MII_DATA_RA((regnum >> 16) & 0x1f) |
-			     EMAC_MII_DATA_TA,
-			     priv->mdio_base + EMAC_MII_DATA_REG);
-	} else {
-		/* start a read op */
-		__raw_writel(EMAC_MII_DATA_ST | EMAC_MII_DATA_OP_RD |
-			     EMAC_MII_DATA_PA(mii_id) |
-			     EMAC_MII_DATA_RA(regnum) |
-			     EMAC_MII_DATA_TA, priv->mdio_base +
-			     EMAC_MII_DATA_REG);
-	}
+	/* start a read op */
+	__raw_writel(EMAC_MII_DATA_ST | EMAC_MII_DATA_OP_RD |
+		     EMAC_MII_DATA_PA(mii_id) |
+		     EMAC_MII_DATA_RA(regnum) |
+		     EMAC_MII_DATA_TA, priv->mdio_base +
+		     EMAC_MII_DATA_REG);
 
 	if (pfe_eth_mdio_timeout(priv, EMAC_MDIO_TIMEOUT)) {
 		dev_err(&bus->dev, "%s: phy MDIO read timeout\n", __func__);
@@ -1010,7 +970,7 @@ static int pfe_eth_mdio_init(struct pfe *pfe,
 	if (!priv->mdc_div)
 		priv->mdc_div = 64;
 
-	dev_dbg(bus->parent, "%s: mdc_div: %d, phy_mask: %x\n",
+	dev_info(bus->parent, "%s: mdc_div: %d, phy_mask: %x\n",
 		 __func__, priv->mdc_div, bus->phy_mask);
 	mdio_node = of_get_child_by_name(pfe->dev->of_node, "mdio");
 	if ((mdio_info->id == 0) && mdio_node) {
@@ -1121,7 +1081,7 @@ static void pfe_eth_adjust_link(struct net_device *ndev)
 	struct phy_device *phydev = priv->phydev;
 	int new_state = 0;
 
-	netif_dbg(priv, drv, ndev, "%s\n", __func__);
+	netif_info(priv, drv, ndev, "%s\n", __func__);
 
 	spin_lock_irqsave(&priv->lock, flags);
 
@@ -1184,7 +1144,7 @@ static void pfe_phy_exit(struct net_device *ndev)
 {
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 
-	netif_dbg(priv, drv, ndev, "%s\n", __func__);
+	netif_info(priv, drv, ndev, "%s\n", __func__);
 
 	phy_disconnect(priv->phydev);
 	priv->phydev = NULL;
@@ -1196,7 +1156,7 @@ static void pfe_eth_stop(struct net_device *ndev, int wake)
 {
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 
-	netif_dbg(priv, drv, ndev, "%s\n", __func__);
+	netif_info(priv, drv, ndev, "%s\n", __func__);
 
 	if (wake) {
 		gemac_tx_disable(priv->EMAC_baseaddr);
@@ -1213,7 +1173,7 @@ static void pfe_eth_stop(struct net_device *ndev, int wake)
  */
 static int pfe_eth_start(struct pfe_eth_priv_s *priv)
 {
-	netif_dbg(priv, drv, priv->ndev, "%s\n", __func__);
+	netif_info(priv, drv, priv->ndev, "%s\n", __func__);
 
 	if (priv->phydev)
 		phy_start(priv->phydev);
@@ -1238,7 +1198,7 @@ static void ls1012a_configure_serdes(struct net_device *ndev)
 	if (eth_priv->einfo->mii_config == PHY_INTERFACE_MODE_2500SGMII)
 		sgmii_2500 = 1;
 
-	netif_dbg(eth_priv, drv, ndev, "%s\n", __func__);
+	netif_info(eth_priv, drv, ndev, "%s\n", __func__);
 	/* PCS configuration done with corresponding GEMAC */
 
 	pfe_eth_mdio_read(bus, 0, MDIO_SGMII_CR);
@@ -1311,7 +1271,7 @@ static int pfe_phy_init(struct net_device *ndev)
 	priv->oldlink = 0;
 	priv->oldspeed = 0;
 	priv->oldduplex = -1;
-	pr_debug("%s interface %x\n", __func__, interface);
+	pr_info("%s interface %x\n", __func__, interface);
 
 	if (priv->phy_node) {
 		phydev = of_phy_connect(ndev, priv->phy_node,
@@ -1343,7 +1303,7 @@ static int pfe_gemac_init(struct pfe_eth_priv_s *priv)
 {
 	struct gemac_cfg cfg;
 
-	netif_dbg(priv, ifup, priv->ndev, "%s\n", __func__);
+	netif_info(priv, ifup, priv->ndev, "%s\n", __func__);
 
 	cfg.mode = 0;
 	cfg.speed = SPEED_1000M;
@@ -1376,7 +1336,7 @@ static int pfe_eth_event_handler(void *data, int event, int qno)
 
 		if (qno == 0) {
 			if (napi_schedule_prep(&priv->high_napi)) {
-				netif_dbg(priv, intr, priv->ndev,
+				netif_info(priv, intr, priv->ndev,
 					   "%s: schedule high prio poll\n"
 					   , __func__);
 
@@ -1388,7 +1348,7 @@ static int pfe_eth_event_handler(void *data, int event, int qno)
 			}
 		} else if (qno == 1) {
 			if (napi_schedule_prep(&priv->low_napi)) {
-				netif_dbg(priv, intr, priv->ndev,
+				netif_info(priv, intr, priv->ndev,
 					   "%s: schedule low prio poll\n"
 					   , __func__);
 
@@ -1399,7 +1359,7 @@ static int pfe_eth_event_handler(void *data, int event, int qno)
 			}
 		} else if (qno == 2) {
 			if (napi_schedule_prep(&priv->lro_napi)) {
-				netif_dbg(priv, intr, priv->ndev,
+				netif_info(priv, intr, priv->ndev,
 					   "%s: schedule lro prio poll\n"
 					   , __func__);
 
@@ -1443,7 +1403,7 @@ static int pfe_eth_open(struct net_device *ndev)
 	struct hif_client_s *client;
 	int rc;
 
-	netif_dbg(priv, ifup, ndev, "%s\n", __func__);
+	netif_info(priv, ifup, ndev, "%s\n", __func__);
 
 	/* Register client driver with HIF */
 	client = &priv->client;
@@ -1465,7 +1425,7 @@ static int pfe_eth_open(struct net_device *ndev)
 		goto err0;
 	}
 
-	netif_dbg(priv, drv, ndev, "%s: registered client: %p\n", __func__,
+	netif_info(priv, drv, ndev, "%s: registered client: %p\n", __func__,
 		   client);
 
 	pfe_gemac_init(priv);
@@ -1507,7 +1467,7 @@ int pfe_eth_shutdown(struct net_device *ndev, int wake)
 				(TX_POLL_TIMEOUT_MS * HZ) / 1000;
 	int tx_pkts, prv_tx_pkts;
 
-	netif_dbg(priv, ifdown, ndev, "%s\n", __func__);
+	netif_info(priv, ifdown, ndev, "%s\n", __func__);
 
 	for (i = 0; i < emac_txq_cnt; i++)
 		hrtimer_cancel(&priv->fast_tx_timeout[i].timer);
@@ -1530,7 +1490,7 @@ int pfe_eth_shutdown(struct net_device *ndev, int wake)
 				break;
 			}
 
-			pr_debug("%s : (%s) Waiting for tx packets to free. Pending tx pkts = %d.\n"
+			pr_info("%s : (%s) Waiting for tx packets to free. Pending tx pkts = %d.\n"
 				, __func__, ndev->name, tx_pkts);
 			if (need_resched())
 				schedule();
@@ -1736,7 +1696,7 @@ static void pfe_hif_send_packet(struct sk_buff *skb, struct  pfe_eth_priv_s
 	unsigned int nr_frags;
 	u32 ctrl = 0;
 
-	netif_dbg(priv, tx_queued, priv->ndev, "%s\n", __func__);
+	netif_info(priv, tx_queued, priv->ndev, "%s\n", __func__);
 
 	if (skb_is_gso(skb)) {
 		priv->stats.tx_dropped++;
@@ -1771,7 +1731,7 @@ static void pfe_hif_send_packet(struct sk_buff *skb, struct  pfe_eth_priv_s
 				   0x0, HIF_LAST_BUFFER | HIF_DATA_VALID,
 				   skb);
 
-		netif_dbg(priv, tx_queued, priv->ndev,
+		netif_info(priv, tx_queued, priv->ndev,
 			   "%s: pkt sent successfully skb:%p nr_frags:%d len:%d\n",
 			   __func__, skb, nr_frags, skb->len);
 	} else {
@@ -1779,7 +1739,7 @@ static void pfe_hif_send_packet(struct sk_buff *skb, struct  pfe_eth_priv_s
 				   skb->len, ctrl, HIF_FIRST_BUFFER |
 				   HIF_LAST_BUFFER | HIF_DATA_VALID,
 				   skb);
-		netif_dbg(priv, tx_queued, priv->ndev,
+		netif_info(priv, tx_queued, priv->ndev,
 			   "%s: pkt sent successfully skb:%p len:%d\n",
 			   __func__, skb, skb->len);
 	}
@@ -1799,7 +1759,7 @@ static void pfe_eth_flush_txQ(struct pfe_eth_priv_s *priv, int tx_q_num, int
 								tx_q_num);
 	unsigned int flags;
 
-	netif_dbg(priv, tx_done, priv->ndev, "%s\n", __func__);
+	netif_info(priv, tx_done, priv->ndev, "%s\n", __func__);
 
 	if (!from_tx)
 		__netif_tx_lock_bh(tx_queue);
@@ -1821,7 +1781,7 @@ static void pfe_eth_flush_tx(struct pfe_eth_priv_s *priv)
 {
 	int ii;
 
-	netif_dbg(priv, tx_done, priv->ndev, "%s\n", __func__);
+	netif_info(priv, tx_done, priv->ndev, "%s\n", __func__);
 
 	for (ii = 0; ii < emac_txq_cnt; ii++) {
 		pfe_eth_flush_txQ(priv, ii, 0, 0);
@@ -1855,7 +1815,7 @@ static int pfe_eth_send_packet(struct sk_buff *skb, struct net_device *ndev)
 	struct netdev_queue *tx_queue = netdev_get_tx_queue(priv->ndev,
 								tx_q_num);
 
-	netif_dbg(priv, tx_queued, ndev, "%s\n", __func__);
+	netif_info(priv, tx_queued, ndev, "%s\n", __func__);
 
 	if ((!skb_is_gso(skb)) && (skb_headroom(skb) < (PFE_PKT_HEADER_SZ +
 			sizeof(unsigned long)))) {
@@ -1916,7 +1876,7 @@ static struct net_device_stats *pfe_eth_get_stats(struct net_device *ndev)
 {
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 
-	netif_dbg(priv, drv, ndev, "%s\n", __func__);
+	netif_info(priv, drv, ndev, "%s\n", __func__);
 
 	return &priv->stats;
 }
@@ -1928,7 +1888,7 @@ static int pfe_eth_set_mac_address(struct net_device *ndev, void *addr)
 	struct pfe_eth_priv_s *priv = netdev_priv(ndev);
 	struct sockaddr *sa = addr;
 
-	netif_dbg(priv, drv, ndev, "%s\n", __func__);
+	netif_info(priv, drv, ndev, "%s\n", __func__);
 
 	if (!is_valid_ether_addr(sa->sa_data))
 		return -EADDRNOTAVAIL;
@@ -1973,7 +1933,7 @@ static void pfe_eth_set_multi(struct net_device *ndev)
 	struct netdev_hw_addr *ha;
 
 	if (ndev->flags & IFF_PROMISC) {
-		netif_dbg(priv, drv, ndev, "entering promiscuous mode\n");
+		netif_info(priv, drv, ndev, "entering promiscuous mode\n");
 
 		priv->promisc = 1;
 		gemac_enable_copy_all(priv->EMAC_baseaddr);
@@ -1986,7 +1946,7 @@ static void pfe_eth_set_multi(struct net_device *ndev)
 	if (ndev->flags & IFF_BROADCAST) {
 		gemac_allow_broadcast(priv->EMAC_baseaddr);
 	} else {
-		netif_dbg(priv, drv, ndev,
+		netif_info(priv, drv, ndev,
 			   "disabling broadcast frame reception\n");
 
 		gemac_no_broadcast(priv->EMAC_baseaddr);
@@ -2246,7 +2206,7 @@ static int pfe_eth_poll(struct pfe_eth_priv_s *priv, struct napi_struct *napi,
 	int work_done = 0;
 	unsigned int len;
 
-	netif_dbg(priv, intr, priv->ndev, "%s\n", __func__);
+	netif_info(priv, intr, priv->ndev, "%s\n", __func__);
 
 #ifdef PFE_ETH_NAPI_STATS
 	priv->napi_counters[NAPI_POLL_COUNT]++;
@@ -2303,7 +2263,7 @@ static int pfe_eth_lro_poll(struct napi_struct *napi, int budget)
 	struct pfe_eth_priv_s *priv = container_of(napi, struct pfe_eth_priv_s,
 							lro_napi);
 
-	netif_dbg(priv, intr, priv->ndev, "%s\n", __func__);
+	netif_info(priv, intr, priv->ndev, "%s\n", __func__);
 
 	return pfe_eth_poll(priv, napi, 2, budget);
 }
@@ -2315,7 +2275,7 @@ static int pfe_eth_low_poll(struct napi_struct *napi, int budget)
 	struct pfe_eth_priv_s *priv = container_of(napi, struct pfe_eth_priv_s,
 							low_napi);
 
-	netif_dbg(priv, intr, priv->ndev, "%s\n", __func__);
+	netif_info(priv, intr, priv->ndev, "%s\n", __func__);
 
 	return pfe_eth_poll(priv, napi, 1, budget);
 }
@@ -2327,7 +2287,7 @@ static int pfe_eth_high_poll(struct napi_struct *napi, int budget)
 	struct pfe_eth_priv_s *priv = container_of(napi, struct pfe_eth_priv_s,
 							high_napi);
 
-	netif_dbg(priv, intr, priv->ndev, "%s\n", __func__);
+	netif_info(priv, intr, priv->ndev, "%s\n", __func__);
 
 	return pfe_eth_poll(priv, napi, 0, budget);
 }
@@ -2355,7 +2315,6 @@ static int pfe_eth_init_one(struct pfe *pfe,
 	struct pfe_eth_priv_s *priv = NULL;
 	struct ls1012a_eth_platform_data *einfo;
 	int err;
-	u8 *addr = NULL;
 
 	einfo = (struct ls1012a_eth_platform_data *)
 				pfe_info->ls1012a_eth_pdata;
@@ -2401,13 +2360,7 @@ static int pfe_eth_init_one(struct pfe *pfe,
 	pfe_eth_fast_tx_timeout_init(priv);
 
 	/* Copy the station address into the dev structure, */
-	if (einfo->eth_swap) {
-		if (id == 0 )
-			dev_addr_set(ndev, einfo[1].mac_addr);
-		else
-			dev_addr_set(ndev, einfo[0].mac_addr);
-	} else
-		dev_addr_set(ndev, einfo[id].mac_addr);
+	dev_addr_set(ndev, einfo[id].mac_addr);
 
 	if (us)
 		goto phy_init;
@@ -2456,7 +2409,7 @@ static int pfe_eth_init_one(struct pfe *pfe,
 	if ((!(pfe_use_old_dts_phy) && !(priv->phy_node)) ||
 	    ((pfe_use_old_dts_phy) &&
 	      (priv->einfo->phy_flags & GEMAC_NO_PHY))) {
-		pr_warn("%s: No PHY or fixed-link\n", __func__);
+		pr_info("%s: No PHY or fixed-link\n", __func__);
 		goto skip_phy_init;
 	}
 
@@ -2483,9 +2436,8 @@ skip_phy_init:
 	if (pfe_eth_sysfs_init(ndev))
 		goto err3;
 
-	addr = ndev->dev_addr;
-	netif_info(priv, probe, ndev, "interface created (%02x:%02x:%02x:%02x:%02x:%02x)\n",
-		   addr[0], addr[1], addr[2], addr[3], addr[4], addr[5]);
+	netif_info(priv, probe, ndev, "%s: created interface, baseaddr: %p\n",
+		   __func__, priv->EMAC_baseaddr);
 
 	return 0;
 
@@ -2508,9 +2460,8 @@ int pfe_eth_init(struct pfe *pfe)
 	int ii = 0;
 	int err;
 	struct ls1012a_pfe_platform_data *pfe_info;
-	struct ls1012a_eth_platform_data *einfo;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	cbus_emac_base[0] = EMAC1_BASE_ADDR;
 	cbus_emac_base[1] = EMAC2_BASE_ADDR;
@@ -2526,28 +2477,8 @@ int pfe_eth_init(struct pfe *pfe)
 		goto err_pdata;
 	}
 
-	einfo = (struct ls1012a_eth_platform_data *)
-				pfe_info->ls1012a_eth_pdata;
-
-	/* einfo never be NULL, but no harm in having this check */
-	if (!einfo) {
-		pr_err(
-			"%s: pfe missing additional gemacs platform data\n"
-			, __func__);
-		goto err_einfo;
-	}
-
-
 	for (ii = 0; ii < NUM_GEMAC_SUPPORT; ii++) {
-		if (einfo->eth_swap) {
-			if (ii == 0) 
-				err = pfe_eth_mdio_init(pfe, pfe_info, 1);
-			else
-				err = pfe_eth_mdio_init(pfe, pfe_info, 0);
-		} else {
-			err = pfe_eth_mdio_init(pfe, pfe_info, ii);
-		}
-
+		err = pfe_eth_mdio_init(pfe, pfe_info, ii);
 		if (err) {
 			pr_err("%s: pfe_eth_mdio_init() failed\n", __func__);
 			goto err_mdio_init;
@@ -2560,14 +2491,7 @@ int pfe_eth_init(struct pfe *pfe)
 		pfe_errata_a010897 = false;
 
 	for (ii = 0; ii < NUM_GEMAC_SUPPORT; ii++) {
-		if (einfo->eth_swap) {
-			if (ii == 0) 
-				err = pfe_eth_init_one(pfe, pfe_info, 1);
-			else
-				err = pfe_eth_init_one(pfe, pfe_info, 0);
-		} else {
-			err = pfe_eth_init_one(pfe, pfe_info, ii);
-		}
+		err = pfe_eth_init_one(pfe, pfe_info, ii);
 		if (err)
 			goto err_eth_init;
 	}
@@ -2580,7 +2504,6 @@ err_eth_init:
 		pfe_eth_mdio_exit(pfe, ii);
 	}
 
-err_einfo:
 err_mdio_init:
 err_pdata:
 	return err;
@@ -2590,7 +2513,7 @@ err_pdata:
  */
 static void pfe_eth_exit_one(struct pfe_eth_priv_s *priv)
 {
-	netif_dbg(priv, probe, priv->ndev, "%s\n", __func__);
+	netif_info(priv, probe, priv->ndev, "%s\n", __func__);
 
 	if (!us)
 		pfe_eth_sysfs_exit(priv->ndev);
@@ -2598,7 +2521,7 @@ static void pfe_eth_exit_one(struct pfe_eth_priv_s *priv)
 	if ((!(pfe_use_old_dts_phy) && !(priv->phy_node)) ||
 	    ((pfe_use_old_dts_phy) &&
 	      (priv->einfo->phy_flags & GEMAC_NO_PHY))) {
-		pr_warn("%s: No PHY or fixed-link\n", __func__);
+		pr_info("%s: No PHY or fixed-link\n", __func__);
 		goto skip_phy_exit;
 	}
 
@@ -2617,7 +2540,7 @@ void pfe_eth_exit(struct pfe *pfe)
 {
 	int ii;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	for (ii = NUM_GEMAC_SUPPORT - 1; ii >= 0; ii--)
 		pfe_eth_exit_one(pfe->eth.eth_priv[ii]);

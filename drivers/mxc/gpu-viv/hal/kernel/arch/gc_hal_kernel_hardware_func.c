@@ -2,7 +2,7 @@
 *
 *    The MIT License (MIT)
 *
-*    Copyright (c) 2014 - 2022 Vivante Corporation
+*    Copyright (c) 2014 - 2023 Vivante Corporation
 *
 *    Permission is hereby granted, free of charge, to any person obtaining a
 *    copy of this software and associated documentation files (the "Software"),
@@ -26,7 +26,7 @@
 *
 *    The GPL License (GPL)
 *
-*    Copyright (C) 2014 - 2022 Vivante Corporation
+*    Copyright (C) 2014 - 2023 Vivante Corporation
 *
 *    This program is free software; you can redistribute it and/or
 *    modify it under the terms of the GNU General Public License
@@ -51,7 +51,6 @@
 *    version of this file.
 *
 *****************************************************************************/
-
 
 #include "gc_hal.h"
 #include "gc_hal_kernel.h"
@@ -2704,8 +2703,7 @@ _ProgramMMUStates(IN gckHARDWARE Hardware, IN gckMMU Mmu, IN gceMMU_MODE Mode,
  32) ? ~0U : (~(~0U << ((1 ? 22:22) - (0 ? 22:22) + 1))))))) << (0 ? 22:22))) | (((gctUINT32) ((gctUINT32) (1) & ((gctUINT32) ((((1 ? 22:22) - (0 ? 22:22) + 1) ==
  32) ? ~0U : (~(~0U << ((1 ? 22:22) - (0 ? 22:22) + 1))))))) << (0 ? 22:22)));
 
-        for (i = 0; i < probeSelectCount; i++)
-        {
+        for (i = 0; i < probeSelectCount; i++) {
             *buffer++ =
                 ((((gctUINT32) (0)) & ~(((gctUINT32) (((gctUINT32) ((((1 ? 31:27) - (0 ? 31:27) + 1) ==
  32) ? ~0U : (~(~0U << ((1 ? 31:27) - (0 ? 31:27) + 1))))))) << (0 ? 31:27))) | (((gctUINT32) (0x01 & ((gctUINT32) ((((1 ? 31:27) - (0 ? 31:27) + 1) ==
@@ -3119,14 +3117,13 @@ _FuncInit_MMU(IN gcsFUNCTION_EXECUTION_PTR Execution)
 #ifdef __linux__
 #if defined(CONFIG_ZONE_DMA32) || defined(CONFIG_ZONE_DMA)
 #if LINUX_VERSION_CODE >= KERNEL_VERSION(2, 6, 37)
-        flags |= gcvALLOC_FLAG_4GB_ADDR | gcvALLOC_FLAG_4K_PAGES;
-#    endif
+    flags |= gcvALLOC_FLAG_4GB_ADDR | gcvALLOC_FLAG_4K_PAGES;
+#endif
 #endif
 #else
-        flags |= gcvALLOC_FLAG_4GB_ADDR;
+    flags |= gcvALLOC_FLAG_4GB_ADDR;
 #endif
     }
-
 
 #if gcdENABLE_CACHEABLE_COMMAND_BUFFER
     flags |= gcvALLOC_FLAG_CACHEABLE;
@@ -3160,6 +3157,11 @@ _FuncInit_MMU(IN gcsFUNCTION_EXECUTION_PTR Execution)
 
     Execution->funcCmd[0].funcVidMemBytes = 1024;
     /* Allocate mmu command buffer within 32bit space */
+    if (!gckHARDWARE_IsFeatureAvailable(hardware, gcvFEATURE_MMU_PAGE_DESCRIPTOR))
+    {
+        /* Ensure address of command buffer for MMU setup does not exceed 32 bit */
+        flags |= gcvALLOC_FLAG_4GB_ADDR;
+    }
     gcmkONERROR(gckKERNEL_AllocateVideoMemory(hardware->kernel, 64,
                                               gcvVIDMEM_TYPE_COMMAND, flags,
                                               &Execution->funcCmd[0].funcVidMemBytes, &pool,

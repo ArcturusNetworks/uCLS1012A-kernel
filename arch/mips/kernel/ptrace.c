@@ -31,6 +31,7 @@
 #include <linux/seccomp.h>
 #include <linux/ftrace.h>
 
+#include <asm/branch.h>
 #include <asm/byteorder.h>
 #include <asm/cpu.h>
 #include <asm/cpu-info.h>
@@ -47,6 +48,12 @@
 
 #define CREATE_TRACE_POINTS
 #include <trace/events/syscalls.h>
+
+unsigned long exception_ip(struct pt_regs *regs)
+{
+	return exception_epc(regs);
+}
+EXPORT_SYMBOL(exception_ip);
 
 /*
  * Called by kernel/ptrace.c when detaching..
@@ -531,10 +538,11 @@ static int fpr_set(struct task_struct *target,
 		ptrace_setfcr31(target, fcr31);
 	}
 
-	if (count > 0)
-		err = user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf,
-						fir_pos,
-						fir_pos + sizeof(u32));
+	if (count > 0) {
+		user_regset_copyin_ignore(&pos, &count, &kbuf, &ubuf,
+					  fir_pos, fir_pos + sizeof(u32));
+		return 0;
+	}
 
 	return err;
 }

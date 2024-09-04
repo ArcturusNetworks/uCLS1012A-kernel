@@ -20,7 +20,6 @@
 
 extern bool pfe_use_old_dts_phy;
 struct ls1012a_pfe_platform_data pfe_platform_data;
-int NUM_GEMAC_SUPPORT = 1;
 
 static int pfe_get_gemac_if_properties(struct device_node *gem,
 				       int port,
@@ -30,7 +29,6 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 	int size;
 	int phy_id = 0;
 	const u32 *addr;
-	const u8 *mac_addr;
 	int err;
 
 	addr = of_get_property(gem, "reg", &size);
@@ -40,12 +38,6 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 		goto err;
 
 	pdata->ls1012a_eth_pdata[port].gem_id = port;
-
-	addr = of_get_property(gem, "eth-swap", &size);
-	if (addr)
-		pdata->ls1012a_eth_pdata[port].eth_swap = be32_to_cpup(addr);
-	else
-		pdata->ls1012a_eth_pdata[port].eth_swap = 0;
 
 	err = of_get_mac_address(gem, pdata->ls1012a_eth_pdata[port].mac_addr);
 
@@ -83,7 +75,7 @@ static int pfe_get_gemac_if_properties(struct device_node *gem,
 			goto done;
 
 	} else {
-		pr_warn("%s: No PHY or fixed-link\n", __func__);
+		pr_info("%s: No PHY or fixed-link\n", __func__);
 		return 0;
 	}
 
@@ -211,7 +203,6 @@ static int pfe_platform_probe(struct platform_device *pdev)
 		rc = -ENXIO;
 		goto err_prop;
 	}
-	NUM_GEMAC_SUPPORT = interface_count;
 
 	pfe_platform_data.ls1012a_mdio_pdata[0].phy_mask = 0xffffffff;
 
@@ -224,7 +215,7 @@ static int pfe_platform_probe(struct platform_device *pdev)
 	}
 
 	if (interface_count != ii)
-		pr_warn("missing some of gemac interface properties.\n");
+		pr_info("missing some of gemac interface properties.\n");
 
 	pfe->dev = &pdev->dev;
 
@@ -273,7 +264,7 @@ static int pfe_platform_remove(struct platform_device *pdev)
 	struct pfe *pfe = platform_get_drvdata(pdev);
 	int rc;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	rc = pfe_remove(pfe);
 

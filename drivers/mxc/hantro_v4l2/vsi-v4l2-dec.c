@@ -396,6 +396,10 @@ static int vsi_dec_streamoff(
 		return -EBUSY;
 	if (!binputqueue(type)) {
 		vb2_clear_last_buffer_dequeued(q);
+		if (ctx->need_capture_on && vb2_is_streaming(q)) {
+			return_all_buffers(q, VB2_BUF_STATE_ERROR, 1);
+			vb2_streamoff(q, type);
+		}
 		ctx->need_capture_on = false;
 		if (!vb2_is_streaming(q)) {
 			vsi_dec_return_queued_buffers(q);
@@ -485,18 +489,12 @@ static int vsi_dec_dqbuf(struct file *file, void *priv, struct v4l2_buffer *p)
 		vb = q->bufs[p->index];
 		vsibuf = vb_to_vsibuf(vb);
 		list_del(&vsibuf->list);
-		if (!binputqueue(p->type)) {
+		if (!binputqueue(p->type) && !(p->flags & V4L2_BUF_FLAG_LAST)) {
 			clear_bit(BUF_FLAG_DONE, &ctx->vbufflag[p->index]);
 			ctx->buffed_capnum--;
 			ctx->buffed_cropcapnum--;
 		} else
 			clear_bit(BUF_FLAG_DONE, &ctx->srcvbufflag[p->index]);
-		if (ctx->status != DEC_STATUS_ENDSTREAM &&
-			!(test_bit(CTX_FLAG_ENDOFSTRM_BIT, &ctx->flag)) &&
-			p->bytesused == 0) {
-			mutex_unlock(&ctx->ctxlock);
-			return -EAGAIN;
-		}
 	}
 	if (!binputqueue(p->type)) {
 		p->reserved = ctx->rfc_luma_offset[p->index];
@@ -1232,11 +1230,16 @@ static int v4l2_dec_mmap(struct file *filp, struct vm_area_struct *vma)
 
 static __poll_t vsi_dec_poll(struct file *file, poll_table *wait)
 {
+	__poll_t req_events = poll_requested_events(wait);
 	__poll_t ret = 0;
 	struct v4l2_fh *fh = file->private_data;
 	struct vsi_v4l2_ctx *ctx = fh_to_ctx(file->private_data);
 	int dstn = atomic_read(&ctx->dstframen);
 	int srcn = atomic_read(&ctx->srcframen);
+	struct vb2_queue *src_q, *dst_q;
+
+	src_q = &ctx->input_que;
+	dst_q = &ctx->output_que;
 
 	/*
 	 * poll_wait() MUST be called on the first invocation on all the
@@ -1256,6 +1259,21 @@ static __poll_t vsi_dec_poll(struct file *file, poll_table *wait)
 		v4l2_klog(LOGLVL_BRIEF, "%s event", __func__);
 		ret |= EPOLLPRI;
 	}
+	if (req_events & (EPOLLOUT | EPOLLWRNORM | EPOLLIN | EPOLLRDNORM)) {
+		/*
+		 * There has to be at least one buffer queued on each queued_list, which
+		 * means either in driver already or waiting for driver to claim it
+		 * and start processing.
+		 */
+		if ((!vb2_is_streaming(src_q) || src_q->error || list_empty(&src_q->queued_list)) &&
+		    !ctx->reschange_notified &&
+		    (!vb2_is_streaming(dst_q) || dst_q->error ||
+		     (list_empty(&dst_q->queued_list) && !dst_q->last_buffer_dequeued))) {
+			ret |= EPOLLERR;
+			return ret;
+		}
+	}
+
 	if (ctx->output_que.last_buffer_dequeued)
 		ret |= (EPOLLIN | EPOLLRDNORM);
 	if (vb2_is_streaming(&ctx->output_que))

@@ -15,6 +15,8 @@
 #include <linux/of.h>
 #include <linux/clk.h>
 
+#include <soc/imx/src.h>
+
 #define REV_B1				0x21
 
 #define IMX8MQ_SW_INFO_B1		0x40
@@ -35,12 +37,10 @@
 #define OCOTP_UID_HIGH			0x420
 
 #define IMX8MP_OCOTP_UID_OFFSET		0x10
-
-#define IMX93_OCOTP_UID_OFFSET		0x80c0
+#define IMX8MP_OCOTP_UID_HIGH		0xE00
 
 /* Same as ANADIG_DIGPROG_IMX7D */
 #define ANADIG_DIGPROG_IMX8MM	0x800
-#define ANADIG_DIGPROG_IMX93	0x800
 
 struct imx8_soc_data {
 	char *name;
@@ -115,6 +115,7 @@ static void __init imx8mm_soc_uid(void)
 {
 	void __iomem *ocotp_base;
 	struct device_node *np;
+	struct clk *clk;
 	u32 offset = of_machine_is_compatible("fsl,imx8mp") ?
 		     IMX8MP_OCOTP_UID_OFFSET : 0;
 
@@ -124,10 +125,26 @@ static void __init imx8mm_soc_uid(void)
 
 	ocotp_base = of_iomap(np, 0);
 	WARN_ON(!ocotp_base);
+	clk = of_clk_get_by_name(np, NULL);
+	if (IS_ERR(clk)) {
+		WARN_ON(IS_ERR(clk));
+		return;
+	}
+
+	clk_prepare_enable(clk);
 
 	soc_uid = readl_relaxed(ocotp_base + OCOTP_UID_HIGH + offset);
 	soc_uid <<= 32;
 	soc_uid |= readl_relaxed(ocotp_base + OCOTP_UID_LOW + offset);
+
+	if (offset) {
+		soc_uid_h = readl_relaxed(ocotp_base + IMX8MP_OCOTP_UID_HIGH + 0x10);
+		soc_uid_h <<= 32;
+		soc_uid_h |= readl_relaxed(ocotp_base + IMX8MP_OCOTP_UID_HIGH);
+	}
+
+	clk_disable_unprepare(clk);
+	clk_put(clk);
 
 	iounmap(ocotp_base);
 	of_node_put(np);
@@ -156,53 +173,6 @@ static u32 __init imx8mm_soc_revision(void)
 	return rev;
 }
 
-static void __init imx93_soc_uid(void)
-{
-	void __iomem *ocotp_base;
-	struct device_node *np;
-
-	np = of_find_compatible_node(NULL, NULL, "fsl,imx93-ocotp");
-	if (!np)
-		return;
-
-	ocotp_base = of_iomap(np, 0);
-	WARN_ON(!ocotp_base);
-
-	soc_uid = readl_relaxed(ocotp_base + IMX93_OCOTP_UID_OFFSET + 0x8);
-	soc_uid <<= 32;
-	soc_uid |= readl_relaxed(ocotp_base + IMX93_OCOTP_UID_OFFSET + 0xC);
-
-	soc_uid_h = readl_relaxed(ocotp_base + IMX93_OCOTP_UID_OFFSET + 0x0);
-	soc_uid_h <<= 32;
-	soc_uid_h |= readl_relaxed(ocotp_base + IMX93_OCOTP_UID_OFFSET + 0x4);
-
-	iounmap(ocotp_base);
-	of_node_put(np);
-}
-
-static u32 __init imx93_soc_revision(void)
-{
-	struct device_node *np;
-	void __iomem *anatop_base;
-	u32 rev;
-
-	np = of_find_compatible_node(NULL, NULL, "fsl,imx93-anatop");
-	if (!np)
-		return 0;
-
-	anatop_base = of_iomap(np, 0);
-	WARN_ON(!anatop_base);
-
-	rev = readl_relaxed(anatop_base + ANADIG_DIGPROG_IMX93);
-
-	iounmap(anatop_base);
-	of_node_put(np);
-
-	imx93_soc_uid();
-
-	return rev;
-}
-
 static const struct imx8_soc_data imx8mq_soc_data = {
 	.name = "i.MX8MQ",
 	.soc_revision = imx8mq_soc_revision,
@@ -223,17 +193,11 @@ static const struct imx8_soc_data imx8mp_soc_data = {
 	.soc_revision = imx8mm_soc_revision,
 };
 
-static const struct imx8_soc_data imx93_soc_data = {
-	.name = "i.MX93",
-	.soc_revision = imx93_soc_revision,
-};
-
 static __maybe_unused const struct of_device_id imx8_soc_match[] = {
 	{ .compatible = "fsl,imx8mq", .data = &imx8mq_soc_data, },
 	{ .compatible = "fsl,imx8mm", .data = &imx8mm_soc_data, },
 	{ .compatible = "fsl,imx8mn", .data = &imx8mn_soc_data, },
 	{ .compatible = "fsl,imx8mp", .data = &imx8mp_soc_data, },
-	{ .compatible = "fsl,imx93", .data = &imx93_soc_data, },
 	{ }
 };
 
@@ -336,6 +300,34 @@ free_soc:
 }
 
 device_initcall(imx8_soc_init);
+MODULE_LICENSE("GPL");
+
+#define FSL_SIP_SRC                    0xc2000005
+#define FSL_SIP_SRC_M4_START           0x00
+#define FSL_SIP_SRC_M4_STARTED         0x01
+
+/* To indicate M4 enabled or not on i.MX8MQ */
+static bool m4_is_enabled;
+bool imx_src_is_m4_enabled(void)
+{
+	return m4_is_enabled;
+}
+EXPORT_SYMBOL_GPL(imx_src_is_m4_enabled);
+
+int check_m4_enabled(void)
+{
+	struct arm_smccc_res res;
+
+	arm_smccc_smc(FSL_SIP_SRC, FSL_SIP_SRC_M4_STARTED, 0,
+		      0, 0, 0, 0, 0, &res);
+		      m4_is_enabled = !!res.a0;
+
+	if (m4_is_enabled)
+		printk("M4 is started\n");
+
+	return 0;
+}
+EXPORT_SYMBOL_GPL(check_m4_enabled);
 
 MODULE_DESCRIPTION("i.MX8M SoC driver");
 MODULE_LICENSE("GPL v2");

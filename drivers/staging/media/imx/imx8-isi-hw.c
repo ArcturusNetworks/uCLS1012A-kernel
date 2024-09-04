@@ -125,7 +125,8 @@ static bool is_yuv(u32 pix_fmt)
 	if ((pix_fmt == V4L2_PIX_FMT_YUYV)  ||
 	    (pix_fmt == V4L2_PIX_FMT_YUV32) ||
 	    (pix_fmt == V4L2_PIX_FMT_YUV444M) ||
-	    (pix_fmt == V4L2_PIX_FMT_NV12))
+	    (pix_fmt == V4L2_PIX_FMT_NV12) ||
+	    (pix_fmt == V4L2_PIX_FMT_NV12M))
 		return true;
 	else
 		return false;
@@ -198,8 +199,8 @@ struct mxc_isi_dev *mxc_isi_get_hostdata(struct platform_device *pdev)
 }
 EXPORT_SYMBOL_GPL(mxc_isi_get_hostdata);
 
-void mxc_isi_channel_set_outbuf(struct mxc_isi_dev *mxc_isi,
-				struct mxc_isi_buffer *buf)
+void mxc_isi_channel_set_outbuf_loc(struct mxc_isi_dev *mxc_isi,
+				    struct mxc_isi_buffer *buf)
 {
 	struct vb2_buffer *vb2_buf = &buf->v4l2_buf.vb2_buf;
 	u32 framecount = buf->v4l2_buf.sequence;
@@ -231,7 +232,7 @@ void mxc_isi_channel_set_outbuf(struct mxc_isi_dev *mxc_isi,
 	}
 	writel(val, mxc_isi->regs + CHNL_OUT_BUF_CTRL);
 }
-EXPORT_SYMBOL_GPL(mxc_isi_channel_set_outbuf);
+EXPORT_SYMBOL_GPL(mxc_isi_channel_set_outbuf_loc);
 
 void mxc_isi_channel_set_m2m_src_addr(struct mxc_isi_dev *mxc_isi,
 			struct mxc_isi_buffer *buf)
@@ -304,7 +305,7 @@ void mxc_isi_channel_source_config(struct mxc_isi_dev *mxc_isi)
 }
 EXPORT_SYMBOL_GPL(mxc_isi_channel_source_config);
 
-void mxc_isi_channel_set_flip(struct mxc_isi_dev *mxc_isi)
+void mxc_isi_channel_set_flip_loc(struct mxc_isi_dev *mxc_isi)
 {
 	u32 val;
 
@@ -382,7 +383,7 @@ void mxc_isi_channel_set_alpha_roi0(struct mxc_isi_dev *mxc_isi,
 	writel(val0 + val1, mxc_isi->regs + CHNL_ROI_0_LRC);
 }
 
-void mxc_isi_channel_set_alpha(struct mxc_isi_dev *mxc_isi)
+void mxc_isi_channel_set_alpha_loc(struct mxc_isi_dev *mxc_isi)
 {
 	u32 val;
 
@@ -609,9 +610,9 @@ void mxc_isi_channel_deinit(struct mxc_isi_dev *mxc_isi)
 }
 EXPORT_SYMBOL_GPL(mxc_isi_channel_deinit);
 
-void mxc_isi_channel_config(struct mxc_isi_dev *mxc_isi,
-			    struct mxc_isi_frame *src_f,
-			    struct mxc_isi_frame *dst_f)
+void mxc_isi_channel_config_loc(struct mxc_isi_dev *mxc_isi,
+				struct mxc_isi_frame *src_f,
+				struct mxc_isi_frame *dst_f)
 {
 	u32 val;
 
@@ -641,9 +642,9 @@ void mxc_isi_channel_config(struct mxc_isi_dev *mxc_isi,
 	writel(val, mxc_isi->regs + CHNL_OUT_BUF_PITCH);
 
 	/* TODO */
-	mxc_isi_channel_set_flip(mxc_isi);
+	mxc_isi_channel_set_flip_loc(mxc_isi);
 
-	mxc_isi_channel_set_alpha(mxc_isi);
+	mxc_isi_channel_set_alpha_loc(mxc_isi);
 
 	mxc_isi_channel_set_panic_threshold(mxc_isi);
 
@@ -656,7 +657,7 @@ void mxc_isi_channel_config(struct mxc_isi_dev *mxc_isi,
 
 	writel(val, mxc_isi->regs + CHNL_CTRL);
 }
-EXPORT_SYMBOL_GPL(mxc_isi_channel_config);
+EXPORT_SYMBOL_GPL(mxc_isi_channel_config_loc);
 
 void mxc_isi_clean_registers(struct mxc_isi_dev *mxc_isi)
 {
@@ -667,7 +668,7 @@ void mxc_isi_clean_registers(struct mxc_isi_dev *mxc_isi)
 }
 EXPORT_SYMBOL_GPL(mxc_isi_clean_registers);
 
-void mxc_isi_channel_enable(struct mxc_isi_dev *mxc_isi, bool m2m_enabled)
+void mxc_isi_channel_enable_loc(struct mxc_isi_dev *mxc_isi, bool m2m_enabled)
 {
 	u32 val;
 
@@ -694,9 +695,9 @@ void mxc_isi_channel_enable(struct mxc_isi_dev *mxc_isi, bool m2m_enabled)
 
 	dump_isi_regs(mxc_isi);
 }
-EXPORT_SYMBOL_GPL(mxc_isi_channel_enable);
+EXPORT_SYMBOL_GPL(mxc_isi_channel_enable_loc);
 
-void mxc_isi_channel_disable(struct mxc_isi_dev *mxc_isi)
+void mxc_isi_channel_disable_loc(struct mxc_isi_dev *mxc_isi)
 {
 	u32 val;
 
@@ -708,7 +709,7 @@ void mxc_isi_channel_disable(struct mxc_isi_dev *mxc_isi)
 	val |= (CHNL_CTRL_CLK_EN_DISABLE << CHNL_CTRL_CLK_EN_OFFSET);
 	writel(val, mxc_isi->regs + CHNL_CTRL);
 }
-EXPORT_SYMBOL_GPL(mxc_isi_channel_disable);
+EXPORT_SYMBOL_GPL(mxc_isi_channel_disable_loc);
 
 void  mxc_isi_enable_irq(struct mxc_isi_dev *mxc_isi)
 {

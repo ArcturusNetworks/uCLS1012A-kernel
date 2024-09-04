@@ -187,7 +187,7 @@ int pfe_ctrl_init(struct pfe *pfe)
 	struct pfe_ctrl *ctrl = &pfe->ctrl;
 	int id;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	mutex_init(&ctrl->mutex);
 	spin_lock_init(&ctrl->lock);
@@ -215,12 +215,12 @@ int pfe_ctrl_init(struct pfe *pfe)
 
 	ctrl->dev = pfe->dev;
 
-	pr_debug("%s finished\n", __func__);
+	pr_info("%s finished\n", __func__);
 
 	return 0;
 }
 
 void pfe_ctrl_exit(struct pfe *pfe)
 {
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 }

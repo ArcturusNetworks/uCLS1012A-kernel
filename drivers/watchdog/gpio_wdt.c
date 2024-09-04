@@ -112,7 +112,6 @@ static int gpio_wdt_probe(struct platform_device *pdev)
 	unsigned int hw_margin;
 	const char *algo;
 	int ret;
-	bool autorun;
 
 	priv = devm_kzalloc(dev, sizeof(*priv), GFP_KERNEL);
 	if (!priv)
@@ -148,8 +147,6 @@ static int gpio_wdt_probe(struct platform_device *pdev)
 	priv->always_running = of_property_read_bool(np,
 						     "always-running");
 
-	autorun = of_property_read_bool(np, "autorun");
-
 	watchdog_set_drvdata(&priv->wdd, priv);
 
 	priv->wdd.info		= &gpio_wdt_ident;
@@ -164,7 +161,7 @@ static int gpio_wdt_probe(struct platform_device *pdev)
 
 	watchdog_stop_on_reboot(&priv->wdd);
 
-	if (priv->always_running || autorun)
+	if (priv->always_running)
 		gpio_wdt_start(&priv->wdd);
 
 	return devm_watchdog_register_device(dev, &priv->wdd);

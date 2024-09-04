@@ -27,8 +27,9 @@ struct dpaa2_mac {
 	struct phylink_pcs *pcs;
 	struct fwnode_handle *fw_node;
 
-	struct phy *serdes_phy;
-	struct phy *retimer_phy;
+	struct phy **phys;
+	size_t num_phys;
+	size_t num_lanes;
 
 	int phy_req_state;
 };

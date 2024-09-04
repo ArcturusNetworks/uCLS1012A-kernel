@@ -102,7 +102,7 @@ static void pfe_check_version_info(const u8 *fw)
 			 */
 			if (strcmp(version, (char *)(elf_data +
 				be32_to_cpu(shdr->sh_offset)))) {
-				pr_warn(
+				pr_info(
 				"WARNING: PFE firmware binaries from incompatible version\n");
 			}
 		}
@@ -111,7 +111,7 @@ static void pfe_check_version_info(const u8 *fw)
 		 * version cannot be verified, a potential issue that should
 		 * be reported
 		 */
-		pr_warn(
+		pr_info(
 			 "WARNING: PFE firmware binaries from incompatible version\n");
 	}
 }
@@ -134,7 +134,7 @@ int pfe_load_elf(int pe_mask, const u8 *fw, struct pfe *pfe)
 	int id, section;
 	int rc;
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	/* Some sanity checks */
 	if (strncmp(&elf_hdr->e_ident[EI_MAG0], ELFMAG, SELFMAG)) {
@@ -193,17 +193,17 @@ int get_firmware_in_fdt(const u8 **pe_fw, const char *name)
 		np = of_find_compatible_node(NULL, NULL,
 					     "fsl,pfe-class-firmware");
 		if (!np) {
-			pr_err("Failed to find the node\n");
+			pr_info("Failed to find the node\n");
 			return -ENOENT;
 		}
 
 		data = of_get_property(np, "fsl,class-firmware", NULL);
 		if (data) {
 			len = of_get_property(np, "length", NULL);
-			pr_debug("CLASS fw of length %d bytes loaded from FDT.\n",
+			pr_info("CLASS fw of length %d bytes loaded from FDT.\n",
 				be32_to_cpu(*len));
 		} else {
-			pr_err("fsl,class-firmware not found!!!!\n");
+			pr_info("fsl,class-firmware not found!!!!\n");
 			return -ENOENT;
 		}
 		of_node_put(np);
@@ -212,17 +212,17 @@ int get_firmware_in_fdt(const u8 **pe_fw, const char *name)
 		np = of_find_compatible_node(NULL, NULL,
 					     "fsl,pfe-tmu-firmware");
 		if (!np) {
-			pr_err("Failed to find the node\n");
+			pr_info("Failed to find the node\n");
 			return -ENOENT;
 		}
 
 		data = of_get_property(np, "fsl,tmu-firmware", NULL);
 		if (data) {
 			len = of_get_property(np, "length", NULL);
-			pr_debug("TMU fw of length %d bytes loaded from FDT.\n",
+			pr_info("TMU fw of length %d bytes loaded from FDT.\n",
 				be32_to_cpu(*len));
 		} else {
-			pr_err("fsl,tmu-firmware not found!!!!\n");
+			pr_info("fsl,tmu-firmware not found!!!!\n");
 			return -ENOENT;
 		}
 		of_node_put(np);
@@ -231,17 +231,17 @@ int get_firmware_in_fdt(const u8 **pe_fw, const char *name)
 		np = of_find_compatible_node(NULL, NULL,
 					     "fsl,pfe-util-firmware");
 		if (!np) {
-			pr_err("Failed to find the node\n");
+			pr_info("Failed to find the node\n");
 			return -ENOENT;
 		}
 
 		data = of_get_property(np, "fsl,util-firmware", NULL);
 		if (data) {
 			len = of_get_property(np, "length", NULL);
-			pr_debug("UTIL fw of length %d bytes loaded from FDT.\n",
+			pr_info("UTIL fw of length %d bytes loaded from FDT.\n",
 				be32_to_cpu(*len));
 		} else {
-			pr_err("fsl,util-firmware not found!!!!\n");
+			pr_info("fsl,util-firmware not found!!!!\n");
 			return -ENOENT;
 		}
 		of_node_put(np);
@@ -275,7 +275,7 @@ int pfe_firmware_init(struct pfe *pfe)
 
 #endif
 
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 #if !defined(CONFIG_FSL_PPFE_UTIL_DISABLED)
 	if (get_firmware_in_fdt(&class_elf_fw, CLASS_FIRMWARE_FILENAME) ||
@@ -286,8 +286,8 @@ int pfe_firmware_init(struct pfe *pfe)
 	    get_firmware_in_fdt(&tmu_elf_fw, TMU_FIRMWARE_FILENAME))
 #endif
 	{
-		pr_warn("%s:PFE firmware not found in FDT.\n", __func__);
-		pr_warn("%s:Trying to load firmware from filesystem...!\n", __func__);
+		pr_info("%s:PFE firmware not found in FDT.\n", __func__);
+		pr_info("%s:Trying to load firmware from filesystem...!\n", __func__);
 
 		/* look for firmware in filesystem...!*/
 		fs_load = 1;
@@ -385,7 +385,7 @@ err0:
  */
 void pfe_firmware_exit(struct pfe *pfe)
 {
-	pr_debug("%s\n", __func__);
+	pr_info("%s\n", __func__);
 
 	if (pe_reset_all(&pfe->ctrl) != 0)
 		pr_err("Error: Failed to stop PEs, PFE reload may not work correctly\n");
