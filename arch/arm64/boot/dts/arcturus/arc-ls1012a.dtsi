@@ -4,7 +4,7 @@
  *
  * Copyright 2016 Freescale Semiconductor, Inc.
  * Copyright 2019-2020 NXP
- * Copyright 2016-2023, Arcturus Networks Inc.
+ * Copyright 2016-2024, Arcturus Networks Inc.
  *
  */
 #include <dt-bindings/interrupt-controller/irq.h>

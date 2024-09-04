@@ -186,6 +186,8 @@
 		interrupts = <12 IRQ_TYPE_EDGE_BOTH>;
 
 		reset-gpios = <&gpio0 30 GPIO_ACTIVE_LOW>;
+
+		internal-pull-down;
 	};
 };
 
@@ -242,7 +244,6 @@
 	bus-num = <1>;
 	status = "okay";
 	cs-gpios = <0>, <0>, <0>, <&gpio1 3 1>;
-
 #if 1
 	spidev0@0 {
 		compatible = "spidev";
@@ -282,52 +283,6 @@
 		};
 	};
 #endif
-
-
-#if 0
-	dflash: spi_flash3@3 {
-		compatible = "jedec,spi-nor";
-		reg = <3>;
-		spi-max-frequency = <1000000>;
-		m25p,fast-read;
-
-		partitions {
-			compatible = "fixed-partitions";
-			#address-cells = <1>;
-			#size-cells = <1>;
-
-			partition@0 {
-				label = "SPI MBR";
-				reg = <0x00000000 0x00002000>;
-				read-only;
-			};
-			partition@2000 {
-				label = "SPI ENV";
-				reg = <0x00002000 0x00006000>;
-				read-only;
-			};
-			partition@8000 {
-				label = "SPI FS";
-				reg = <0x00008000 0>;
-			};
-		};
-	};
-#endif
-#if 0
-	spi@1 {
-		compatible = "spidev";
-		reg = <1>;
-		spi-max-frequency = <10000000>;
-	};
-
-	spi@2 {
-		compatible = "spidev";
-		reg = <2>;
-		spi-max-frequency = <10000000>;
-		fsl,spi-cs-sck-delay = <100>;
-		fsl,spi-sck-cs-delay = <100>;
-	};
-#endif
 /*** Disabled until RCW will be changed
 	mmc-spi@1 {
 		#address-cells = <1>;
@@ -354,7 +309,6 @@
 		#address-cells = <1>;
 		#size-cells = <0>;
 		reg = <0x0>;	/* GEM_ID */
-		fsl,gemac-bus-id = <0x0>;	/* BUS_ID */
 		fsl,mdio-mux-val = <0x0>;
 		phy-mode = "sgmii";
 		phy-handle = <&sgmii_phy1>;
@@ -378,15 +332,9 @@
 
 		sgmii_phy1: ethernet-phy@4 {
 			reg = <0x4>;
-			at803x,eee-disabled;
-			rtl821x,aldps-disable;
-			rtl821x,clkout-disable;
 		};
 		sgmii_phy2: ethernet-phy@6 {
 			reg = <0x6>;
-			at803x,eee-disabled;
-			rtl821x,aldps-disable;
-			rtl821x,clkout-disable;
 		};
 	};
 };

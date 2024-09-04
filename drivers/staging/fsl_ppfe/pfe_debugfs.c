@@ -48,7 +48,7 @@ int pfe_debugfs_init(struct pfe *pfe)
 {
 	struct dentry *d;
 
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	pfe->dentry = debugfs_create_dir("pfe", NULL);
 	if (IS_ERR_OR_NULL(pfe->dentry))

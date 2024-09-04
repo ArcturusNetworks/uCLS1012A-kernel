@@ -37,7 +37,7 @@ int pfe_probe(struct pfe *pfe)
 		goto err_hw;
 	}
 
-	pr_info("cbus_baseaddr: %lx, ddr_baseaddr: %lx, ddr_phys_baseaddr: %lx, ddr_size: %x\n",
+	pr_debug("cbus_baseaddr: %lx, ddr_baseaddr: %lx, ddr_phys_baseaddr: %lx, ddr_size: %x\n",
 		(unsigned long)pfe->cbus_baseaddr,
 		(unsigned long)pfe->ddr_baseaddr,
 		pfe->ddr_phys_baseaddr, pfe->ddr_size);
@@ -126,7 +126,7 @@ err_hw:
  */
 int pfe_remove(struct pfe *pfe)
 {
-	pr_info("%s\n", __func__);
+	pr_debug("%s\n", __func__);
 
 	if (us)
 		pfe_cdev_exit();

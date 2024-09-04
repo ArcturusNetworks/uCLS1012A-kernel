@@ -45,6 +45,7 @@ struct ls1012a_eth_platform_data {
 	u32 mdio_muxval;
 	u8 mac_addr[ETH_ALEN];
 	struct device_node	*phy_node;
+	u32 eth_swap;
 };
 
 struct ls1012a_mdio_platform_data {
@@ -59,7 +60,7 @@ struct ls1012a_pfe_platform_data {
 	struct ls1012a_mdio_platform_data ls1012a_mdio_pdata[3];
 };
 
-#define NUM_GEMAC_SUPPORT	2
+#define MAX_NUM_GEMAC_SUPPORT	2
 #define DRV_NAME		"pfe-eth"
 #define DRV_VERSION		"1.0"
 
