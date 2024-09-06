@@ -45,3 +45,4 @@ obj-$(CONFIG_XILLYBUS_CLASS)	+= xillybus/
 obj-$(CONFIG_POWERNV_OP_PANEL)	+= powernv-op-panel.o
 obj-$(CONFIG_ADI)		+= adi.o
 obj-$(CONFIG_HAVE_IMX_AMP)      += imx_amp/
+obj-$(CONFIG_ARCAUDIO)		+= arcaudio/

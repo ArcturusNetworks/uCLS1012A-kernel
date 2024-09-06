@@ -774,6 +774,12 @@ static void pca953x_irq_bus_sync_unlock(struct irq_data *d)
 
 		/* Unmask enabled interrupts */
 		pca953x_write_regs(chip, PCAL953X_INT_MASK, irq_mask);
+	} else if (PCA_CHIP_TYPE(chip->driver_data) == PCA957X_TYPE) {
+
+			bitmap_complement(irq_mask, chip->irq_mask, gc->ngpio);
+
+			/* Unmask enabled interrupts */
+			pca953x_write_regs(chip, PCA957X_MSK, irq_mask);
 	}
 
 	/* Switch direction to input if needed */
@@ -1037,6 +1043,18 @@ static int device_pca957x_init(struct pca953x_chip *chip, u32 invert)
 	ret = device_pca95xx_init(chip, invert);
 	if (ret)
 		goto out;
+
+	if (of_property_read_bool(chip->client->dev.of_node, "disable-internal-pull-updown"))
+		return 0;
+
+	if (of_property_read_bool(chip->client->dev.of_node, "internal-pull-down")) {
+		/* Force register 6, 7 to pull down. By default all pins pulled up */
+		for (i = 0; i < NBANK(chip); i++)
+			bitmap_set_value8(val, 0x00, i * BANK_SZ);
+		ret = pca953x_write_regs(chip, PCA957X_PUPD, val);
+		if (ret)
+			goto out;
+	}
 
 	/* To enable register 6, 7 to control pull up and pull down */
 	for (i = 0; i < NBANK(chip); i++)

@@ -1,0 +1,107 @@
+/*
+ * Copyright (C) 2024, Arcturus Networks Inc.
+ *                     by Oleksandr Zhadan
+ *
+ * This file is licensed under the terms of the GNU General Public
+ * License version 2.  This program is licensed "as is" without any
+ * warranty of any kind, whether express or implied.
+ */
+
+/dts-v1/;
+
+/ {
+	description = "Image file for the Arcturus uCMX93-SOM144 Linux Kernel without ramdisk";
+	#address-cells = <1>;
+
+	images {
+		kernel {
+			description = "Linux kernel";
+			data = /incbin/("Image.gz");
+			type = "kernel";
+			arch = "arm64";
+			os = "linux";
+			compression = "gzip";
+			load = <0x80400000>;
+			entry = <0x80400000>;
+			hash {
+				algo = "sha1";
+			};
+		};
+		som144 {
+			description = "Flattened Device Tree blob";
+			data = /incbin/("ucimx93-som144.dtb");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			load = <0x90000000>;
+			hash {
+				algo = "sha1";
+			};
+		};
+		ucevo10 {
+			description = "Flattened Device Tree blob";
+			data = /incbin/("ucimx93-som144-ucevo10.dtb");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			load = <0x90000000>;
+			hash {
+				algo = "sha1";
+			};
+		};
+		ucevo20 {
+			description = "Flattened Device Tree blob";
+			data = /incbin/("ucimx93-som144-ucevo20.dtb");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			load = <0x90000000>;
+			hash {
+				algo = "sha1";
+			};
+		};
+		tsdc11 {
+			description = "Flattened Device Tree blob";
+			data = /incbin/("ucimx93-som144-tsdc11.dtb");
+			type = "flat_dt";
+			arch = "arm64";
+			compression = "none";
+			load = <0x90000000>;
+			hash {
+				algo = "sha1";
+			};
+		};
+	};
+
+	configurations {
+		default = "config1";
+		config1 {
+			kernel = "kernel";
+			fdt = "som144";
+			hash {
+				algo = "sha1";
+			};
+		};
+		config2 {
+			kernel = "kernel";
+			fdt = "ucevo10";
+			hash {
+				algo = "sha1";
+			};
+		};
+		config3 {
+			kernel = "kernel";
+			fdt = "ucevo20";
+			hash {
+				algo = "sha1";
+			};
+		};
+		config4 {
+			kernel = "kernel";
+			fdt = "tsdc11";
+			hash {
+				algo = "sha1";
+			};
+		};
+	};
+};
