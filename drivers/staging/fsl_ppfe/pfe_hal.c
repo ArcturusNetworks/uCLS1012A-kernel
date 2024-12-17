@@ -545,7 +545,7 @@ static int pe_load_ddr_section(int id, const void *data,
 			if (id <= CLASS_MAX_ID) {
 				/* DO the loading only once in DDR */
 				if (id == CLASS0_ID) {
-					pr_err(
+					pr_debug(
 						"%s: load address(%x) and elf file address(%lx) rcvd\n",
 						__func__, addr,
 						(unsigned long)data + offset);
